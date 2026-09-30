@@ -64,6 +64,15 @@ function removeTree(FS: EmscriptenFS, dir: string): void {
   FS.rmdir(dir);
 }
 
+/** A MEMFS file's bytes, or null when it is absent or unreadable. */
+function readBytes(FS: EmscriptenFS, abs: string): Uint8Array | null {
+  try {
+    if (!FS.analyzePath(abs).exists) return null;
+    const b = FS.readFile(abs, { encoding: 'binary' });
+    return b instanceof Uint8Array ? b : null;
+  } catch { return null; }
+}
+
 /** The file KiCad should open when the host names none: the project's root sheet or board. */
 function defaultOpen(written: string[], frame: Frame): string | undefined {
   const pro = written.find((p) => p.endsWith('.kicad_pro'));
@@ -219,12 +228,18 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
     const target = frame === 'pcb' ? opened : await schematicTarget(w, opened);
     if (target == null) return fail('save_failed', 'the shown sheet is outside the project');
     const abs = `${root}/${target}`;
-    await save(abs);
-    let bytes: Uint8Array | null = null;
-    try {
-      bytes = w.FS.analyzePath(abs).exists ? (w.FS.readFile(abs, { encoding: 'binary' }) as Uint8Array) : null;
-    } catch { bytes = null; }
-    if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) return fail('save_failed', target);
+    // The save exports swallow every failure and write nothing, and the target
+    // already holds the staged bytes. So the file is taken away first (its path
+    // stays the one the engine holds) and only bytes the engine wrote back count;
+    // a save that wrote nothing puts the previous bytes back and fails.
+    const before = readBytes(w.FS, abs);
+    try { if (before != null) w.FS.unlink(abs); } catch { return fail('save_failed', target); }
+    try { await save(abs); } catch { /* judged by the file below */ }
+    const bytes = readBytes(w.FS, abs);
+    if (bytes == null || bytes.byteLength === 0) {
+      try { if (before != null) w.FS.writeFile(abs, before); } catch { /* the answer is save_failed either way */ }
+      return fail('save_failed', target);
+    }
     emit({ type: 'ev.saved', path: target, bytes });
     return ok({ path: target });
   }

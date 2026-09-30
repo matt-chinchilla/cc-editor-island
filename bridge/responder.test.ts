@@ -261,6 +261,37 @@ describe('startResponder', () => {
     expect(eng.dirs.has(ROOT)).toBe(false);
   });
 
+  it('answers save_failed and emits nothing when the engine save writes nothing', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    eng.Module.kicadSaveSchematic.mockImplementation(() => undefined);   // the binding swallowed a failure
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch staged)') }] } });
+    await settle(100);
+    got.length = 0;
+    port.postMessage({ id: 2, op: 'project.save' });
+    await settle();
+    expect(eng.Module.kicadSaveSchematic).toHaveBeenCalledWith(`${ROOT}/blink.kicad_sch`);
+    expect(got).toEqual([{ id: 2, ok: false, error: { code: 'save_failed', message: 'blink.kicad_sch' } }]);
+    // The staged bytes are back where the engine expects its document.
+    expect(eng.files.get(`${ROOT}/blink.kicad_sch`)).toEqual(b('(kicad_sch staged)'));
+    // A save that throws after writing nothing fails the same way.
+    eng.Module.kicadSaveSchematic.mockImplementation(() => { throw new Error('boom'); });
+    got.length = 0;
+    port.postMessage({ id: 3, op: 'project.save' });
+    await settle();
+    expect(got).toEqual([{ id: 3, ok: false, error: { code: 'save_failed', message: 'blink.kicad_sch' } }]);
+    // A save that writes an empty file is a failure too.
+    eng.Module.kicadSaveSchematic.mockImplementation((p: string) => { eng.win.FS!.writeFile(p, new Uint8Array(0)); });
+    got.length = 0;
+    port.postMessage({ id: 4, op: 'project.save' });
+    await settle();
+    expect(got).toEqual([{ id: 4, ok: false, error: { code: 'save_failed', message: 'blink.kicad_sch' } }]);
+    expect(eng.files.get(`${ROOT}/blink.kicad_sch`)).toEqual(b('(kicad_sch staged)'));
+  });
+
   it('saves the sheet the schematic editor is showing to that sheet file', async () => {
     const { page, parent } = fakePage();
     const r = startResponder({ parentOrigin: PARENT, page });
