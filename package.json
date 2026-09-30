@@ -1,0 +1,27 @@
+{
+  "name": "cc-editor-island",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "test": "vitest run",
+    "sync-upstream": "node scripts/sync-upstream.mjs",
+    "fetch-engine": "node scripts/fetch-engine.mjs",
+    "build": "node scripts/build.mjs",
+    "build:local": "node scripts/build.mjs --local",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "e2e": "playwright test",
+    "notices": "node scripts/notices.mjs",
+    "ship": "bash scripts/ship.sh"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "GPL-3.0-or-later",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.3",
+    "vitest": "^2.1.9"
+  }
+}

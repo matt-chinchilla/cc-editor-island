@@ -1,0 +1,17 @@
+{
+  "islandId": "v0.2.3-cc1",
+  "pcbjam": {
+    "tag": "v0.2.3",
+    "root": "7ec51c1c55aab45b21cd2956af413b4420520838",
+    "kicad": "48f1e865216623283579984110a80210e7ccc789",
+    "wxwidgets": "8bad5f58e9b51050d3678f5c98cb0dc41b4595b2",
+    "shared": "7791275bdfbf54e1500e303121dacaa2c3fd7d00"
+  },
+  "licenceWording": {
+    "LICENSE": "the unmodified GPLv3 text",
+    "README": "KiCad is GPL-3.0. This project follows the same license.",
+    "fileHeaders": "none under web/standalone/src at this tag"
+  },
+  "engine": { "manifest": "https://cdn.pcbjam.com/wasm/manifest-v0.2.3.json", "tool": "kicad_editor", "toolTag": "v0.2.3", "files": {} },
+  "icons": { "stockArchiveSha256": "", "repackedSha256": "", "inputs": "theme/icons/src" }
+}
