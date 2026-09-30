@@ -22,6 +22,7 @@ import { parentOriginFor, parseBoot } from './cc-config';
 import { cleanDetail, hideScreens, showScreen } from './screens';
 import { FRAME_TOKEN, frameToTool, type Frame } from './types';
 import { installQuitHandler } from './quit';
+import { installUnloadQuiet } from './unload-quiet';
 import { installWindowOpenWrapper } from './window-open';
 
 declare const __ISLAND_TAG__: string;      // define'd by vite.config.ts from PIN.json
@@ -100,6 +101,10 @@ async function main(): Promise<void> {
     fatal = true;
     showScreen('fatal');
   });
+  // After the quit latch (it must still see an unload) and before the engine's
+  // scripts load: while the responder says the host is about to reload the frame
+  // (just after its own save, or after a forget), the engine's leave prompt is stopped.
+  installUnloadQuiet(window);
 
   showScreen('preflight');
   responder.emit({ type: 'ev.state', phase: 'preflight' });

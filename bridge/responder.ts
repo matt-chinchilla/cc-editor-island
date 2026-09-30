@@ -9,6 +9,7 @@ import { registerSaveHook, SAVE_COMMITTED } from '../loader/src/wasm/save-flow';
 import { parseBoot } from '../src/cc-config';
 import { normalizePath, openStaged, PROJECT_ROOT, stageProject, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
+import { quietFor, quietForever } from '../src/unload-quiet';
 
 declare const __ISLAND_ID__: string;   // define'd by vite.config.ts from PIN.json
 
@@ -29,6 +30,8 @@ export interface Responder {
 
 type Answer = { ok: true; result: Record<string, unknown> } | { ok: false; code: string; message: string };
 
+/** How long after a host-driven save the engine's leave prompt stays quiet (the host reloads the frame next). */
+const SAVE_QUIET_MS = 10_000;
 /** The one project slug: the save hook reports paths relative to memfsProjectDir(SLUG). */
 const SLUG = 'cc';
 const MAX_QUEUED = 256;
@@ -195,6 +198,7 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
         if (win?.FS != null) removeTree(win.FS, root);
         staged = null;
         opened = null;
+        quietForever();   // the host dropped the document: no leave prompt for it, ever
         return ok();
       }
       case 'chrome.show': return toggle(op, args, 'kicadSetChrome');
@@ -273,6 +277,7 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
       return fail('save_failed', target);
     }
     emit({ type: 'ev.saved', path: target, bytes });
+    quietFor(SAVE_QUIET_MS);   // the host has the bytes and may reload the frame now
     return ok({ path: target });
   }
 

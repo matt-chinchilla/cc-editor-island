@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { memfsProjectDir } from '../loader/src/wasm/constants';
 import { startResponder } from './responder';
+import { isQuiet, resetUnloadQuietForTest } from '../src/unload-quiet';
 
 const PARENT = 'http://circuitcenter.localhost';
 const ROOT = memfsProjectDir('cc');
@@ -321,6 +322,38 @@ describe('startResponder', () => {
     port.postMessage({ id: 5, op: 'project.open', args: { name: 'y', files: [{ path: 'other.kicad_sch', bytes: b('(kicad_sch other)') }] } });
     await settle(100);
     expect(got.at(-1)).toEqual({ id: 5, ok: true, result: { opened: 'other.kicad_sch', dropped: [] } });
+  });
+
+  it('quiets the engine leave prompt after a host save that emitted ev.saved, and for good after forget', async () => {
+    resetUnloadQuietForTest();
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] } });
+    await settle(100);
+    expect(isQuiet()).toBe(false);
+    // A save that wrote nothing emits no ev.saved and leaves the prompt alone.
+    eng.Module.kicadSaveSchematic.mockImplementationOnce(() => undefined);
+    port.postMessage({ id: 2, op: 'project.save' });
+    await settle();
+    expect(got.at(-1)).toMatchObject({ id: 2, ok: false });
+    expect(isQuiet()).toBe(false);
+    // Ctrl+S inside the editor is the user's save, not the host's: no quiet either.
+    eng.win.kicadCollab?.onSave?.(`${ROOT}/blink.kicad_sch`);
+    await settle();
+    expect(isQuiet()).toBe(false);
+    port.postMessage({ id: 3, op: 'project.save' });
+    await settle();
+    expect(got.at(-1)).toEqual({ id: 3, ok: true, result: { path: 'blink.kicad_sch' } });
+    expect(isQuiet()).toBe(true);
+    expect(isQuiet(Date.now() + 9_000)).toBe(true);
+    expect(isQuiet(Date.now() + 10_001)).toBe(false);
+    port.postMessage({ id: 4, op: 'project.forget' });
+    await settle();
+    expect(isQuiet(Date.now() + 3_600_000)).toBe(true);
+    resetUnloadQuietForTest();
   });
 
   it('answers save_failed and emits nothing when the engine save writes nothing', async () => {
