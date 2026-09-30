@@ -1,0 +1,5 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "Remote")(type "HTTP")(uri "${KIPRJMOD}/remote.kicad_httplib")(options "")(descr "An HTTP library at https://example.invalid/lib"))
+  (lib (name "RemoteFile")(type "KiCad")(uri "https://example.invalid/lib/RemoteFile.kicad_sym")(options "")(descr "A symbol library file named by an https URL"))
+)

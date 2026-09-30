@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "version": 1.0
+  },
+  "name": "Remote",
+  "description": "The HTTP library fixture: every request it would make goes to https://example.invalid/lib",
+  "source": {
+    "type": "REST_API",
+    "api_version": "v1",
+    "root_url": "https://example.invalid/lib",
+    "token": "fixture-token-not-a-secret",
+    "timeout_parts_seconds": 5,
+    "timeout_categories_seconds": 5
+  }
+}

@@ -1,0 +1,106 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (c) 2026 Chirichella Inc. -->
+<!-- The test host: embeds the island exactly as the site does and speaks cc-editor/1 (PROTOCOL.md). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>island harness</title>
+<style>body { margin: 0; font: 13px sans-serif; } iframe { border: 0; width: 1280px; height: 800px; display: block; } #state { margin: 4px 8px; white-space: pre-line; }</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="state"></div>
+<script>
+'use strict';
+const ISLAND = 'http://editor.circuitcenter.localhost:4174';
+const FIXTURES = {
+  glasgow: { files: ['glasgow.kicad_pro', 'glasgow.kicad_pcb', 'glasgow.kicad_sch', 'io_banks.kicad_sch', 'io_buffer.kicad_sch'] },
+  'http-lib': { files: ['httplib.kicad_pro', 'httplib.kicad_sch', 'sym-lib-table', 'remote.kicad_httplib'] },
+  traversal: { manifest: 'manifest.json' },
+};
+const q = new URLSearchParams(location.search);
+const fixture = q.get('fixture');
+const frame = q.get('frame') === 'pcb' ? 'pcb' : 'sch';
+const theme = q.get('theme') === 'night' ? 'night' : 'day';
+const stateEl = document.getElementById('state');
+const note = (line) => { stateEl.textContent += `${line}\n`; };   // island strings only ever reach textContent
+
+window.__events = [];      // every event, bytes replaced by their length and text
+window.__hellos = 0;
+let port = null;
+let nextId = 1;
+const pending = new Map();
+
+const iframe = document.createElement('iframe');
+iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-modals allow-downloads');
+iframe.setAttribute('allow', 'cross-origin-isolated; clipboard-write');
+iframe.setAttribute('referrerpolicy', 'no-referrer');
+iframe.setAttribute('title', 'Editor');
+iframe.src = `${ISLAND}/?frame=${frame}&theme=${theme}`;
+
+window.__bridge = {
+  /** Resolves with the answer's result; rejects with "code: message". */
+  request(op, args) {
+    if (port == null) return Promise.reject(new Error('not connected'));
+    const id = nextId++;
+    const msg = args === undefined ? { id, op } : { id, op, args };
+    return new Promise((resolve, reject) => {
+      pending.set(id, (a) => (a.ok ? resolve(a.result) : reject(new Error(`${a.error.code}: ${a.error.message}`))));
+      const transfer = args && Array.isArray(args.files) ? args.files.map((f) => f.bytes.buffer) : [];
+      port.postMessage(msg, transfer);
+    });
+  },
+};
+
+async function loadFixture(name) {
+  const spec = FIXTURES[name];
+  if (spec == null) throw new Error(`no fixture ${name}`);
+  const enc = new TextEncoder();
+  if (spec.manifest != null) {
+    const entries = await (await fetch(`/fixtures/${name}/${spec.manifest}`)).json();
+    return entries.map((e) => ({ path: e.path, bytes: enc.encode(e.text) }));
+  }
+  return Promise.all(spec.files.map(async (path) => ({ path, bytes: new Uint8Array(await (await fetch(`/fixtures/${name}/${path}`)).arrayBuffer()) })));
+}
+
+/** Loads the fixture named in the URL and posts it as project.open; the tests call it again to re-open. */
+window.__openFixture = async function openFixture() {
+  const files = await loadFixture(fixture);
+  try {
+    const r = await window.__bridge.request('project.open', { name: fixture, files });
+    note(`opened ${r.opened}`);
+    for (const d of r.dropped) note(`dropped ${d}`);
+    return r;
+  } catch (err) { note(`open failed ${err.message}`); throw err; }
+};
+
+function onEvent(ev) {
+  const rec = { ...ev };
+  if (ev.bytes instanceof Uint8Array) { rec.bytes = ev.bytes.byteLength; rec.text = new TextDecoder().decode(ev.bytes.subarray(0, 4096)); }
+  rec.at = performance.now();
+  window.__events.push(rec);
+  if (ev.type === 'ev.state') note(`state ${ev.phase}${ev.detail ? ` ${ev.detail}` : ''}`);
+  else if (ev.type === 'ev.saved') note(`saved ${ev.path}`);
+  else note(ev.type);
+  if (ev.type === 'ev.ready' && fixture != null) window.__openFixture().catch(() => undefined);
+}
+
+window.addEventListener('message', (e) => {
+  if (e.source !== iframe.contentWindow || e.origin !== ISLAND) return;
+  const d = e.data;
+  if (d == null || d.type !== 'cc.hello' || d.proto !== 1 || typeof d.nonce !== 'string') return;
+  window.__hellos += 1;
+  const ch = new MessageChannel();
+  port = ch.port1;
+  port.onmessage = (m) => {
+    const a = m.data;
+    if (typeof a.id === 'number') { const done = pending.get(a.id); pending.delete(a.id); if (done) done(a); return; }
+    onEvent(a);
+  };
+  iframe.contentWindow.postMessage({ type: 'cc.connect', nonce: d.nonce }, ISLAND, [ch.port2]);
+});
+document.getElementById('stage').appendChild(iframe);
+</script>
+</body>
+</html>
