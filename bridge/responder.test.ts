@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Chirichella Inc.
 import { describe, expect, it, vi } from 'vitest';
 import { memfsProjectDir } from '../loader/src/wasm/constants';
-import { startResponder } from './responder';
+import { describeError, startResponder } from './responder';
 import { isQuiet, resetUnloadQuietForTest } from '../src/unload-quiet';
 
 const PARENT = 'http://circuitcenter.localhost';
@@ -36,6 +36,8 @@ function fakeFs() {
   const dirs = new Set<string>(['/']);
   /** Directories MEMFS refuses to remove (EBUSY): the engine's working directory. */
   const busy = new Set<string>();
+  /** Directories whose removal fails some other way: errno per path. */
+  const broken = new Map<string, number>();
   const files = new Map<string, Uint8Array>();
   const parentOf = (p: string) => p.slice(0, p.lastIndexOf('/')) || '/';
   const FS = {
@@ -56,16 +58,17 @@ function fakeFs() {
     isDir(mode: number) { return (mode & 0o170000) === 0o040000; },
     rmdir(p: string) {
       if (busy.has(p)) throw { errno: 10 };   // MEMFS throws an ErrnoError, not an Error
+      if (broken.has(p)) throw { name: 'ErrnoError', errno: broken.get(p) };
       if (this.readdir(p).length > 2) throw new Error('ENOTEMPTY');
       dirs.delete(p);
     },
   };
-  return { FS, files, dirs, busy };
+  return { FS, files, dirs, busy, broken };
 }
 
 /** A booted engine: a visible frame, the programmatic open and the save exports. */
 function fakeEngine() {
-  const { FS, files, dirs, busy } = fakeFs();
+  const { FS, files, dirs, busy, broken } = fakeFs();
   const opened: string[] = [];
   const Module = {
     kicadOpenFile: vi.fn((p: string) => { opened.push(p); }),
@@ -81,7 +84,7 @@ function fakeEngine() {
     Module,
     wxElementRegistry: { findAll: () => [{ typeName: 'SCH_EDIT_FRAME', name: 'SchematicFrame', visible: true }], findByLabel: () => [] },
   } as unknown as ToolWindow & { kicadCollab?: { onSave?: (p: string) => void } };
-  return { win, files, dirs, busy, opened, Module };
+  return { win, files, dirs, busy, broken, opened, Module };
 }
 
 const b = (s: string) => new TextEncoder().encode(s);
@@ -354,6 +357,37 @@ describe('startResponder', () => {
     await settle();
     expect(isQuiet(Date.now() + 3_600_000)).toBe(true);
     resetUnloadQuietForTest();
+  });
+
+  it('keeps only the busy working directory: any other rmdir failure answers island_error with its errno', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [
+      { path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }, { path: 'lib/a.kicad_sym', bytes: b('(kicad_symbol_lib)') },
+    ] } });
+    await settle(100);
+    got.length = 0;
+    eng.broken.set(`${ROOT}/lib`, 63);
+    port.postMessage({ id: 2, op: 'project.forget' });
+    await settle();
+    expect(got).toEqual([{ id: 2, ok: false, error: { code: 'island_error', message: 'ErrnoError errno 63' } }]);
+    eng.broken.clear();
+    got.length = 0;
+    port.postMessage({ id: 3, op: 'project.forget' });
+    await settle();
+    expect(got).toEqual([{ id: 3, ok: true, result: {} }]);
+  });
+
+  it('describes MEMFS ErrnoErrors by code or name and errno, never as [object Object]', () => {
+    expect(describeError(new Error('boom'))).toBe('boom');
+    expect(describeError({ name: 'ErrnoError', errno: 44 })).toBe('ErrnoError errno 44');
+    expect(describeError({ name: 'ErrnoError', code: 'ENOENT', errno: 44 })).toBe('ENOENT errno 44');
+    expect(describeError({ errno: 10 })).toBe('errno 10');
+    expect(describeError('plain')).toBe('plain');
+    expect(describeError({ some: 'object' })).toBe('[object Object]');
   });
 
   it('answers save_failed and emits nothing when the engine save writes nothing', async () => {

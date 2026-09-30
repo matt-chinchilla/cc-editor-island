@@ -30,6 +30,8 @@ export interface Responder {
 
 type Answer = { ok: true; result: Record<string, unknown> } | { ok: false; code: string; message: string };
 
+/** MEMFS's errno for a busy directory (the engine's working directory). */
+const EBUSY = 10;
 /** How long after a host-driven save the engine's leave prompt stays quiet (the host reloads the frame next). */
 const SAVE_QUIET_MS = 10_000;
 /** The one project slug: the save hook reports paths relative to memfsProjectDir(SLUG). */
@@ -71,7 +73,27 @@ function removeTree(FS: EmscriptenFS, dir: string): void {
     const p = `${dir}/${name}`;
     if (FS.isDir(FS.stat(p).mode)) removeTree(FS, p); else FS.unlink(p);
   }
-  try { FS.rmdir(dir); } catch { /* the engine's working directory: left in place, empty */ }
+  try {
+    FS.rmdir(dir);
+  } catch (err) {
+    // Only the engine's working directory is left in place (empty); any other
+    // MEMFS failure reaches the request's answer.
+    if (!(isObj(err) && err.errno === EBUSY)) throw err;
+  }
+}
+
+/**
+ * A thrown value as an island_error message. MEMFS throws ErrnoError objects
+ * that are not Errors (name "ErrnoError", a numeric errno, sometimes a code);
+ * they read as "<code or name> errno <n>" rather than "[object Object]".
+ */
+export function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (isObj(err) && typeof err.errno === 'number') {
+    const label = typeof err.code === 'string' && err.code !== '' ? err.code : typeof err.name === 'string' && err.name !== '' ? err.name : null;
+    return label == null ? `errno ${err.errno}` : `${label} errno ${err.errno}`;
+  }
+  return String(err);
 }
 
 /** A MEMFS file's bytes, or null when it is absent or unreadable. */
@@ -161,7 +183,7 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
 
   function answerIslandError(data: unknown, err: unknown): void {
     if (!isObj(data) || typeof data.id !== 'number' || !Number.isSafeInteger(data.id)) return;
-    try { reply(data.id, fail('island_error', err instanceof Error ? err.message : String(err))); } catch { /* the port is gone */ }
+    try { reply(data.id, fail('island_error', describeError(err))); } catch { /* the port is gone */ }
   }
 
   async function handle(data: unknown): Promise<void> {
@@ -172,7 +194,7 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
     try {
       reply(id, await run(op, data.args));
     } catch (err) {
-      reply(id, fail('island_error', err instanceof Error ? err.message : String(err)));
+      reply(id, fail('island_error', describeError(err)));
     }
   }
 
