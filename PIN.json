@@ -45,8 +45,18 @@
     }
   },
   "icons": {
-    "stockArchiveSha256": "",
-    "repackedSha256": "",
-    "inputs": "theme/icons/src"
+    "stockArchiveSha256": "bc24c8db9b9050af2093305e0e42694812297ff4f465f45b0d30b0303dde6477",
+    "repackedSha256": "b012d6915c22cf9d224ea6b5b95390c975d8289a4005a53144577dd2bc746234",
+    "inputs": "theme/icons/src",
+    "ids": [
+      "add_component",
+      "add_line",
+      "add_tracks",
+      "add_via",
+      "erc",
+      "zoom_fit_in_page"
+    ],
+    "replacedEntries": 60,
+    "entries": 5116
   }
 }

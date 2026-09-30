@@ -8,6 +8,9 @@
 // from BootOptions; the 3D model root and its env vars are no longer seeded.
 // Modified by Circuit Center on 2026-09-30: the WebGL context-lost status
 // uses a full stop in place of a dash.
+// Modified by Circuit Center on 2026-09-30: eeschema.json and pcbnew.json
+// are seeded with appearance.custom_toolbars true beside color_theme, so the
+// toolbar layouts the island writes under toolbars/ are read.
 import type { Tool } from "../../../src/types";
 import {
   KICAD_CONFIG_DIR,
@@ -588,7 +591,12 @@ async function doBoot(opts: BootOptions): Promise<void> {
       writeIfAbsent(`${KICAD_CONFIG_DIR}/colors/${name}`, json);
     }
     const appearance = JSON.stringify(
-      { appearance: { color_theme: opts.seeds.colorTheme } },
+      {
+        appearance: {
+          color_theme: opts.seeds.colorTheme,
+          custom_toolbars: true,
+        },
+      },
       null,
       2,
     );

@@ -1,0 +1,7 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (c) 2026 Chirichella Inc. Draw a wire: a polyline entering from the left with two right angle bends; the last segment and its hollow junction in wire green. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3.25 17.25h5v-9"/>
+  <path d="M8.25 8.25h7.5" stroke="var(--accent)"/>
+  <circle cx="18.25" cy="8.25" r="1.9" stroke="var(--accent)"/>
+</svg>

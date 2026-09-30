@@ -1,0 +1,388 @@
+/* kicad-skin.css: the Lab Sheet skin for the DOM-rendered chrome INSIDE the editor iframe.
+ *
+ * How it wins: wx-dom.js writes the light look as INLINE styles and the dark look as
+ * `html.dark ... !important` rules in #wx-dom-dark-theme. Every declaration here is
+ * !important and every selector doubles the root class (html.cc-editor.cc-editor) so it
+ * outranks the port's dark sheet whatever the injection order. Ship it in the iframe's own
+ * <head> before main() so wx measures its widget clones with the native stack already set.
+ *
+ * Rule of the sheet: colour, font family, border, radius, shadow and padding only where the
+ * box does not grow. Every widget keeps its sizer-written left/top/width/height. Nothing here
+ * changes a size, a font size or a line-height.
+ *
+ * Token names are the viewer's --vw-* names (frontend/src/public/pages/viewer/_workspaceTokens.scss)
+ * plus the editor's new pairs. The production sheet is GENERATED from that SCSS; this file is the
+ * reference the generator must reproduce. Night = html.cc-editor.dark (the page sets it from ?theme=).
+ */
+
+/* ------------------------------------------------------------------ tokens: day */
+html.cc-editor.cc-editor {
+  /* ink */
+  --vw-ink: #1a1f23;
+  --vw-ink-2: #4b5158;
+  --vw-ink-3: #676c71;
+  --vw-ink-4: #8a9099;              /* disabled only (3.2:1) */
+  --vw-ink-ctl: #2b3137;
+  /* surfaces */
+  --vw-bench: #f2f4f9;
+  --vw-chrome: rgba(255, 255, 255, 0.5);
+  --vw-seam: rgba(26, 31, 35, 0.1);
+  --vw-hover: rgba(255, 255, 255, 0.7);
+  --vw-surface: rgba(255, 255, 255, 0.72);
+  --vw-surface-border: rgba(26, 31, 35, 0.14);
+  --vw-surface-inset: inset 0 1px 2px rgba(26, 31, 35, 0.06);
+  --vw-glass-a: rgba(255, 255, 255, 0.62);
+  --vw-glass-b: rgba(255, 255, 255, 0.3);
+  --vw-glass-border: rgba(26, 31, 35, 0.1);
+  --vw-glass-top: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  --vw-glass-hover-shadow: 0 2px 6px rgba(26, 31, 35, 0.1);
+  --vw-track-a: rgba(255, 255, 255, 0.5);
+  --vw-track-b: rgba(255, 255, 255, 0.28);
+  --vw-track-inset: inset 0 1px 2px rgba(26, 31, 35, 0.08);
+  --vw-card: linear-gradient(rgba(255, 255, 255, 0.93), rgba(255, 255, 255, 0.85));
+  --vw-card-solid: #f7f8fb;
+  --vw-card-border: rgba(143, 134, 172, 0.2);
+  --vw-card-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 1px 2px rgba(38, 32, 58, 0.06), 0 16px 34px -16px rgba(117, 105, 154, 0.36);
+  --vw-key-bg: rgba(255, 255, 255, 0.8);
+  /* lit grammar */
+  --vw-lit-bg: rgba(68, 189, 19, 0.2);
+  --vw-lit-ring: rgba(55, 162, 13, 0.55);
+  --vw-lit-ink: #0c1a05;
+  --vw-focus: #0a4a2e;
+  --vw-link: #0a4a2e;
+  --vw-silk-ink: #2c5f45;
+  --vw-alert-ink: #c0392b;
+  --vw-warn-ink: #6d5a1b;
+  --vw-warn-bg: rgba(203, 173, 80, 0.13);
+  /* editor pairs (new, added to BOTH sets of _workspaceTokens.scss) */
+  --vw-paper: #fbfbf8;               /* schematic canvas and the stage while KiCad boots */
+  --vw-ground: #e8ebf1;              /* board and 3D canvas by day */
+  --vw-grid: #cfd3cc;
+  --vw-teach-ink: var(--vw-ink-2);   /* the status line's teaching voice */
+  --vw-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Inter", system-ui, sans-serif;
+  --vw-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  color-scheme: light;
+}
+
+/* ------------------------------------------------------------------ tokens: night */
+html.cc-editor.cc-editor.dark {
+  --vw-ink: #e6e9ec;
+  --vw-ink-2: #c3c9cf;
+  --vw-ink-3: #939ba3;
+  --vw-ink-4: #6f777f;
+  --vw-ink-ctl: #d6dbe0;
+  --vw-bench: #14181c;
+  --vw-chrome: rgba(255, 255, 255, 0.04);
+  --vw-seam: rgba(255, 255, 255, 0.1);
+  --vw-hover: rgba(255, 255, 255, 0.08);
+  --vw-surface: rgba(255, 255, 255, 0.06);
+  --vw-surface-border: rgba(255, 255, 255, 0.16);
+  --vw-surface-inset: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+  --vw-glass-a: rgba(255, 255, 255, 0.1);
+  --vw-glass-b: rgba(255, 255, 255, 0.04);
+  --vw-glass-border: rgba(255, 255, 255, 0.14);
+  --vw-glass-top: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --vw-glass-hover-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  --vw-track-a: rgba(0, 0, 0, 0.28);
+  --vw-track-b: rgba(0, 0, 0, 0.16);
+  --vw-track-inset: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+  --vw-card: linear-gradient(#232930, #1b2025);
+  --vw-card-solid: #1b2025;
+  --vw-card-border: rgba(255, 255, 255, 0.12);
+  --vw-card-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 34px -16px rgba(0, 0, 0, 0.6);
+  --vw-key-bg: rgba(255, 255, 255, 0.06);
+  --vw-lit-bg: rgba(68, 189, 19, 0.22);
+  --vw-lit-ring: rgba(98, 217, 43, 0.6);
+  --vw-lit-ink: #d9f5c9;
+  --vw-focus: #62d92b;
+  --vw-link: #8fd9a8;
+  --vw-silk-ink: #8fd9a8;
+  --vw-alert-ink: #f4a08f;
+  --vw-warn-ink: #e0c96a;
+  --vw-warn-bg: rgba(224, 201, 106, 0.12);
+  --vw-paper: #0f1512;
+  --vw-ground: #0f1512;
+  --vw-grid: #232b27;
+  color-scheme: dark;
+}
+
+/* ------------------------------------------------------------------ font: family only
+ * wx pushes '<style> <weight> 10pt/1 Open Sans, sans-serif' inline; Open Sans is never loaded.
+ * We override the FAMILY only (same metrics class as the generic sans wx measured against). */
+html.cc-editor.cc-editor .wx-dom-control,
+html.cc-editor.cc-editor .wx-menu-title,
+html.cc-editor.cc-editor .wx-menu-popup,
+html.cc-editor.cc-editor #wx-tooltip,
+html.cc-editor.cc-editor .window-titlebar {
+  font-family: var(--vw-font) !important;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ------------------------------------------------------------------ the frame itself */
+html.cc-editor.cc-editor,
+html.cc-editor.cc-editor body {
+  background: var(--vw-paper) !important;   /* the page flips this to --vw-ground on the board and 3D views */
+}
+html.cc-editor.cc-editor #main-window { background: transparent !important; }
+
+/* ------------------------------------------------------------------ menubar: div[data-wx-menu-bar] > button.wx-menu-title
+ * Opaque card-solid with a hairline under it so it stacks under our topbar as one instrument.
+ * The hover colour the port writes inline on mouseenter loses to these !important rules. */
+html.cc-editor.cc-editor [data-wx-menu-bar] {
+  background: var(--vw-card-solid) !important;
+  border-bottom: 1px solid var(--vw-seam) !important;
+  box-sizing: border-box !important;
+}
+html.cc-editor.cc-editor .wx-menu-title {
+  color: var(--vw-ink-2) !important;
+  font-weight: 520 !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+html.cc-editor.cc-editor .wx-menu-title:hover,
+html.cc-editor.cc-editor .wx-menu-title[aria-expanded="true"] {
+  background: var(--vw-hover) !important;
+  color: var(--vw-ink) !important;
+}
+
+/* ------------------------------------------------------------------ menu popups: body > div.wx-menu-popup (> div rows, no row class)
+ * A menu floats over content, so it may be glass. Its box is content-sized by the browser,
+ * so padding here is free. Rows: 6px 12px inside the port's 2px 14px 2px 6px would grow the
+ * row, so we keep the port's padding and change only colour, radius and the separator. */
+html.cc-editor.cc-editor .wx-menu-popup {
+  background: var(--vw-card) !important;
+  border: 1px solid var(--vw-card-border) !important;
+  border-radius: 12px !important;
+  padding: 4px !important;
+  box-shadow: var(--vw-card-shadow) !important;
+  color: var(--vw-ink) !important;
+}
+@supports (backdrop-filter: blur(1px)) {
+  @media (min-width: 769px) {
+    html.cc-editor.cc-editor .wx-menu-popup {
+      background: linear-gradient(rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.88)) !important;
+      backdrop-filter: saturate(180%) blur(20px);
+    }
+    html.cc-editor.cc-editor.dark .wx-menu-popup {
+      background: linear-gradient(rgba(35, 41, 48, 0.94), rgba(27, 32, 37, 0.92)) !important;
+    }
+  }
+}
+html.cc-editor.cc-editor .wx-menu-popup > div {
+  border-radius: 8px !important;
+  color: var(--vw-ink) !important;
+  font-weight: 500 !important;
+}
+/* Hover: lit ink on lit bg with the inset lit ring, replacing navy on white.
+ * KNOWN GAP: disabled rows carry only an inline colour (#808080) and no attribute, so this
+ * hover also inks them. Engineering item 8 adds data-wx-disabled; until then the :not() below is inert. */
+html.cc-editor.cc-editor .wx-menu-popup > div:hover:not([data-wx-disabled]) {
+  background: var(--vw-lit-bg) !important;
+  color: var(--vw-lit-ink) !important;
+  box-shadow: inset 0 0 0 1px var(--vw-lit-ring) !important;
+}
+html.cc-editor.cc-editor .wx-menu-popup > div[data-wx-disabled] { color: var(--vw-ink-4) !important; }
+/* separators are <div style="border-top:1px solid #808080;margin:2px 4px"> */
+html.cc-editor.cc-editor .wx-menu-popup > div[style*="border-top"] {
+  border-top: 1px solid var(--vw-seam) !important;
+  margin: 4px 6px !important;
+  border-radius: 0 !important;
+}
+
+/* ------------------------------------------------------------------ tooltip: #wx-tooltip (one layer for the whole editor)
+ * Same recipe as our React rail tooltips (which run at 0ms); the port keeps its 600ms delay and JS placement. */
+html.cc-editor.cc-editor #wx-tooltip {
+  background: var(--vw-card-solid) !important;
+  color: var(--vw-ink) !important;
+  border: 1px solid var(--vw-card-border) !important;
+  border-radius: 8px !important;
+  padding: 5px 9px !important;
+  box-shadow: var(--vw-card-shadow) !important;
+  font-family: var(--vw-font) !important;
+  font-size: 12px !important;          /* the port's own 12px, unchanged */
+  line-height: 1.35 !important;
+}
+
+/* ------------------------------------------------------------------ tabs: [data-wx-notebook] .wx-tab-strip > button[role=tab]
+ * The strip is a recessed track at its measured height; tabs drop the bevel and the top:1px trick. */
+html.cc-editor.cc-editor .wx-tab-strip {
+  background: linear-gradient(var(--vw-track-a), var(--vw-track-b)) !important;
+  border-bottom: 1px solid var(--vw-glass-border) !important;
+  box-shadow: var(--vw-track-inset) !important;
+  padding: 0 2px !important;
+}
+html.cc-editor.cc-editor .wx-tab-strip > button[role="tab"] {
+  border: 0 !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  color: var(--vw-ink-2) !important;
+  font-weight: 520 !important;
+  position: static !important;
+  top: auto !important;
+  margin: 1px 0 0 1px !important;      /* the port's own margin, restated so nothing shifts */
+  transition: background-color 120ms ease, color 120ms ease;
+}
+html.cc-editor.cc-editor .wx-tab-strip > button[role="tab"]:hover { background: var(--vw-hover) !important; color: var(--vw-ink) !important; }
+html.cc-editor.cc-editor .wx-tab-strip > button[role="tab"][aria-selected="true"] {
+  background: var(--vw-lit-bg) !important;
+  color: var(--vw-lit-ink) !important;
+  font-weight: 600 !important;
+  box-shadow: inset 0 0 0 1px var(--vw-lit-ring) !important;
+}
+
+/* ------------------------------------------------------------------ buttons: button.wx-dom-control (wxButton, bitmap buttons with img.wx-btn-img)
+ * The glass control at the small-control rung (radius 6). Hover is a background step and the
+ * hover shadow only: never a transform, because a scaled button clips on its ancestor's clip-path. */
+html.cc-editor.cc-editor button.wx-dom-control {
+  background: linear-gradient(var(--vw-glass-a), var(--vw-glass-b)) !important;
+  border: 1px solid var(--vw-glass-border) !important;
+  border-radius: 6px !important;
+  color: var(--vw-ink) !important;
+  font-weight: 520 !important;
+  box-shadow: var(--vw-glass-top) !important;
+  transition: background-color 120ms ease, box-shadow 150ms ease;
+}
+@media (hover: hover) {
+  html.cc-editor.cc-editor button.wx-dom-control:hover {
+    background: linear-gradient(var(--vw-hover), var(--vw-glass-b)) !important;
+    box-shadow: var(--vw-glass-top), var(--vw-glass-hover-shadow) !important;
+  }
+}
+html.cc-editor.cc-editor button.wx-dom-control:active { box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.12) !important; }
+html.cc-editor.cc-editor button.wx-dom-control:focus-visible { outline: 2px solid var(--vw-focus) !important; outline-offset: -2px !important; }
+/* toggle buttons (wxToggleButton) and plain-toolbar tools: the lit state replaces the port's inline #b0c4de */
+html.cc-editor.cc-editor button.wx-dom-control[aria-pressed="true"],
+html.cc-editor.cc-editor [data-wx-tool-bar] > .wx-tool[data-wx-toggled="1"] {
+  background: var(--vw-lit-bg) !important;
+  color: var(--vw-lit-ink) !important;
+  box-shadow: inset 0 0 0 1px var(--vw-lit-ring) !important;
+}
+/* the dialog's default button, once engineering stamps data-wx-default (item 6): the ONE primary key */
+html.cc-editor.cc-editor button.wx-dom-control[data-wx-default="1"] {
+  background: linear-gradient(180deg, #62d92b 0%, #44bd13 52%, #37a20d 100%) !important;
+  color: #0c1a05 !important;
+  font-weight: 600 !important;
+  border-color: rgba(12, 26, 5, 0.18) !important;
+  box-shadow: 0 4px 9px rgba(68, 189, 19, 0.34) !important;
+}
+
+/* ------------------------------------------------------------------ plain DOM toolbar: div[data-wx-tool-bar] > button.wx-tool
+ * Only plain wxToolBar instances render here (KiCad's editor toolbars are AUI islands). */
+html.cc-editor.cc-editor [data-wx-tool-bar] { background: var(--vw-card-solid) !important; border-bottom: 1px solid var(--vw-seam) !important; }
+html.cc-editor.cc-editor [data-wx-tool-bar] > .wx-tool { background: transparent !important; border: 0 !important; border-radius: 6px !important; }
+html.cc-editor.cc-editor [data-wx-tool-bar] > .wx-tool:hover { background: var(--vw-hover) !important; }
+html.cc-editor.cc-editor [data-wx-tool-bar] > div[style*="border-left"] { border-left: 1px solid var(--vw-seam) !important; }
+
+/* ------------------------------------------------------------------ inputs: input/textarea/select.wx-dom-control (wxTextCtrl, wxChoice, wxComboBox, wxListBox)
+ * The vw-input recipe. Focus ring sits INSIDE the box (offset -2px) so the clip-path never cuts it. */
+html.cc-editor.cc-editor input.wx-dom-control,
+html.cc-editor.cc-editor textarea.wx-dom-control,
+html.cc-editor.cc-editor select.wx-dom-control {
+  background: var(--vw-surface) !important;
+  color: var(--vw-ink) !important;
+  border: 1px solid var(--vw-surface-border) !important;
+  border-radius: 6px !important;
+  box-shadow: var(--vw-surface-inset) !important;
+  color-scheme: inherit !important;    /* native select popups and date pickers follow the mode */
+}
+html.cc-editor.cc-editor input.wx-dom-control::placeholder,
+html.cc-editor.cc-editor textarea.wx-dom-control::placeholder { color: var(--vw-ink-3) !important; }
+html.cc-editor.cc-editor input.wx-dom-control:focus,
+html.cc-editor.cc-editor textarea.wx-dom-control:focus,
+html.cc-editor.cc-editor select.wx-dom-control:focus {
+  outline: 2px solid var(--vw-focus) !important;
+  outline-offset: -2px !important;
+  border-color: rgba(68, 189, 19, 0.7) !important;
+}
+html.cc-editor.cc-editor select[multiple].wx-dom-control option:checked { background: var(--vw-lit-bg) !important; color: var(--vw-lit-ink) !important; }
+/* checkbox and radio (label.wx-dom-control > input + span.wx-label) */
+html.cc-editor.cc-editor label.wx-dom-control { color: var(--vw-ink) !important; color-scheme: inherit !important; }
+html.cc-editor.cc-editor label.wx-dom-control input[type="checkbox"],
+html.cc-editor.cc-editor label.wx-dom-control input[type="radio"],
+html.cc-editor.cc-editor input[type="range"].wx-dom-control { accent-color: #37a20d !important; }
+html.cc-editor.cc-editor.dark label.wx-dom-control input[type="checkbox"],
+html.cc-editor.cc-editor.dark label.wx-dom-control input[type="radio"],
+html.cc-editor.cc-editor.dark input[type="range"].wx-dom-control { accent-color: #62d92b !important; }
+/* static text: span.wx-dom-control[data-wx-passive] */
+html.cc-editor.cc-editor span.wx-dom-control { color: var(--vw-ink) !important; }
+/* check list box: div[data-wx-check-list] */
+html.cc-editor.cc-editor [data-wx-check-list] {
+  background: var(--vw-surface) !important;
+  border: 1px solid var(--vw-surface-border) !important;
+  border-radius: 6px !important;
+}
+
+/* ------------------------------------------------------------------ fieldsets: fieldset[data-wx-chrome] (wxStaticBox), fieldset[data-wx-radio-box] */
+html.cc-editor.cc-editor fieldset.wx-dom-control,
+html.cc-editor.cc-editor fieldset[data-wx-radio-box] {
+  border: 1px solid var(--vw-seam) !important;
+  border-radius: 8px !important;
+}
+html.cc-editor.cc-editor fieldset > legend.wx-label { color: var(--vw-ink-2) !important; font-weight: 560 !important; }
+/* static line: div[data-wx-chrome] with the port's inline #909090 */
+html.cc-editor.cc-editor div.wx-dom-control[data-wx-chrome][style*="background: rgb(144, 144, 144)"],
+html.cc-editor.cc-editor div.wx-dom-control[data-wx-chrome][style*="background:#909090"] { background: var(--vw-seam) !important; }
+
+/* ------------------------------------------------------------------ gauge: progress.wx-dom-control (wxGauge)
+ * A native <progress> takes accent-color portably; the well and bar below are the vendor
+ * pseudo-elements and are best-effort, so this is CSS plus a fallback, not a config-only restyle. */
+html.cc-editor.cc-editor progress.wx-dom-control { accent-color: #44bd13 !important; border-radius: 999px !important; overflow: hidden !important; }
+html.cc-editor.cc-editor progress.wx-dom-control::-webkit-progress-bar { background: var(--vw-surface) !important; box-shadow: inset 0 1px 3px rgba(60, 50, 90, 0.18) !important; border-radius: 999px !important; }
+html.cc-editor.cc-editor progress.wx-dom-control::-webkit-progress-value { background: linear-gradient(180deg, #62d92b, #37a20d) !important; border-radius: 999px !important; }
+html.cc-editor.cc-editor progress.wx-dom-control::-moz-progress-bar { background: linear-gradient(180deg, #62d92b, #37a20d) !important; border-radius: 999px !important; }
+
+/* ------------------------------------------------------------------ scrollbars: div[data-wx-scrollbar] > .wx-sb-track > .wx-sb-thumb */
+html.cc-editor.cc-editor [data-wx-scrollbar] { background: transparent !important; }
+html.cc-editor.cc-editor [data-wx-scrollbar] .wx-sb-track { background: transparent !important; }
+html.cc-editor.cc-editor [data-wx-scrollbar] .wx-sb-thumb {
+  background: var(--vw-glass-border) !important;
+  border: 0 !important;
+  border-radius: 4px !important;
+  transition: background-color 120ms ease;
+}
+html.cc-editor.cc-editor [data-wx-scrollbar] .wx-sb-thumb:hover { background: var(--vw-ink-4) !important; }
+/* spin buttons: div[data-wx-spin] > button.wx-spin-up / .wx-spin-down */
+html.cc-editor.cc-editor [data-wx-spin] > button { background: transparent !important; border: 0 !important; color: var(--vw-ink-3) !important; border-radius: 4px !important; }
+html.cc-editor.cc-editor [data-wx-spin] > button:hover { background: var(--vw-hover) !important; color: var(--vw-ink) !important; }
+
+/* ------------------------------------------------------------------ dialogs and secondary frames: #window-container > .window.toplevel (+ .popup)
+ * Outline, not border, so the wx rect never shifts. Static shadow (the card shadow, violet cast by day).
+ * Radius with overflow clipped: the island paint loses only its corners. */
+html.cc-editor.cc-editor .window.toplevel {
+  background: var(--vw-card-solid) !important;
+  outline: 1px solid var(--vw-card-border) !important;
+  box-shadow: 0 2px 6px rgba(38, 32, 58, 0.08), 0 24px 60px -18px rgba(117, 105, 154, 0.4) !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+}
+html.cc-editor.cc-editor.dark .window.toplevel { box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4), 0 24px 60px -18px rgba(0, 0, 0, 0.7) !important; }
+html.cc-editor.cc-editor .window.popup { border-radius: 10px !important; }
+/* title bar (22px fixed): .window-titlebar > .window-titlebar-text + .window-titlebar-close */
+html.cc-editor.cc-editor .window-titlebar {
+  background: var(--vw-card-solid) !important;
+  color: var(--vw-ink) !important;
+  border-bottom: 1px solid var(--vw-seam) !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;          /* the port's own size, family from the block above */
+}
+html.cc-editor.cc-editor .window-titlebar-close {
+  color: var(--vw-ink-3) !important;
+  border-radius: 6px !important;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+html.cc-editor.cc-editor .window-titlebar-close:hover { background: var(--vw-hover) !important; color: var(--vw-ink) !important; }  /* never red */
+/* .wx-inert (modal barrier) and .window-resize-handle.* keep the port's behaviour; no rule here on purpose. */
+
+/* ------------------------------------------------------------------ canvases */
+html.cc-editor.cc-editor canvas#canvas,
+html.cc-editor.cc-editor canvas.gl-canvas { outline: none !important; }
+
+/* ------------------------------------------------------------------ reduced motion: one block for the whole skin */
+@media (prefers-reduced-motion: reduce) {
+  html.cc-editor.cc-editor .wx-menu-title,
+  html.cc-editor.cc-editor .wx-tab-strip > button[role="tab"],
+  html.cc-editor.cc-editor button.wx-dom-control,
+  html.cc-editor.cc-editor [data-wx-scrollbar] .wx-sb-thumb,
+  html.cc-editor.cc-editor .window-titlebar-close { transition: none !important; }
+}

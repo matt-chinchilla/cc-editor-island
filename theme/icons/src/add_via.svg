@@ -1,0 +1,8 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (c) 2026 Chirichella Inc. Add a via: an ink ring with a copper annulus inside it and a hole that shows the bench. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M12 5.5a6.5 6.5 0 1 0 0 13a6.5 6.5 0 1 0 0-13zM12 7.75a4.25 4.25 0 1 0 0 8.5a4.25 4.25 0 1 0 0-8.5z" fill="var(--accent)" fill-rule="evenodd" stroke="none"/>
+  <circle cx="12" cy="12" r="4.25" fill="var(--hole)" stroke="none"/>
+  <circle cx="12" cy="12" r="7.25"/>
+  <circle class="fine" cx="12" cy="12" r="4.25"/>
+</svg>

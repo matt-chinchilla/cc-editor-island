@@ -4,3 +4,5 @@ upstream/
 .playwright/
 test-results/
 engine/
+theme/icons/png/
+theme/icons/out/
