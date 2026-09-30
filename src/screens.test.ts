@@ -16,6 +16,6 @@ describe('the loading bar', () => {
 
 describe('cleanDetail', () => {
   it('renders no en or em dash', () => {
-    expect(cleanDetail('a – b — c')).not.toMatch(/[–—]/);
+    expect(cleanDetail('a \u2013 b \u2014 c')).not.toMatch(/[\u2013\u2014]/);
   });
 });
