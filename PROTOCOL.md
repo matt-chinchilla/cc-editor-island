@@ -23,7 +23,7 @@ Answers: `{ id, ok: true, result?: any }` or `{ id, ok: false, error: { code: st
 Paths are relative, POSIX, no `.` or `..` segments, no leading slash, no NUL, at most 255 bytes; a rejected path is reported in `dropped`, never written.
 
 ## Events (frame to host): `{ type: string, ... }`
-- `ev.state { phase: string, detail?: string }` during boot; `phase` is one of `preflight`, `booting`, `staging`, `opening`, `blocked`, `fatal`, `popup`.
+- `ev.state { phase: string, detail?: string }` during boot; `phase` is one of `preflight`, `booting`, `staging`, `opening`, `blocked`, `fatal`, `popup`. `detail`, when present, is one of the island's own short strings (a capability code, `memory`, a popup count), never engine or loader text.
   - `popup` is informational: `ev.state { phase: "popup", detail: "<n> popup attempts blocked" }` may arrive at any time, including after `ev.ready`, once for every blocked popup attempt (`<n>` is the running count). It never changes the host's state. Attempts made before `ev.ready` are reported once, as a `booting` detail in the same words.
 - `ev.ready { caps: string[], engine: { tag: string, kicad: string } }` once the engine booted and the first open settled. `caps` are the engine export names found on `Module`.
 - `ev.saved { path: string, bytes: Uint8Array }` after every save, whether the user pressed Ctrl+S or the host sent `project.save`.

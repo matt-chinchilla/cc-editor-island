@@ -28,6 +28,11 @@ declare const __KICAD_VERSION__: string;   // define'd by vite.config.ts
 
 /** How long the engine may take, after its scripts ran, to show its editor frame. */
 const ENGINE_UP_TIMEOUT_MS = 180_000;
+/**
+ * The fatal details the island emits and renders: its own closed words. Engine
+ * and loader text (error messages, status lines) goes to the console only.
+ */
+type FatalCode = 'memory' | 'crash' | 'boot_failed' | 'engine_timeout' | 'no_container';
 /** Uncaught errors that mean the wasm instance is gone (the loader's fatal-screen set). */
 const TERMINAL = /RuntimeError|\babort(ed)?\b|\bindex out of bounds|indirect call signature|memory access out of bounds|unreachable executed|null function or function signature/i;
 
@@ -66,28 +71,34 @@ async function main(): Promise<void> {
   );
 
   let fatal = false;
-  const die = (detail: string): void => {
+  const die = (code: FatalCode, raw?: string): void => {
     if (fatal) return;
     fatal = true;
-    const clean = cleanDetail(detail) || 'stopped';
-    showScreen('fatal', clean);
-    responder.emit({ type: 'ev.state', phase: 'fatal', detail: clean });
+    if (raw != null && raw !== '') console.error('[editor] fatal', raw);
+    showScreen('fatal', code);
+    responder.emit({ type: 'ev.state', phase: 'fatal', detail: code });
   };
   const onUncaught = (text: string): void => {
-    if (looksLikeOom(text)) die('memory');
-    else if (TERMINAL.test(text)) die(text);
+    if (looksLikeOom(text)) die('memory', text);
+    else if (TERMINAL.test(text)) die('crash', text);
   };
   window.addEventListener('error', (e) => onUncaught(e.error instanceof Error ? e.error.message : String(e.message ?? '')));
   window.addEventListener('unhandledrejection', (e) => onUncaught(e.reason instanceof Error ? e.reason.message : String(e.reason ?? '')));
-  window.addEventListener('pagehide', () => responder.emit({ type: 'ev.closing' }));
+  let closed = false;
+  const closing = (): void => {
+    if (closed) return;
+    closed = true;
+    responder.emit({ type: 'ev.closing' });
+  };
+  window.addEventListener('pagehide', closing);
 
   showScreen('preflight');
   responder.emit({ type: 'ev.state', phase: 'preflight' });
   const report = probeCapabilities();
   if (report.fatal.length > 0) {
-    const detail = cleanDetail(report.fatal.map((i) => `${i.title}. ${i.detail}`).join(' '));
-    showScreen('blocked', detail);
-    responder.emit({ type: 'ev.state', phase: 'blocked', detail });
+    // The screen explains in the probe's own sentences; the host gets the stable codes.
+    showScreen('blocked', cleanDetail(report.fatal.map((i) => `${i.title}. ${i.detail}`).join(' ')));
+    responder.emit({ type: 'ev.state', phase: 'blocked', detail: report.fatal.map((i) => i.code).join(' ') });
     return;
   }
 
@@ -102,7 +113,7 @@ async function main(): Promise<void> {
   };
 
   const container = document.getElementById('editor');
-  if (container == null) { die('no editor container'); return; }
+  if (container == null) { die('no_container'); return; }
   try {
     await bootKicadTool({
       tool: frameToTool(frame),
@@ -113,13 +124,15 @@ async function main(): Promise<void> {
       seeds: seedsFor(theme),
       libsSource: staticLibsSource(),
       log: (m) => console.debug('[editor]', m),
-      onStatus: (text) => { if (!fatal && text !== '') responder.emit({ type: 'ev.state', phase: 'booting', detail: cleanDetail(text) }); },
+      // The booting phase is already out; loader and engine status lines stay in
+      // the console, and the loading animation is fed by onProgress alone.
+      onStatus: (text) => console.debug('[status]', text),
       onProgress: (loaded, total) => { if (!fatal && total > 0) showScreen('loading', undefined, loaded / total); },
-      onAbort: (what) => die(looksLikeOom(what) ? 'memory' : what || 'abort'),
+      onAbort: (what) => die(looksLikeOom(what) ? 'memory' : 'boot_failed', what),
     });
-    if (!(await engineUp(window as ToolWindow, ENGINE_UP_TIMEOUT_MS))) die('the editor frame never appeared');
+    if (!(await engineUp(window as ToolWindow, ENGINE_UP_TIMEOUT_MS))) die('engine_timeout');
   } catch (err) {
-    die(err instanceof Error ? err.message : String(err));
+    die('boot_failed', err instanceof Error ? err.message : String(err));
   }
   if (fatal) return;
   hideScreens();

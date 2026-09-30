@@ -3,7 +3,7 @@
 // The island's own screens, plain DOM into #screen (createElement and
 // textContent only). Preflight and loading are ONE quiet animation: a small
 // mark and a thin bar that sweeps until progress arrives, then fills. No
-// sentence about downloads, no dialog, no button (owner ruling R15).
+// progress sentence, no dialog, no button (owner ruling R15).
 // Every screen carries the "Licences and source" link.
 export type ScreenKind = 'preflight' | 'loading' | 'blocked' | 'fatal' | 'toplevel';
 
