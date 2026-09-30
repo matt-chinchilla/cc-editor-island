@@ -2,7 +2,9 @@
 // Copyright (c) 2026 Chirichella Inc.
 // The island's own screens, plain DOM into #screen (createElement and
 // textContent only). Preflight and loading are ONE quiet animation: a small
-// mark and a thin bar that sweeps until progress arrives, then fills. No
+// mark and a thin bar that sweeps until progress arrives, then fills, and
+// sweeps again once the fill is complete (compile and engine start report no
+// progress, and a full static bar reads as stalled). No
 // progress sentence, no dialog, no button (owner ruling R15).
 // Every screen carries the "Licences and source" link.
 export type ScreenKind = 'preflight' | 'loading' | 'blocked' | 'fatal' | 'toplevel';
@@ -56,16 +58,21 @@ function mark(): SVGSVGElement {
   return svg;
 }
 
+export type BarMode = 'sweep' | 'fill' | 'settle';
+
+/** No number yet: sweep. A fraction below 1: fill to it. Complete: sweep again until hideScreens. */
+export function barMode(progress?: number): BarMode {
+  if (progress == null || !Number.isFinite(progress)) return 'sweep';
+  return progress >= 1 ? 'settle' : 'fill';
+}
+
 function setProgress(progress?: number): void {
   if (bar == null || fill == null) return;
-  if (progress == null || !Number.isFinite(progress)) {
-    bar.classList.remove('is-determinate');
-    fill.style.removeProperty('transform');
-    return;
-  }
-  const p = Math.min(1, Math.max(0, progress));
-  bar.classList.add('is-determinate');
-  fill.style.transform = `scaleX(${p})`;
+  const mode = barMode(progress);
+  bar.classList.toggle('is-determinate', mode === 'fill');
+  bar.classList.toggle('is-settling', mode === 'settle');   // reduced motion: stays full
+  if (mode === 'fill') fill.style.transform = `scaleX(${Math.max(0, progress as number)})`;
+  else fill.style.removeProperty('transform');
 }
 
 function buildLoader(root: HTMLElement): void {
