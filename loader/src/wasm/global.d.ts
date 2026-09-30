@@ -1,4 +1,7 @@
 export {};
+// Modified by Circuit Center on 2026-09-30: EmscriptenFS declares readdir, stat,
+// isDir and rmdir (Emscripten's FS has them; the responder removes the
+// project folder with them).
 
 declare global {
   interface EmscriptenFS {
@@ -7,6 +10,10 @@ declare global {
     readFile(path: string, opts?: { encoding?: "binary" | "utf8" }): unknown;
     analyzePath(path: string): { exists: boolean };
     unlink(path: string): void;
+    readdir(path: string): string[];
+    stat(path: string): { mode: number };
+    isDir(mode: number): boolean;
+    rmdir(path: string): void;
   }
 
   // Loose shape of the wxWidgets-WASM element registry exposed by wx.js.
