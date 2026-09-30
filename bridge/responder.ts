@@ -91,7 +91,7 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
   let chain: Promise<void> = Promise.resolve();
   const queued: IslandEvent[] = [];
   let win: ToolWindow | null = null;
-  let frame: Frame = 'sch';
+  const frame: Frame = parseBoot(page.location.search).frame;
   let staged: StagedProject | null = null;
   let opened: string | null = null;
 
@@ -138,11 +138,21 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
     if (p == null) return;
     port = p;
     page.removeEventListener('message', onConnect);
-    port.onmessage = (m) => { chain = chain.then(() => handle(m.data)); };
+    port.onmessage = (m) => {
+      // A handler that rejects answers island_error for its own request; the
+      // chain itself never rejects, so every later request is still answered.
+      const next = (): Promise<void> => handle(m.data).catch((err: unknown) => answerIslandError(m.data, err));
+      chain = chain.then(next, next);
+    };
     for (const ev of queued.splice(0)) emit(ev);
   };
   page.addEventListener('message', onConnect);
   page.parent.postMessage({ type: 'cc.hello', proto: 1, nonce, island: __ISLAND_ID__ }, parentOrigin);
+
+  function answerIslandError(data: unknown, err: unknown): void {
+    if (!isObj(data) || typeof data.id !== 'number' || !Number.isSafeInteger(data.id)) return;
+    try { reply(data.id, fail('island_error', err instanceof Error ? err.message : String(err))); } catch { /* the port is gone */ }
+  }
 
   async function handle(data: unknown): Promise<void> {
     if (!isObj(data) || typeof data.id !== 'number' || !Number.isSafeInteger(data.id) || typeof data.op !== 'string') return;
@@ -177,7 +187,9 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
     const op = 'project.open';
     if (!isObj(a) || !onlyKeys(a, ['name', 'files', 'open'])) return fail('bad_args', op);
     if (typeof a.name !== 'string' || a.name.length > MAX_NAME || !Array.isArray(a.files) || a.files.length > MAX_FILES) return fail('bad_args', op);
-    if (a.open !== undefined && typeof a.open !== 'string') return fail('bad_args', op);
+    // The explicit target must be this frame's own kind: a .kicad_sch opened in
+    // the pcb frame would have project.save write a board into it.
+    if (a.open !== undefined && (typeof a.open !== 'string' || !a.open.endsWith(EXT[frame]))) return fail('bad_args', op);
     const files: Array<{ path: string; bytes: Uint8Array }> = [];
     for (const f of a.files as unknown[]) {
       if (!isObj(f) || !onlyKeys(f, ['path', 'bytes']) || typeof f.path !== 'string' || !(f.bytes instanceof Uint8Array)) return fail('bad_args', op);
@@ -262,7 +274,6 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
       if (ready) return;
       ready = true;
       win = w;
-      frame = parseBoot(page.location.search).frame;
       // Ctrl+S inside the editor: the fork's save chokepoints call
       // window.kicadCollab.onSave(absPath) after the bytes hit MEMFS; the hook
       // reads them back and hands us the project-relative path.

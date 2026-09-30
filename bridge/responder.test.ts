@@ -292,6 +292,48 @@ describe('startResponder', () => {
     expect(eng.files.get(`${ROOT}/blink.kicad_sch`)).toEqual(b('(kicad_sch staged)'));
   });
 
+  it('answers island_error when a handler rejects and still answers the next request', async () => {
+    const { page, parent } = fakePage();
+    startResponder({ parentOrigin: PARENT, page });
+    const nonce = parent.postMessage.mock.calls[0][0].nonce;
+    const ch = new MessageChannel();
+    const got: unknown[] = [];
+    ch.port1.onmessage = (m) => got.push(m.data);
+    // The first two answers throw (the reply and the catch's own reply), so the
+    // handler itself rejects; later posts go through.
+    const real = ch.port2.postMessage.bind(ch.port2);
+    let throws = 2;
+    ch.port2.postMessage = ((...a: Parameters<MessagePort['postMessage']>) => {
+      if (throws > 0) { throws -= 1; throw new Error('clone failed'); }
+      return real(...(a as [unknown]));
+    }) as MessagePort['postMessage'];
+    page.dispatch('message', { origin: PARENT, source: page.parent, data: { type: 'cc.connect', nonce }, ports: [ch.port2] });
+    ch.port1.postMessage({ id: 1, op: 'project.forget' });
+    ch.port1.postMessage({ id: 2, op: 'project.forget' });
+    await settle();
+    expect(got).toEqual([
+      { id: 1, ok: false, error: { code: 'island_error', message: 'clone failed' } },
+      { id: 2, ok: true, result: {} },
+    ]);
+  });
+
+  it('refuses an explicit open that is not this frame\'s own kind', async () => {
+    const { page, parent } = fakePage('?frame=pcb&theme=day');
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    await settle();
+    got.length = 0;
+    port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [
+      { path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }, { path: 'blink.kicad_pcb', bytes: b('(kicad_pcb)') },
+    ], open: 'blink.kicad_sch' } });
+    await settle();
+    expect(got).toEqual([{ id: 1, ok: false, error: { code: 'bad_args', message: 'project.open' } }]);
+    expect(eng.opened).toEqual([]);
+    expect(eng.files.size).toBe(0);
+  });
+
   it('saves the sheet the schematic editor is showing to that sheet file', async () => {
     const { page, parent } = fakePage();
     const r = startResponder({ parentOrigin: PARENT, page });
