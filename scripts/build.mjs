@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
 // Lays out one release: dist/r/<islandId>/{index.html, island.json, assets/, wasm/<tool>/<tag>/}
-// plus dist/island.json and dist/current -> r/<islandId>. The notices half comes later.
+// plus dist/island.json and dist/current -> r/<islandId>, with the release's notices
+// (licenses.html, LICENSE.txt, NOTICE) from scripts/notices.mjs, whose census fails the build.
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -33,28 +34,38 @@ rmSync(rel, { recursive: true, force: true });
 mkdirSync(join(rel, 'wasm', tool, toolTag), { recursive: true });
 
 // 1. The engine: gz only, level 9; the icon archive raw (the boot requires it).
-// The icon archive ships repacked (theme/icons/repack.mjs) when the repack exists: the
-// stock file must then be the one PIN.json.icons was built from, and the repack must
-// hash to what PIN.json.icons recorded, or the build stops naming the file.
+// The icon archive always ships repacked (theme/icons/repack.mjs). The repack is
+// git-ignored, so a fresh clone makes it here (rasterise, then repack) rather than
+// ship the stock archive. The stock file must be the one PIN.json.icons was built
+// from, and the repack must hash to what the committed PIN.json.icons recorded
+// (read above, before repack.mjs rewrites the file), or the build stops naming it.
 const repacked = join('theme', 'icons', 'out', 'images.tar.gz');
+if (!existsSync(repacked)) {
+  console.log(`${repacked} missing: rasterising the glyphs and repacking the icon archive`);
+  execSync('node theme/icons/rasterise.mjs', { stdio: 'inherit' });
+  execSync('node theme/icons/repack.mjs', { stdio: 'inherit' });
+}
 for (const name of FILES) {
   let bytes = engine[name];
   if (name === 'images.tar.gz') {
-    if (existsSync(repacked)) {
-      const stockSha = createHash('sha256').update(bytes).digest('hex');
-      const icons = pin.icons ?? {};
-      if (stockSha !== icons.stockArchiveSha256) throw new Error(`${name}: stock sha256 ${stockSha} differs from PIN.json icons.stockArchiveSha256 ${icons.stockArchiveSha256}; run node theme/icons/repack.mjs`);
-      bytes = readFileSync(repacked);
-      const repackedSha = createHash('sha256').update(bytes).digest('hex');
-      if (repackedSha !== icons.repackedSha256) throw new Error(`${repacked}: sha256 ${repackedSha} differs from PIN.json icons.repackedSha256 ${icons.repackedSha256}; run node theme/icons/repack.mjs`);
-      console.log(`${name}: repacked (${icons.replacedEntries ?? '?'} entries replaced)`);
-    }
+    const stockSha = createHash('sha256').update(bytes).digest('hex');
+    const icons = pin.icons ?? {};
+    if (stockSha !== icons.stockArchiveSha256) throw new Error(`${name}: stock sha256 ${stockSha} differs from PIN.json icons.stockArchiveSha256 ${icons.stockArchiveSha256}; run node theme/icons/repack.mjs`);
+    bytes = readFileSync(repacked);
+    const repackedSha = createHash('sha256').update(bytes).digest('hex');
+    if (repackedSha !== icons.repackedSha256) throw new Error(`${repacked}: sha256 ${repackedSha} differs from PIN.json icons.repackedSha256 ${icons.repackedSha256} as committed; if repack.mjs just rewrote PIN.json.icons, review that diff and commit it only when the new glyph rendering is intended`);
+    console.log(`${name}: shipping the repack ${repacked} (sha256 ${repackedSha}, ${icons.replacedEntries ?? '?'} entries replaced)`);
     writeFileSync(join(rel, 'wasm', tool, toolTag, name), bytes);
   } else writeFileSync(join(rel, 'wasm', tool, toolTag, `${name}.gz`), gzipSync(bytes, { level: 9 }));
 }
 
 // 2. The page and its module.
 execSync('npx vite build', { stdio: 'inherit' });
+
+// 2b. The notices: licenses.html, LICENSE.txt and NOTICE beside the page. The census
+// inside exits 1 (and so stops the build before current moves) when versions.sh names a
+// dependency with no licence entry or a changed copied file lacks its dated notice.
+execSync(`node scripts/notices.mjs ${rel}`, { stdio: 'inherit' });
 
 // 3. island.json, twice: inside the release and at the root for the no-cache route.
 const island = { id, tag: pin.pcbjam.tag, kicad: pin.pcbjam.kicad, source: `https://github.com/matt-chinchilla/cc-editor-island/releases/tag/${id}` };

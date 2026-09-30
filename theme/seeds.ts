@@ -10,9 +10,6 @@ import hotkeys from './user.hotkeys?raw';
 import type { Seeds } from '../loader/src/wasm/boot';
 import type { Theme } from '../src/types';
 
-/** The chrome skin sheet's URL: Vite emits theme/chrome-tokens.css as a hashed asset under the release base. */
-export const CHROME_CSS_HREF: string = new URL('./chrome-tokens.css', import.meta.url).href;
-
 export function seedsFor(theme: Theme): Seeds {
   return {
     colors: [{ name: 'circuitcenter-light.json', json: light }, { name: 'circuitcenter-dark.json', json: dark }],
