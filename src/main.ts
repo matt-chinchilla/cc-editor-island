@@ -21,6 +21,7 @@ import { engineBase } from './assets';
 import { parentOriginFor, parseBoot } from './cc-config';
 import { cleanDetail, hideScreens, showScreen } from './screens';
 import { FRAME_TOKEN, frameToTool, type Frame } from './types';
+import { installQuitHandler } from './quit';
 import { installWindowOpenWrapper } from './window-open';
 
 declare const __ISLAND_TAG__: string;      // define'd by vite.config.ts from PIN.json
@@ -91,6 +92,14 @@ async function main(): Promise<void> {
     responder.emit({ type: 'ev.closing' });
   };
   window.addEventListener('pagehide', closing);
+  // File > Quit destroyed the editor's frame: tell the host, show the fatal
+  // screen, navigate nowhere. Installed before the engine's own unload handler.
+  installQuitHandler(window, () => {
+    closing();
+    if (fatal) return;
+    fatal = true;
+    showScreen('fatal');
+  });
 
   showScreen('preflight');
   responder.emit({ type: 'ev.state', phase: 'preflight' });
