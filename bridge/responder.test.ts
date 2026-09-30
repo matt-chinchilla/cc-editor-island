@@ -33,6 +33,8 @@ function connect(page: Window & { dispatch: (t: string, e: unknown) => void }, n
 /** A MEMFS stand-in with the calls the island makes. */
 function fakeFs() {
   const dirs = new Set<string>(['/']);
+  /** Directories MEMFS refuses to remove (EBUSY): the engine's working directory. */
+  const busy = new Set<string>();
   const files = new Map<string, Uint8Array>();
   const parentOf = (p: string) => p.slice(0, p.lastIndexOf('/')) || '/';
   const FS = {
@@ -51,14 +53,18 @@ function fakeFs() {
     },
     stat(p: string) { return { mode: dirs.has(p) ? 0o040755 : 0o100644 }; },
     isDir(mode: number) { return (mode & 0o170000) === 0o040000; },
-    rmdir(p: string) { if (this.readdir(p).length > 2) throw new Error('ENOTEMPTY'); dirs.delete(p); },
+    rmdir(p: string) {
+      if (busy.has(p)) throw { errno: 10 };   // MEMFS throws an ErrnoError, not an Error
+      if (this.readdir(p).length > 2) throw new Error('ENOTEMPTY');
+      dirs.delete(p);
+    },
   };
-  return { FS, files, dirs };
+  return { FS, files, dirs, busy };
 }
 
 /** A booted engine: a visible frame, the programmatic open and the save exports. */
 function fakeEngine() {
-  const { FS, files, dirs } = fakeFs();
+  const { FS, files, dirs, busy } = fakeFs();
   const opened: string[] = [];
   const Module = {
     kicadOpenFile: vi.fn((p: string) => { opened.push(p); }),
@@ -74,7 +80,7 @@ function fakeEngine() {
     Module,
     wxElementRegistry: { findAll: () => [{ typeName: 'SCH_EDIT_FRAME', name: 'SchematicFrame', visible: true }], findByLabel: () => [] },
   } as unknown as ToolWindow & { kicadCollab?: { onSave?: (p: string) => void } };
-  return { win, files, dirs, opened, Module };
+  return { win, files, dirs, busy, opened, Module };
 }
 
 const b = (s: string) => new TextEncoder().encode(s);
@@ -259,6 +265,32 @@ describe('startResponder', () => {
     ]);
     expect([...eng.files.keys()]).toEqual([]);
     expect(eng.dirs.has(ROOT)).toBe(false);
+  });
+
+  it('opens over an opened project and forgets it while the engine holds the folder as its working directory', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    port.postMessage({ id: 1, op: 'project.open', args: { name: 'a', files: [
+      { path: 'a.kicad_sch', bytes: b('(kicad_sch a)') }, { path: 'lib/a.kicad_sym', bytes: b('(kicad_symbol_lib)') },
+    ] } });
+    await settle(100);
+    // KiCad changed into the opened project's folder, and wrote its lock file there.
+    eng.busy.add(ROOT);
+    eng.files.set(`${ROOT}/~a.kicad_sch.lck`, b('lock'));
+    got.length = 0;
+    port.postMessage({ id: 2, op: 'project.open', args: { name: 'b', files: [{ path: 'b.kicad_sch', bytes: b('(kicad_sch b)') }] } });
+    await settle(100);
+    expect(got.at(-1)).toEqual({ id: 2, ok: true, result: { opened: 'b.kicad_sch', dropped: [] } });
+    expect([...eng.files.keys()]).toEqual([`${ROOT}/b.kicad_sch`]);
+    expect(eng.dirs.has(`${ROOT}/lib`)).toBe(false);
+    got.length = 0;
+    port.postMessage({ id: 3, op: 'project.forget' });
+    await settle();
+    expect(got).toEqual([{ id: 3, ok: true, result: {} }]);
+    expect([...eng.files.keys()]).toEqual([]);
   });
 
   it('answers save_failed and emits nothing when the engine save writes nothing', async () => {

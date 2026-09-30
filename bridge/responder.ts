@@ -56,7 +56,11 @@ function withTimeout<T>(value: T | Promise<T>, ms: number): Promise<T | 'timeout
   return Promise.race([Promise.resolve(value), new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), ms))]);
 }
 
-/** Removes a MEMFS directory and everything under it. */
+/**
+ * Removes everything under a MEMFS directory, then the directory itself when
+ * MEMFS allows it. KiCad changes into the opened project's folder, and MEMFS
+ * refuses to remove its working directory (EBUSY); that folder stays, empty.
+ */
 function removeTree(FS: EmscriptenFS, dir: string): void {
   if (!FS.analyzePath(dir).exists) return;
   for (const name of FS.readdir(dir)) {
@@ -64,7 +68,7 @@ function removeTree(FS: EmscriptenFS, dir: string): void {
     const p = `${dir}/${name}`;
     if (FS.isDir(FS.stat(p).mode)) removeTree(FS, p); else FS.unlink(p);
   }
-  FS.rmdir(dir);
+  try { FS.rmdir(dir); } catch { /* the engine's working directory: left in place, empty */ }
 }
 
 /** A MEMFS file's bytes, or null when it is absent or unreadable. */
