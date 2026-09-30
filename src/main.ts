@@ -121,7 +121,9 @@ async function main(): Promise<void> {
     return true;
   };
 
-  const container = document.getElementById('editor');
+  // wx.js addresses the stage by id: #main-window is its top-level window (it
+  // owns the canvas) and #window-container parents every child window.
+  const container = document.getElementById('main-window');
   if (container == null) { die('no_container'); return; }
   try {
     await bootKicadTool({
