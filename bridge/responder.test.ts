@@ -334,6 +334,24 @@ describe('startResponder', () => {
     expect(eng.files.size).toBe(0);
   });
 
+  it('reports blocked popups after ev.ready as ev.state popup, and only the booting note before', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    r.popupBlocked(1);   // before ready: counted into the booting note, no event of its own
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 1 });
+    r.popupBlocked(2);
+    r.popupBlocked(3);
+    await settle();
+    expect(got.map((e) => (e.type === 'ev.ready' ? { type: e.type } : e))).toEqual([
+      { type: 'ev.state', phase: 'booting', detail: '1 popup attempts blocked' },
+      { type: 'ev.ready' },
+      { type: 'ev.state', phase: 'popup', detail: '2 popup attempts blocked' },
+      { type: 'ev.state', phase: 'popup', detail: '3 popup attempts blocked' },
+    ]);
+  });
+
   it('saves the sheet the schematic editor is showing to that sheet file', async () => {
     const { page, parent } = fakePage();
     const r = startResponder({ parentOrigin: PARENT, page });

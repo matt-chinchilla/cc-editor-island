@@ -16,6 +16,18 @@ describe('installWindowOpenWrapper', () => {
     expect(w.attempts()).toBe(3);
   });
 
+  it('reports every non-help attempt with the running count', () => {
+    const win = { open: vi.fn() } as unknown as Window;
+    const help = vi.fn();
+    const blocked = vi.fn();
+    installWindowOpenWrapper(win, help, blocked);
+    win.open('https://go.kicad.org/forum', '_blank');
+    win.open('https://go.kicad.org/docs/10.0/en/pcbnew/', '_blank');
+    win.open('https://evil.example', '_blank');
+    expect(help).toHaveBeenCalledWith('pcbnew');
+    expect(blocked.mock.calls).toEqual([[1], [3]]);
+  });
+
   it('cannot be put back by a later assignment', () => {
     const original = vi.fn();
     const win = { open: original } as unknown as Window;

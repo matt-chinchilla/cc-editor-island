@@ -59,7 +59,11 @@ async function main(): Promise<void> {
 
   // Hello goes out now, before anything heavy; events queue until the port connects.
   const responder = startResponder({ parentOrigin: parent, page: window });
-  const popups = installWindowOpenWrapper(window, (topic) => responder.emit({ type: 'ev.help', topic }));
+  const popups = installWindowOpenWrapper(
+    window,
+    (topic) => responder.emit({ type: 'ev.help', topic }),
+    (attempts) => responder.popupBlocked(attempts),
+  );
 
   let fatal = false;
   const die = (detail: string): void => {

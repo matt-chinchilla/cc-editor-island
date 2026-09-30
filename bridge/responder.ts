@@ -23,6 +23,8 @@ export type IslandEvent =
 export interface Responder {
   emit(ev: IslandEvent): void;
   engineReady(win: ToolWindow, engine: { tag: string; kicad: string }, help: { attempts(): number }): void;
+  /** A window.open the wrapper refused; after ev.ready each one is reported as ev.state popup. */
+  popupBlocked(attempts: number): void;
 }
 
 type Answer = { ok: true; result: Record<string, unknown> } | { ok: false; code: string; message: string };
@@ -36,6 +38,7 @@ const APPLY_TIMEOUT_MS = 30_000;
 const OPS = new Set(['project.open', 'project.save', 'project.forget', 'chrome.show', 'readonly']);
 const EXT: Record<Frame, string> = { sch: '.kicad_sch', pcb: '.kicad_pcb' };
 
+const popupNote = (n: number): string => `${n} popup attempts blocked`;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const onlyKeys = (o: Record<string, unknown>, allowed: readonly string[]): boolean => Object.keys(o).every((k) => allowed.includes(k));
 const ok = (result: Record<string, unknown> = {}): Answer => ({ ok: true, result });
@@ -291,8 +294,12 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
       const mod: Record<string, unknown> = w.Module ?? {};
       const caps = Object.keys(mod).filter((k) => /^kicad[A-Za-z0-9]*$/.test(k) && typeof mod[k] === 'function').sort();
       const n = help.attempts();
-      if (n > 0) emit({ type: 'ev.state', phase: 'booting', detail: `${n} popup attempts blocked` });
+      if (n > 0) emit({ type: 'ev.state', phase: 'booting', detail: popupNote(n) });
       emit({ type: 'ev.ready', caps, engine });
+    },
+    popupBlocked(attempts) {
+      // Before ev.ready the count travels once, in the booting note above.
+      if (ready) emit({ type: 'ev.state', phase: 'popup', detail: popupNote(attempts) });
     },
   };
 }
