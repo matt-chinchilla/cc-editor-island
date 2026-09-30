@@ -20,6 +20,8 @@ Answers: `{ id, ok: true, result?: any }` or `{ id, ok: false, error: { code: st
 | `chrome.show` | `{ on: boolean }` | `{}` |
 | `readonly` | `{ on: boolean }` | `{}` |
 
+`project.open` and `project.save` answer `{ ok: false, error: { code: "busy" } }` while the engine is still loading a file; nothing was changed, and the host may send the request again later.
+
 Paths are relative, POSIX, no `.` or `..` segments, no leading slash, no NUL, at most 255 bytes; a rejected path is reported in `dropped`, never written.
 
 ## Events (frame to host): `{ type: string, ... }`

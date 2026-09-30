@@ -293,6 +293,36 @@ describe('startResponder', () => {
     expect([...eng.files.keys()]).toEqual([]);
   });
 
+  it('answers busy to project.open and project.save while the engine is still loading a file', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] } });
+    await settle(100);
+    got.length = 0;
+    const mod = eng.Module as { kicadOpenFileBusy: () => boolean };
+    mod.kicadOpenFileBusy = () => true;
+    port.postMessage({ id: 2, op: 'project.save' });
+    port.postMessage({ id: 3, op: 'project.open', args: { name: 'y', files: [{ path: 'other.kicad_sch', bytes: b('(kicad_sch other)') }] } });
+    port.postMessage({ id: 4, op: 'project.forget' });
+    await settle();
+    expect(got).toEqual([
+      { id: 2, ok: false, error: { code: 'busy', message: 'the engine is busy' } },
+      { id: 3, ok: false, error: { code: 'busy', message: 'the engine is busy' } },
+      { id: 4, ok: true, result: {} },
+    ]);
+    expect(eng.Module.kicadSaveSchematic).not.toHaveBeenCalled();
+    expect(eng.opened).toEqual([`${ROOT}/blink.kicad_sch`]);
+    // Once the load settles the same requests go through.
+    mod.kicadOpenFileBusy = () => false;
+    got.length = 0;
+    port.postMessage({ id: 5, op: 'project.open', args: { name: 'y', files: [{ path: 'other.kicad_sch', bytes: b('(kicad_sch other)') }] } });
+    await settle(100);
+    expect(got.at(-1)).toEqual({ id: 5, ok: true, result: { opened: 'other.kicad_sch', dropped: [] } });
+  });
+
   it('answers save_failed and emits nothing when the engine save writes nothing', async () => {
     const { page, parent } = fakePage();
     const r = startResponder({ parentOrigin: PARENT, page });

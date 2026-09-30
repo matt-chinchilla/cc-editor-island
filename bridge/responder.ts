@@ -173,7 +173,20 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
     }
   }
 
+  /**
+   * The engine is still loading a file (open_gate.h's counter, the probe the
+   * loader's open flow polls). A second open or a save sent then would queue
+   * behind the parked load, so both answer busy and the host retries.
+   */
+  function engineBusy(): boolean {
+    const mod = win?.Module as { kicadOpenFileBusy?: () => unknown } | undefined;
+    const probe = mod?.kicadOpenFileBusy;
+    if (typeof probe !== 'function') return false;
+    try { return probe.call(mod) === true; } catch { return false; }
+  }
+
   async function run(op: string, args: unknown): Promise<Answer> {
+    if ((op === 'project.open' || op === 'project.save') && engineBusy()) return fail('busy', 'the engine is busy');
     switch (op) {
       case 'project.open': return projectOpen(args);
       case 'project.save': return noArgs(args) ? projectSave() : fail('bad_args', op);
