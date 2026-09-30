@@ -12,6 +12,41 @@
     "README": "KiCad is GPL-3.0. This project follows the same license.",
     "fileHeaders": "none under web/standalone/src at this tag"
   },
-  "engine": { "manifest": "https://cdn.pcbjam.com/wasm/manifest-v0.2.3.json", "tool": "kicad_editor", "toolTag": "v0.2.3", "files": {} },
-  "icons": { "stockArchiveSha256": "", "repackedSha256": "", "inputs": "theme/icons/src" }
+  "engine": {
+    "manifest": "https://cdn.pcbjam.com/wasm/manifest-v0.2.3.json",
+    "tool": "kicad_editor",
+    "toolTag": "v0.2.3",
+    "files": {
+      "kicad_editor.js": {
+        "sha256": "39e41c2233a1e139be74e4a8b408380ec7c05ec7c1418d3e336deb3dd600d9b0",
+        "bytes": 488056,
+        "source": "7ec51c1c55aab45b21cd2956af413b4420520838"
+      },
+      "kicad_editor.wasm": {
+        "sha256": "a80fd1f7004d1571aa2344ae7a195187fff31ee31e74ca5eff7adc42c98812f9",
+        "bytes": 60823287,
+        "source": "7ec51c1c55aab45b21cd2956af413b4420520838"
+      },
+      "wx.js": {
+        "sha256": "42d6b547f9a024f187f1b7812b64a3f76ca322d35393531340cb316ff88da351",
+        "bytes": 79808,
+        "source": "7ec51c1c55aab45b21cd2956af413b4420520838"
+      },
+      "wx-dom.js": {
+        "sha256": "7edabd5571c9f2fd0ea1acf7005fb3628f2e3cf6b8f430f8e473c328fb042a10",
+        "bytes": 68699,
+        "source": "7ec51c1c55aab45b21cd2956af413b4420520838"
+      },
+      "images.tar.gz": {
+        "sha256": "bc24c8db9b9050af2093305e0e42694812297ff4f465f45b0d30b0303dde6477",
+        "bytes": 5373919,
+        "source": "7ec51c1c55aab45b21cd2956af413b4420520838"
+      }
+    }
+  },
+  "icons": {
+    "stockArchiveSha256": "",
+    "repackedSha256": "",
+    "inputs": "theme/icons/src"
+  }
 }

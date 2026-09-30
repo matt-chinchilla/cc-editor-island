@@ -3,3 +3,4 @@ dist/
 upstream/
 .playwright/
 test-results/
+engine/

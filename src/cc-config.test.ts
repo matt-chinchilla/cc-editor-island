@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 Chirichella Inc.
 import { describe, expect, it } from 'vitest';
 import { parentOriginFor, parseBoot } from './cc-config';
 
