@@ -30,14 +30,17 @@ function leavesPair(url: string): boolean {
  * each request that reached the network stack (a worker's too, checked by the
  * sentinel below), WebSockets are their own event, and a popup is a new page.
  * A request the CSP refused never reaches the network; its console line is kept
- * as a fenced attempt.
+ * as a fenced attempt. Playwright reports WebSockets per page only (there is
+ * no context event), so the socket watch is attached to every page of the
+ * context, the ones open now and any that appear later.
  */
 function watch(context: BrowserContext, page: Page) {
   const w = { seen: [] as string[], leftPair: [] as string[], sockets: [] as string[], popups: [] as string[], fenced: [] as string[] };
+  const socketsOf = (p: Page): void => { p.on('websocket', (ws) => w.sockets.push(ws.url())); };
   context.on('request', (r) => { w.seen.push(r.url()); if (leavesPair(r.url())) w.leftPair.push(r.url()); });
-  context.on('page', (p) => w.popups.push(p.url() || 'about:blank'));
+  for (const p of context.pages()) socketsOf(p);
+  context.on('page', (p) => { w.popups.push(p.url() || 'about:blank'); socketsOf(p); });
   page.on('popup', (p) => w.popups.push(p.url() || 'about:blank'));
-  page.on('websocket', (ws) => w.sockets.push(ws.url()));
   page.on('console', (m) => { if (/Content[- ]Security[- ]Policy/i.test(m.text())) w.fenced.push(m.text().slice(0, 200)); });
   return w;
 }
@@ -90,10 +93,16 @@ async function clickWx(page: Page, frame: Frame, label: string): Promise<void> {
 // engines at the harness's 1280 by 800 frame (the menu bar is the frame's top row).
 const MENU = { help: [461, 9], gettingStarted: [560, 59], getInvolved: [508, 107] } as const;
 
-test('top-level opens nothing', async ({ page }) => {
+test('top-level opens nothing', async ({ page, context }) => {
+  const asked: string[] = [];
+  context.on('request', (r) => asked.push(r.url()));
   await page.goto(`${ISLAND}/?frame=sch&theme=day`);
   await expect(page.locator('#screen')).toContainText('Open it from circuitcenter.ai');
   await expect(page.locator('#main-window canvas, #window-container *')).toHaveCount(0);
+  // Proven by the network too: the page loaded, and neither engine script nor the wasm was asked for.
+  await page.waitForLoadState('networkidle');
+  expect(asked.some((u) => u.startsWith(`${ISLAND}/`))).toBe(true);
+  expect(asked.filter((u) => /\/(kicad_editor\.(wasm|js)|wx\.js|wx-dom\.js)(\.gz)?(\?|$)/.test(new URL(u).pathname + new URL(u).search))).toEqual([]);
 });
 
 test('the island answers with the snippet headers, and the worker script carries the CSP', async ({ page }) => {
@@ -180,6 +189,9 @@ test('boots inside the sandboxed iframe, opens Glasgow, saves both ways, never l
   await page.waitForFunction(() => (window as unknown as Harness).__events.some((e) => e.type === 'ev.help' && e.topic === 'getting_started_in_kicad'));
   expect(await frame.evaluate(() => Object.getOwnPropertyDescriptor(window, 'open')?.writable)).toBe(false);
 
+  // An empty popup list is guaranteed by the iframe's sandbox (no allow-popups)
+  // whatever the island does; the real proof is above: the ev.state popup
+  // report, ev.help, and window.open non-writable inside the frame.
   expect(w.popups).toEqual([]);
   expect(w.sockets).toEqual([]);
   expect(w.leftPair).toEqual([]);
@@ -225,6 +237,7 @@ test('a hierarchical schematic saves the shown sheet, the hotkeys work, and a se
   expect((await visibleWx(frame, {})).filter((e) => /Dialog/.test(e.typeName))).toEqual([]);
   expect(await request(page, 'project.save')).toEqual({ path: 'glasgow.kicad_sch' });
 
+  // Guaranteed by the sandbox; the popup proof is the Glasgow pcb test's ev.state popup and window.open checks.
   expect(w.popups).toEqual([]);
   expect(w.sockets).toEqual([]);
   expect(w.leftPair).toEqual([]);
@@ -259,16 +272,24 @@ test('a traversal path is dropped, never written', async ({ page }) => {
   expect(hits.filter((f) => f.marked)).toEqual([]);
 });
 
+// Not a fence proof on this engine: its HTTP library type (the sym-lib-table
+// row with type "HTTP") is inert. The chooser shows no row for it and no
+// request for example.invalid is attempted even with connect-src relaxed
+// (Task 7 report), so this test cannot fail here. The fence (Focus 5) is
+// carried by the WebSocket check in the hierarchical schematic test, which
+// goes red when ws: is allowed. This test stays as the guard for a later
+// engine that does fetch HTTP libraries.
 test('an HTTP library named by the project produces zero off-origin requests', async ({ page, context }) => {
   const w = watch(context, page);
   const frame = await boot(page, 'fixture=http-lib&frame=sch', 'httplib.kicad_sch');
-  // The symbol chooser enumerates every library the project's sym-lib-table names.
+  // The symbol chooser enumerates the libraries the project's sym-lib-table names.
   await clickIn(page, 1100, 730);
   await page.keyboard.press('a');
   await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length, { timeout: 15_000 }).toBe(1);
   await page.waitForTimeout(3000);   // the brief's quiet period for a late library fetch
   expect(w.leftPair).toEqual([]);
   expect(w.sockets).toEqual([]);
+  // Guaranteed by the sandbox; the popup proof is the Glasgow pcb test's ev.state popup and window.open checks.
   expect(w.popups).toEqual([]);
   fencedNote(w);
 });

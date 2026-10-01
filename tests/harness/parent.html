@@ -46,7 +46,8 @@ window.__bridge = {
     const id = nextId++;
     const msg = args === undefined ? { id, op } : { id, op, args };
     return new Promise((resolve, reject) => {
-      pending.set(id, (a) => (a.ok ? resolve(a.result) : reject(new Error(`${a.error.code}: ${a.error.message}`))));
+      // A failure answer without an error object still rejects, so no request is left pending.
+      pending.set(id, (a) => (a.ok ? resolve(a.result) : reject(new Error(`${a.error?.code}: ${a.error?.message}`))));
       const transfer = args && Array.isArray(args.files) ? args.files.map((f) => f.bytes.buffer) : [];
       port.postMessage(msg, transfer);
     });
