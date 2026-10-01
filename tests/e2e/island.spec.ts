@@ -477,6 +477,37 @@ test('the board frame boots canvas only too, with the cheap cursor seeds', async
   }
 });
 
+test('a seeded chord starts a tool KiCad gives no key: Ctrl+Alt+R draws a schematic rectangle', async ({ page }) => {
+  const frame = await boot(page, 'fixture=glasgow&frame=sch', 'glasgow.kicad_sch');
+  // The harness keeps only the first 4 KiB of a save, so the count reads the saved root file from MEMFS.
+  const rectangles = async (): Promise<number> => {
+    expect(await request(page, 'project.save')).toEqual({ path: 'glasgow.kicad_sch' });
+    return frame.evaluate(() => {
+      const FS = (window as unknown as { FS: { readdir(p: string): string[]; stat(p: string): { mode: number }; isDir(m: number): boolean; readFile(p: string, o: { encoding: 'utf8' }): string } }).FS;
+      const walk = (dir: string): string | null => {
+        for (const n of FS.readdir(dir).filter((x) => x !== '.' && x !== '..')) {
+          const p = `${dir}/${n}`;
+          if (FS.isDir(FS.stat(p).mode)) { const f = walk(p); if (f != null) return f; } else if (n === 'glasgow.kicad_sch') return p;
+        }
+        return null;
+      };
+      const path = walk('/home/kicad/documents/kicad/10.0/projects');
+      return path == null ? -1 : FS.readFile(path, { encoding: 'utf8' }).split('(rectangle').length - 1;
+    });
+  };
+  const before = await rectangles();
+  // A tool started by its hotkey takes the pointer as its first click, so the pointer goes to one corner first.
+  const box = await page.locator('iframe').boundingBox();
+  if (box == null) throw new Error('no iframe box');
+  await page.mouse.move(box.x + 1000, box.y + 640, { steps: 4 });
+  // theme/user.hotkeys binds eeschema.InteractiveDrawing.drawRectangle to Ctrl+Alt+R (theme/pencil-tools.json).
+  expect(await request(page, 'key.press', { key: 'r', code: 'KeyR', ctrl: true, alt: true })).toEqual({});
+  // A click at the opposite corner finishes the rectangle; Escape leaves the tool.
+  await clickIn(page, 1150, 730);
+  expect(await request(page, 'key.press', { key: 'Escape', code: 'Escape' })).toEqual({});
+  await expect.poll(rectangles, { timeout: 10_000 }).toBe(before + 1);
+});
+
 /** The appearance.color_theme an editor's seeded config selects, read from the frame's MEMFS. */
 const colorTheme = (frame: Frame, file: 'eeschema.json' | 'pcbnew.json'): Promise<unknown> => frame.evaluate((name) => {
   const FS = (window as unknown as { FS: { readFile(p: string, o: { encoding: 'utf8' }): string } }).FS;
