@@ -78,7 +78,14 @@ function fakeEngine() {
     kicadOpenFile: vi.fn((p: string) => { opened.push(p); }),
     kicadOpenFileBusy: () => false,
     kicadSaveSchematic: vi.fn((p: string) => { FS.writeFile(p, '(kicad_sch saved)'); }),
-    kicadSheetsGetTree: vi.fn(() => JSON.stringify({ current: '/', sheets: [{ path: '/', file: `${ROOT}/blink.kicad_sch` }] })),
+    kicadSheetsGetTree: vi.fn(() => JSON.stringify({ current: '/', sheets: [{ depth: 0, file: `${ROOT}/blink.kicad_sch`, name: 'blink', page: '1', parent: '', path: '/' }] })),
+    kicadSheetsEnter: vi.fn((p: string) => p === '/' || p === '/00000000-0000-0000-0000-00005c7b59b0/'),
+    kicadLayersGetState: vi.fn(() => JSON.stringify({ active: 0, layers: [
+      { canonical: 'F.Cu', color: 'rgb(200, 52, 52)', copper: true, id: 0, name: 'F.Cu', visible: true },
+      { canonical: 'B.Cu', color: 'rgb(77, 127, 196)', copper: true, id: 2, name: 'B.Cu', visible: true },
+    ] })),
+    kicadLayersSetVisible: vi.fn((id: number) => id === 0 || id === 2),
+    kicadLayersSetActive: vi.fn((id: number) => id === 0 || id === 2),
     kicadSetChrome: vi.fn(() => true),
     kicadSetReadOnly: vi.fn(async () => true),
     notAnExport: 1,
@@ -226,7 +233,7 @@ describe('startResponder', () => {
     await settle();
     expect(got).toEqual([
       { type: 'ev.state', phase: 'booting', detail: '2 popup attempts blocked' },
-      { type: 'ev.ready', caps: ['kicadOpenFile', 'kicadOpenFileBusy', 'kicadSaveSchematic', 'kicadSetChrome', 'kicadSetReadOnly', 'kicadSheetsGetTree'], engine: { tag: 'v0.2.3-cc1', kicad: '10.0' } },
+      { type: 'ev.ready', caps: ['kicadLayersGetState', 'kicadLayersSetActive', 'kicadLayersSetVisible', 'kicadOpenFile', 'kicadOpenFileBusy', 'kicadSaveSchematic', 'kicadSetChrome', 'kicadSetReadOnly', 'kicadSheetsEnter', 'kicadSheetsGetTree'], engine: { tag: 'v0.2.3-cc1', kicad: '10.0' } },
     ]);
     got.length = 0;
 
@@ -805,5 +812,76 @@ describe('the chrome across opens', () => {
     await settle(100);
     expect(eng.Module.kicadSetChrome.mock.calls).toEqual([[false], [true], [false], [false]]);
     expect(got.filter((m) => m.id != null).map((m) => m.ok)).toEqual([true, true, true, true, true]);
+  });
+});
+
+describe('sheets, layers and fit', () => {
+  /** A connected responder over a booted engine; `request` answers as { ok, result } or { ok: false, code, message }. */
+  function booted(eng: ReturnType<typeof fakeEngine>) {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    let id = 0;
+    return {
+      async request(op: string, args?: unknown) {
+        const n = ++id;
+        port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+        await settle();
+        const m = got.find((x) => x.id === n) as { ok: boolean; result?: unknown; error?: { code: string; message: string } } | undefined;
+        if (m == null) return undefined;
+        return m.ok ? { ok: true, result: m.result } : { ok: false, code: m.error?.code, message: m.error?.message };
+      },
+    };
+  }
+  // No DOM in this suite: a KeyboardEvent stand-in that keeps key and code.
+  beforeEach(() => {
+    vi.stubGlobal('KeyboardEvent', class extends Event {
+      key: string; code: string;
+      constructor(type: string, init: KeyboardEventInit = {}) { super(type, init); this.key = init.key ?? ''; this.code = init.code ?? ''; }
+    });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('sheet.tree drops the absolute file path for its base name and keeps the rest', async () => {
+    const r = booted(fakeEngine());
+    expect(await r.request('sheet.tree')).toEqual({ ok: true, result: { current: '/', sheets: [{ path: '/', name: 'blink', page: '1', depth: 0, parent: '', file: 'blink.kicad_sch' }] } });
+  });
+  it('sheet.enter validates the path and relays the engine\'s answer', async () => {
+    const eng = fakeEngine();
+    const r = booted(eng);
+    expect(await r.request('sheet.enter', { path: '/00000000-0000-0000-0000-00005c7b59b0/' })).toEqual({ ok: true, result: {} });
+    expect(await r.request('sheet.enter', { path: '/not-a-uuid/' })).toMatchObject({ ok: false, code: 'bad_args' });
+    expect(await r.request('sheet.enter', { path: '/11111111-1111-1111-1111-111111111111/' })).toMatchObject({ ok: false, code: 'not_applied' });
+    expect(await r.request('sheet.enter', {})).toMatchObject({ ok: false, code: 'bad_args' });
+  });
+  it('layers.get relays the state; the setters validate the id and relay the answer', async () => {
+    const eng = fakeEngine();
+    const r = booted(eng);
+    const got = await r.request('layers.get');
+    expect(got).toMatchObject({ ok: true });
+    expect((got as { result: { active: number; layers: unknown[] } }).result.layers).toHaveLength(2);
+    expect(await r.request('layers.visible', { id: 2, visible: false })).toEqual({ ok: true, result: {} });
+    expect(eng.Module.kicadLayersSetVisible).toHaveBeenCalledWith(2, false);
+    expect(await r.request('layers.visible', { id: 99, visible: true })).toMatchObject({ ok: false, code: 'not_applied' });
+    expect(await r.request('layers.visible', { id: '2', visible: true })).toMatchObject({ ok: false, code: 'bad_args' });
+    expect(await r.request('layers.active', { id: 2 })).toEqual({ ok: true, result: {} });
+    expect(await r.request('layers.active', { id: -1 })).toMatchObject({ ok: false, code: 'bad_args' });
+  });
+  it('an empty answer from the engine (the other frame) is unsupported', async () => {
+    const eng = fakeEngine();
+    eng.Module.kicadLayersGetState.mockReturnValue('');
+    eng.Module.kicadSheetsGetTree.mockReturnValue('');
+    const r = booted(eng);
+    expect(await r.request('layers.get')).toMatchObject({ ok: false, code: 'unsupported' });
+    expect(await r.request('sheet.tree')).toMatchObject({ ok: false, code: 'unsupported' });
+  });
+  it('view.fit presses Home', async () => {
+    const eng = fakeEngine();
+    const seen: string[] = [];
+    (eng.win as unknown as Window).dispatchEvent = vi.fn((e: Event) => { seen.push(`${e.type}:${(e as KeyboardEvent).code}`); return true; }) as never;
+    const r = booted(eng);
+    expect(await r.request('view.fit')).toEqual({ ok: true, result: {} });
+    expect(seen).toEqual(['keydown:Home', 'keyup:Home']);
   });
 });

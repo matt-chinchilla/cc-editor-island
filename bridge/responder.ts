@@ -52,7 +52,9 @@ const MAX_QUEUED = 256;
 const MAX_FILES = 4096;
 const MAX_NAME = 255;
 const APPLY_TIMEOUT_MS = 30_000;
-const OPS = new Set(['project.open', 'project.save', 'project.forget', 'chrome.show', 'readonly', 'shutdown', 'key.press']);
+const OPS = new Set(['project.open', 'project.save', 'project.forget', 'chrome.show', 'readonly', 'shutdown', 'key.press', 'view.fit', 'sheet.tree', 'sheet.enter', 'layers.get', 'layers.visible', 'layers.active']);
+/** A sheet path as the engine reports it: "/" then one UUID and a slash per level. */
+const SHEET_PATH_RE = /^\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/)*$/;
 const EXT: Record<Frame, string> = { sch: '.kicad_sch', pcb: '.kicad_pcb' };
 
 const popupNote = (n: number): string => `${n} popup attempts blocked`;
@@ -62,6 +64,10 @@ const ok = (result: Record<string, unknown> = {}): Answer => ({ ok: true, result
 const fail = (code: string, message: string): Answer => ({ ok: false, code, message });
 /** A request with no args: absent, or an empty object. */
 const noArgs = (args: unknown): boolean => args === undefined || (isObj(args) && Object.keys(args).length === 0);
+/** A KiCad layer id: an integer 0 to 127. */
+const isLayerId = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 127;
+/** The last segment of a MEMFS path: the engine's absolute paths never leave the frame. */
+const baseName = (p: string): string => p.slice(p.lastIndexOf('/') + 1);
 
 function randomNonce(): string {
   const a = new Uint8Array(16);
@@ -298,6 +304,13 @@ export function startResponder(opts: {
       case 'chrome.show': return toggle(op, args, 'kicadSetChrome');
       case 'readonly': return toggle(op, args, 'kicadSetReadOnly');
       case 'key.press': return keyPress(args);
+      // KiCad's Zoom to Fit is its Home hotkey; through keyPress, so a dialog that is up answers busy.
+      case 'view.fit': return noArgs(args) ? keyPress({ key: 'Home', code: 'Home' }) : fail('bad_args', op);
+      case 'sheet.tree': return noArgs(args) ? sheetTree() : fail('bad_args', op);
+      case 'sheet.enter': return sheetEnter(args);
+      case 'layers.get': return noArgs(args) ? layersGet() : fail('bad_args', op);
+      case 'layers.visible': return layersVisible(args);
+      case 'layers.active': return layersActive(args);
     }
     return fail('unknown_op', op);
   }
@@ -463,6 +476,85 @@ export function startResponder(opts: {
     if (dialogUp(w)) return fail('busy', op);
     pressKey(w, k);
     return ok();
+  }
+
+  /**
+   * The engine's JSON export, parsed. 'unsupported' when the export is missing
+   * or answers nothing (the other frame's kind: a pcb frame has no sheet tree,
+   * a sch frame no layers); null when it throws or answers something unparsable.
+   */
+  async function engineJson(name: 'kicadSheetsGetTree' | 'kicadLayersGetState'): Promise<Record<string, unknown> | null | 'unsupported'> {
+    const fn = win?.Module?.[name];
+    if (typeof fn !== 'function') return 'unsupported';
+    let text: unknown;
+    try { text = await fn(); } catch { return null; }
+    if (typeof text !== 'string' || text === '') return 'unsupported';
+    try { const v: unknown = JSON.parse(text); return isObj(v) ? v : null; } catch { return null; }
+  }
+
+  /** The schematic's sheets, each with its file's base name (the engine's absolute path stays here). */
+  async function sheetTree(): Promise<Answer> {
+    const op = 'sheet.tree';
+    if (win == null) return fail('not_ready', op);
+    const state = await engineJson('kicadSheetsGetTree');
+    if (state === 'unsupported') return fail('unsupported', 'kicadSheetsGetTree');
+    if (state == null || typeof state.current !== 'string' || !Array.isArray(state.sheets)) return fail('island_error', op);
+    const sheets = (state.sheets as unknown[]).flatMap((s) => {
+      if (!isObj(s) || typeof s.path !== 'string' || typeof s.name !== 'string') return [];
+      return [{
+        path: s.path,
+        name: s.name,
+        page: String(s.page ?? ''),
+        depth: typeof s.depth === 'number' ? s.depth : 0,
+        parent: typeof s.parent === 'string' ? s.parent : '',
+        file: typeof s.file === 'string' ? baseName(s.file) : '',
+      }];
+    });
+    return ok({ current: state.current, sheets });
+  }
+
+  async function sheetEnter(args: unknown): Promise<Answer> {
+    const op = 'sheet.enter';
+    if (!isObj(args) || !onlyKeys(args, ['path']) || typeof args.path !== 'string' || !SHEET_PATH_RE.test(args.path)) return fail('bad_args', op);
+    if (win == null) return fail('not_ready', op);
+    const fn = win.Module?.kicadSheetsEnter;
+    if (typeof fn !== 'function') return fail('unsupported', 'kicadSheetsEnter');
+    const applied = await withTimeout<unknown>(fn(args.path), APPLY_TIMEOUT_MS);
+    return applied === true ? ok() : fail('not_applied', op);
+  }
+
+  async function layersGet(): Promise<Answer> {
+    const op = 'layers.get';
+    if (win == null) return fail('not_ready', op);
+    const state = await engineJson('kicadLayersGetState');
+    if (state === 'unsupported') return fail('unsupported', 'kicadLayersGetState');
+    if (state == null || typeof state.active !== 'number' || !Array.isArray(state.layers)) return fail('island_error', op);
+    const layers = (state.layers as unknown[]).flatMap((l) => {
+      if (!isObj(l) || !isLayerId(l.id) || typeof l.name !== 'string' || typeof l.canonical !== 'string') return [];
+      return [{ id: l.id, name: l.name, canonical: l.canonical, color: typeof l.color === 'string' ? l.color : '', visible: l.visible === true, copper: l.copper === true }];
+    });
+    return ok({ active: state.active, layers });
+  }
+
+  /** A layer setter: answers {} only when the engine confirms, like chrome.show. */
+  async function layerCall(op: string, name: 'kicadLayersSetVisible' | 'kicadLayersSetActive', call: (fn: (...a: unknown[]) => unknown) => unknown): Promise<Answer> {
+    if (win == null) return fail('not_ready', op);
+    const fn = win.Module?.[name];
+    if (typeof fn !== 'function') return fail('unsupported', name);
+    const applied = await withTimeout<unknown>(call(fn as (...a: unknown[]) => unknown), APPLY_TIMEOUT_MS);
+    return applied === true ? ok() : fail('not_applied', op);
+  }
+
+  function layersVisible(args: unknown): Promise<Answer> {
+    const op = 'layers.visible';
+    if (!isObj(args) || !onlyKeys(args, ['id', 'visible']) || !isLayerId(args.id) || typeof args.visible !== 'boolean') return Promise.resolve(fail('bad_args', op));
+    return layerCall(op, 'kicadLayersSetVisible', (fn) => fn(args.id, args.visible));
+  }
+
+  function layersActive(args: unknown): Promise<Answer> {
+    const op = 'layers.active';
+    if (!isObj(args) || !onlyKeys(args, ['id']) || !isLayerId(args.id)) return Promise.resolve(fail('bad_args', op));
+    return layerCall(op, 'kicadLayersSetActive', (fn) => fn(args.id));
   }
 
   /** A visible wxDialog in the engine's element registry; a registry that throws counts as none. */

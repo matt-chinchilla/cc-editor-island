@@ -464,3 +464,50 @@ test('the board frame boots canvas only too', async ({ page }) => {
   const types = new Set((await visibleWx(frame, {})).map((e) => e.typeName));
   expect([...types].sort()).toEqual(['wxFrame', 'wxGLCanvas']);
 });
+
+/** The appearance.color_theme an editor's seeded config selects, read from the frame's MEMFS. */
+const colorTheme = (frame: Frame, file: 'eeschema.json' | 'pcbnew.json'): Promise<unknown> => frame.evaluate((name) => {
+  const FS = (window as unknown as { FS: { readFile(p: string, o: { encoding: 'utf8' }): string } }).FS;
+  return (JSON.parse(FS.readFile(`/home/kicad/.config/kicad/kicad/10.0/${name}`, { encoding: 'utf8' })) as { appearance?: { color_theme?: unknown } }).appearance?.color_theme;
+}, file);
+/** The board view's zoom, from the engine's own viewport report. */
+const viewScale = async (frame: Frame): Promise<number> => (JSON.parse(await frame.evaluate(() => (window as unknown as { Module: { kicadCollabGetViewport(): string } }).Module.kicadCollabGetViewport())) as { scale: number }).scale;
+
+test('sheets and layers answer from the engine, and fit refits the view', async ({ page }) => {
+  const sch = await boot(page, 'fixture=glasgow&frame=sch', 'glasgow.kicad_sch');
+  expect(await colorTheme(sch, 'eeschema.json')).toBe('circuitcenter');
+  const tree = await request(page, 'sheet.tree') as { current: string; sheets: Array<{ path: string; name: string; file: string }> };
+  expect(tree.current).toBe('/');
+  // Each row names its file by base name only; the engine's absolute path stays in the frame.
+  expect(tree.sheets.find((s) => s.path === '/')?.file).toBe('glasgow.kicad_sch');
+  expect(tree.sheets.every((s) => !s.file.includes('/'))).toBe(true);
+  const banks = tree.sheets.find((s) => s.name === 'IO_Banks');
+  expect(banks).toBeDefined();
+  expect(banks!.file).toBe('io_banks.kicad_sch');
+  expect(await request(page, 'sheet.enter', { path: banks!.path })).toEqual({});
+  await expect.poll(async () => ((await request(page, 'sheet.tree')) as { current: string }).current, { timeout: 10_000 }).toBe(banks!.path);
+  // The schematic frame has no layers (the harness rejects with "code: message").
+  await expect(request(page, 'layers.get')).rejects.toThrow('unsupported: kicadLayersGetState');
+
+  // The board frame.
+  const pcb = await boot(page, 'fixture=glasgow&frame=pcb', 'glasgow.kicad_pcb');
+  expect(await colorTheme(pcb, 'pcbnew.json')).toBe('circuitcenter');
+  await expect(request(page, 'sheet.tree')).rejects.toThrow('unsupported: kicadSheetsGetTree');
+  const state = await request(page, 'layers.get') as { active: number; layers: Array<{ id: number; name: string; visible: boolean }> };
+  const bcu = state.layers.find((l) => l.name === 'B.Cu');
+  expect(bcu?.visible).toBe(true);
+  expect(await request(page, 'layers.visible', { id: bcu!.id, visible: false })).toEqual({});
+  expect(await request(page, 'layers.active', { id: bcu!.id })).toEqual({});
+  await expect.poll(async () => {
+    const s = (await request(page, 'layers.get')) as typeof state;
+    return [s.active, s.layers.find((l) => l.name === 'B.Cu')?.visible];
+  }, { timeout: 5_000 }).toEqual([bcu!.id, false]);
+
+  // key.press reaches the board: F1 (KiCad's Zoom In) zooms in, and view.fit (Home) zooms back out to the board.
+  const fitted = await viewScale(pcb);
+  expect(await request(page, 'key.press', { key: 'F1', code: 'F1' })).toEqual({});
+  await expect.poll(() => viewScale(pcb), { timeout: 5_000 }).toBeGreaterThan(fitted * 1.5);
+  const zoomed = await viewScale(pcb);
+  expect(await request(page, 'view.fit')).toEqual({});
+  await expect.poll(() => viewScale(pcb), { timeout: 5_000 }).toBeLessThan(zoomed / 1.5);
+});

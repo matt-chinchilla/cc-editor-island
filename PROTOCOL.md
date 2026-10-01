@@ -23,6 +23,12 @@ Answers: `{ id, ok: true, result: object }` or `{ id, ok: false, error: { code: 
 | `readonly` | `{ on: boolean }` | `{}` |
 | `shutdown` | none | `{}` |
 | `key.press` | `{ key: string, code: string, ctrl?: boolean, shift?: boolean, alt?: boolean }` | `{}` |
+| `view.fit` | none | `{}` |
+| `sheet.tree` | none | `{ current: string, sheets: [{ path: string, name: string, page: string, depth: number, parent: string, file: string }] }` |
+| `sheet.enter` | `{ path: string }` | `{}` |
+| `layers.get` | none | `{ active: number, layers: [{ id: number, name: string, canonical: string, color: string, visible: boolean, copper: boolean }] }` |
+| `layers.visible` | `{ id: number, visible: boolean }` | `{}` |
+| `layers.active` | `{ id: number }` | `{}` |
 
 "none" means the request carries no `args`, or an empty object.
 
@@ -49,6 +55,19 @@ The frame boots with KiCad's chrome hidden (`kicadSetChrome(false)`); `chrome.sh
 ### key.press
 Fires one KiCad hotkey: the frame dispatches a `keydown` and then a `keyup` carrying `key`, `code` and the three modifiers on its window, where KiCad reads its hotkeys, and answers `{}`. Keyboard focus is put on the drawing once at boot, so the first key is not lost; the op itself never clicks. `code` is one of `KeyA` to `KeyZ`, `Digit0` to `Digit9`, `F1` to `F12`, `Escape`, `Home`, `Delete`, `Backspace`, `Enter` or `Space`; `key` is one character, or one of `F1` to `F12`, `Escape`, `Home`, `Delete`, `Backspace` or `Enter`; each modifier, when given, is a boolean (absent means not held). Anything else answers `bad_args`. While a KiCad dialog is up the key is refused with `busy` rather than typed into the dialog.
 
+### view.fit
+Fits the drawing to the view: the frame presses KiCad's Zoom to Fit hotkey (`Home`) exactly as `key.press { key: "Home", code: "Home" }` would, and answers `{}`. While a KiCad dialog is up it answers `busy` and nothing is pressed.
+
+### sheet.tree and sheet.enter
+`sheet.tree` answers the schematic's sheet hierarchy as the engine reports it. `current` is the path of the sheet the editor is showing. Each row of `sheets` carries the sheet's `path` (`/` for the root, then one lower case UUID and a slash per level), its `name`, its page number as a string (`page`), its `depth` below the root, the path of its `parent` (empty for the root) and the base name of its file (`file`, for example `io_banks.kicad_sch`; never a path, and empty when the engine gives none). A row the engine reports without a string `path` or `name` is left out. In a `pcb` frame the engine has no sheet tree and the request answers `unsupported`.
+
+`sheet.enter { path }` shows the sheet at `path`. `path` must match `/` followed by zero or more `<uuid>/` segments, the UUIDs in lower case hexadecimal (`8-4-4-4-12` digits), or the request answers `bad_args`. The answer is `{}` when the engine accepts the path, else `not_applied` (an unknown sheet, or no answer within 30 s). The editor switches sheets shortly after the answer: a host that needs to see the change polls `sheet.tree` until `current` follows.
+
+### layers.get, layers.visible and layers.active
+`layers.get` answers the board's layers as the engine reports them: `active` is the id of the active layer, and each row of `layers` carries the layer's `id` (an integer `0` to `127`), its `name` as the board names it, its `canonical` KiCad name (for example `F.Cu`), its `color` as a CSS colour string (empty when the engine gives none), whether it is `visible`, and whether it is a `copper` layer. A row without a valid `id`, a string `name` or a string `canonical` is left out. In a `sch` frame the engine has no layers and the request answers `unsupported`.
+
+`layers.visible { id, visible }` shows or hides a layer, and `layers.active { id }` makes a layer the active one. `id` is an integer `0` to `127` and `visible` a boolean, or the request answers `bad_args`. Each answers `{}` when the engine confirms the change, else `not_applied` (a layer the board does not have, or no answer within 30 s). The engine applies the change shortly after it answers.
+
 ### shutdown
 Releases the engine before the host removes the frame: the document is dropped (no `ev.saved` from here on, and the leave prompt stays quiet), every parked engine activation is unwound, the engine's threads are stopped, its WebGL contexts are released and its globals and window are cleared. The answer `{}` is the last message on the port: the frame then closes the port, answers nothing else (requests sent behind the shutdown included) and emits nothing, `ev.closing` included. The editor is not usable afterwards; the host removes the frame (or reloads it to start again). If the teardown fails the answer is `island_error`, and the port closes all the same. A shutdown sent before `ev.ready` stops the engine at its first park; the host still removes the frame. The host waits for the answer with a timeout (5 s, say) and removes the frame when it expires: in a background tab the browser may throttle the teardown's timers far past that, and the removal's `pagehide` covers the release.
 
@@ -59,15 +78,15 @@ Without the op, removing or navigating the frame runs a shorter teardown from `p
 
 | code | when |
 |---|---|
-| `unknown_op` | `op` is not one of the seven above; `message` is the op. |
+| `unknown_op` | `op` is not one of the thirteen above; `message` is the op. |
 | `bad_args` | the request has a key other than `id`, `op` and `args`, or its args fail the checks above (an unknown key, a wrong type, too many files, a name too long, a non `Uint8Array` file, an `open` of the other kind, args on an op that takes none). |
 | `island_error` | the frame failed while handling the request (for example the file system refused to empty the project folder); `message` carries the failure. The next request is still handled. |
 | `not_ready` | the engine has not booted yet (before `ev.ready`), or `project.save` with no successfully opened document. |
 | `nothing_to_open` | `project.open` named no file and `files` holds none of the frame's kind. |
 | `open_failed` | the file to open was not written (dropped, or absent from `files`), or KiCad's load did not settle within the frame's time limit. |
-| `unsupported` | the engine build lacks the export the op needs; `message` names it. |
-| `not_applied` | `chrome.show` or `readonly`: the engine answered anything but success, or did not answer within 30 s. |
-| `busy` | `project.open` or `project.save` while the engine is still loading a file, or `key.press` while a KiCad dialog is up; nothing was changed, and the host may send the request again later. |
+| `unsupported` | the engine build lacks the export the op needs, or the export answers nothing in this frame's kind (`sheet.tree` in a `pcb` frame, `layers.get` in a `sch` frame); `message` names the export. |
+| `not_applied` | `chrome.show`, `readonly`, `sheet.enter`, `layers.visible` or `layers.active`: the engine answered anything but success, or did not answer within 30 s. |
+| `busy` | `project.open` or `project.save` while the engine is still loading a file, or `key.press` or `view.fit` while a KiCad dialog is up; nothing was changed, and the host may send the request again later. |
 | `save_failed` | `project.save`: the engine wrote nothing, or the sheet the editor is showing lies outside the project folder. |
 
 ## Events (frame to host): `{ type: string, ... }`
