@@ -12,5 +12,5 @@ export default defineConfig({
     __KICAD_VERSION__: JSON.stringify('10.0'),   // KICAD_VERSION_DIR; refined from the engine's About string in stage 2
   },
   build: { outDir: `dist/r/${pin.islandId}`, emptyOutDir: false, target: 'es2022', sourcemap: false },
-  test: { environment: 'node', include: ['src/**/*.test.ts', 'bridge/**/*.test.ts'] },
+  test: { environment: 'node', include: ['src/**/*.test.ts', 'bridge/**/*.test.ts', 'theme/**/*.test.ts'] },
 });
