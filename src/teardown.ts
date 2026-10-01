@@ -20,9 +20,15 @@
 // finishes, and its stack is freed. Then the scheduler stops, the pthreads are
 // terminated, the timers and frames the page can still reach are cancelled,
 // the WebGL contexts are lost, the engine globals are dropped and the stage
-// is cleared. Removing the frame after the answer frees its realm; so does
-// removing it without the op, since pagehide starts the same teardown and the
-// unwinding runs in microtasks before the document goes.
+// is cleared. Removing the frame after the answer frees its realm. So does
+// removing it without the op, by a shorter path: on pagehide in a frame being
+// removed only the kill and the microtasks after it run (every parked
+// activation resumes with the error and unwinds before the document goes).
+// The steps behind unwind()'s timed polls (the scheduler stop, the pthreads,
+// WebGL, the timer sweep, the globals and the stage) may never run there,
+// since a removed document runs no more timers; the browser frees those with
+// the document. The same throttling can stretch the op's own answer in a
+// background tab, so a host that times out waiting removes the frame anyway.
 //
 // A trapped (terminal) instance keeps its parks: the scheduler refuses to
 // resume into a damaged module by design, and so does this.
@@ -213,9 +219,10 @@ export function installEngineTeardown(win: Window): EngineTeardown {
 }
 
 /**
- * Runs the teardown when the frame is unloaded for good (removed, or navigated
- * away). A pagehide into the back/forward cache (persisted) keeps the engine:
- * the host page may come back to it.
+ * Starts the teardown when the frame is unloaded for good (removed, or
+ * navigated away). In a removed frame only its synchronous kill and the
+ * microtask unwinding run (see the header). A pagehide into the back/forward
+ * cache (persisted) keeps the engine: the host page may come back to it.
  */
 export function teardownOnPagehide(win: Window, t: EngineTeardown): void {
   win.addEventListener('pagehide', (e) => {

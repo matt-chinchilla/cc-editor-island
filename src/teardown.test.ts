@@ -218,7 +218,77 @@ describe('installEngineTeardown', () => {
   });
 });
 
+/**
+ * The scheduler's turnstile, reduced: one resume at a time, and only while no
+ * window is armed. A coroutine's end hook ends its window; main is untracked,
+ * so its window stays armed after it unwinds (the case unwind() resets with a timer).
+ */
+function turnstileScheduler() {
+  type Rec = { id: unknown; libctx?: boolean };
+  type Gate = { reject: (e: unknown) => void };
+  const s = {
+    _suspended: new Map<unknown, Rec>(),
+    _resumeReady: [] as Array<{ rec: Rec; gate: Gate; err: unknown }>,
+    _windowLive: null as Rec | null,
+    dead: false,
+    terminal: false,
+    shutdown: vi.fn(),
+    resumed: [] as unknown[],
+    pump() {
+      if (s._windowLive != null) return;
+      const next = s._resumeReady.shift();
+      if (next == null) return;
+      s._suspended.delete(next.rec.id);
+      s._windowLive = next.rec;
+      s.resumed.push(next.rec.id);
+      next.gate.reject(next.err);          // the activation resumes with the error and unwinds
+      if (next.rec.libctx === true) { s._windowLive = null; queueMicrotask(() => s.pump()); }
+    },
+    park(rec: Rec, p: Promise<unknown>): Promise<unknown> {
+      s._suspended.set(rec.id, rec);
+      return new Promise((_, reject) => {
+        p.then(() => undefined, (err: unknown) => { s._resumeReady.push({ rec, gate: { reject }, err }); queueMicrotask(() => s.pump()); });
+      });
+    },
+    _suspendOn(p: Promise<unknown>) { return s.park({ id: -1 }, p); },
+    libctxSuspend(id: number, p: Promise<unknown>) { return s.park({ id: `lc${id}`, libctx: true }, p); },
+  };
+  return s;
+}
+
 describe('teardownOnPagehide', () => {
+  it('in a frame being removed (no timer runs again) the kill alone unwinds both parks in microtasks; the timed steps never run', async () => {
+    vi.useFakeTimers();
+    try {
+      const { win } = fakeWindow();
+      const t = installEngineTeardown(win);
+      teardownOnPagehide(win, t);
+      const s = turnstileScheduler();
+      win.__wxScheduler = s as unknown as WxScheduler;
+      // The engine's order: the coroutine parked on its resume, then main on this frame.
+      const outcomes = Promise.allSettled([
+        win.__wxScheduler!.libctxSuspend!(2, new Promise(() => undefined), 0),
+        win.__wxScheduler!._suspendOn(new Promise(() => undefined), 'frame', 0),
+      ]);
+      expect(t.pendingParks()).toBe(2);
+      win.dispatch('pagehide', { persisted: false });
+      let settled: PromiseSettledResult<unknown>[] | null = null;
+      void outcomes.then((r) => { settled = r; });
+      for (let i = 0; i < 50; i++) await Promise.resolve();   // microtasks only: timers are frozen
+      expect(settled).not.toBeNull();
+      expect(settled!.map((r) => r.status)).toEqual(['rejected', 'rejected']);
+      expect(settled!.every((r) => isShutdownError((r as PromiseRejectedResult).reason))).toBe(true);
+      expect(s.resumed).toEqual(['lc2', -1]);
+      expect(s._suspended.size).toBe(0);
+      expect(t.pendingParks()).toBe(0);
+      // What waits on a timer did not run: the scheduler stop and the release after it.
+      expect(s.shutdown).not.toHaveBeenCalled();
+      expect((win.PThread as { terminateAllThreads: () => void }).terminateAllThreads).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('tears down when the frame goes for good, never on a pagehide into the back/forward cache', () => {
     const { win } = fakeWindow();
     const t = { shutdown: vi.fn(async () => undefined), started: () => false, pendingParks: () => 0 };
