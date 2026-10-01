@@ -109,8 +109,11 @@ test('the island answers with the snippet headers, and the worker script carries
   // Through the browser: Node cannot resolve *.localhost, the browsers do.
   const islandRes = await page.goto(`${ISLAND}/island.json`);
   expect(islandRes?.status()).toBe(200);
-  const island = (await islandRes!.json()) as { id: string };
+  const island = (await islandRes!.json()) as { id: string; kicadCommit: string };
   expect(island.id).toMatch(/^[a-z0-9][a-z0-9.-]{0,63}$/);
+  // PROTOCOL.md's island.json fields: the commit is kicadCommit, never ev.ready's engine.kicad version name.
+  expect(Object.keys(island).sort()).toEqual(['id', 'kicadCommit', 'source', 'tag']);
+  expect(island.kicadCommit).toMatch(/^[0-9a-f]{40}$/);
   expect(islandRes!.headers()['access-control-allow-origin']).toBe(PAGE);
   const res = await page.goto(`${ISLAND}/r/${island.id}/wasm/kicad_editor/v0.2.3/kicad_editor.js`);
   expect(res?.status()).toBe(200);

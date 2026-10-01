@@ -77,7 +77,7 @@ execSync('npx vite build', { stdio: 'inherit' });
 execSync(`node scripts/notices.mjs ${rel}`, { stdio: 'inherit' });
 
 // 3. island.json, twice: inside the release and at the root for the no-cache route.
-const island = { id, tag: pin.pcbjam.tag, kicad: pin.pcbjam.kicad, source: `https://github.com/matt-chinchilla/cc-editor-island/releases/tag/${id}` };
+const island = { id, tag: pin.pcbjam.tag, kicadCommit: pin.pcbjam.kicad, source: `https://github.com/matt-chinchilla/cc-editor-island/releases/tag/${id}` };
 writeFileSync(join(rel, 'island.json'), JSON.stringify(island));
 writeFileSync(join('dist', 'island.json'), JSON.stringify(island));
 
