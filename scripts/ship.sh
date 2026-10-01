@@ -30,8 +30,8 @@ if [ -z "$ID" ] || [ "$#" -ne 1 ]; then
   echo "usage: bash scripts/ship.sh [--dry-run] <islandId>" >&2
   exit 2
 fi
-# The id lands in paths here and on the box, so it is a plain tag name.
-[[ "$ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "refused: $ID is not a plain tag name" >&2; exit 1; }
+# The id lands in paths here and on the box, and the site accepts only its own grammar.
+[[ "$ID" =~ ^[a-z0-9][a-z0-9.-]{0,63}$ ]] || { echo "refused: $ID does not match the islandId grammar ^[a-z0-9][a-z0-9.-]{0,63}$ (the site's ISLAND_ID_RE)" >&2; exit 1; }
 REL="dist/r/$ID"
 
 # Run a side-effecting command, or print it under --dry-run.

@@ -46,7 +46,7 @@ SHA[pcbjam-shared]=$(pin pcbjam.shared)
 for r in "${REPOS[@]}"; do
   [[ "${SHA[$r]}" =~ ^[0-9a-f]{40}$ ]] || { echo "PIN.json holds no full commit for $r: ${SHA[$r]}" >&2; exit 1; }
 done
-[[ "$ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "PIN.json islandId is not a plain tag name: $ID" >&2; exit 1; }
+[[ "$ID" =~ ^[a-z0-9][a-z0-9.-]{0,63}$ ]] || { echo "PIN.json islandId does not match the islandId grammar ^[a-z0-9][a-z0-9.-]{0,63}$ (the site's ISLAND_ID_RE): $ID" >&2; exit 1; }
 TAG="cc/$ID"
 [ "$DRY" = 1 ] && echo "dry run: nothing is forked, tagged or pushed"
 echo "island $ID, tag $TAG on $OWNER/{${REPOS[*]}}"

@@ -5,7 +5,7 @@
 // (licenses.html, LICENSE.txt, NOTICE.txt) from scripts/notices.mjs, whose census fails the build.
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { inputDrift } from '../theme/icons/inputs.mjs';
@@ -13,6 +13,8 @@ import { inputDrift } from '../theme/icons/inputs.mjs';
 const local = process.argv.includes('--local');
 const pin = JSON.parse(readFileSync('PIN.json', 'utf8'));
 const id = pin.islandId;
+// The site's ISLAND_ID_RE: an id it would refuse never builds (release.sh, ship.sh and mirrors.sh check the same).
+if (typeof id !== 'string' || !/^[a-z0-9][a-z0-9.-]{0,63}$/.test(id)) throw new Error(`PIN.json islandId ${JSON.stringify(id)} does not match ^[a-z0-9][a-z0-9.-]{0,63}$`);
 const rel = join('dist', 'r', id);
 const { tool, toolTag } = pin.engine;
 const engineSrc = join('engine', tool, toolTag);
@@ -85,5 +87,6 @@ writeFileSync(join('dist', 'island.json'), JSON.stringify(island));
 const tmp = join('dist', 'current.tmp');
 rmSync(tmp, { force: true });
 symlinkSync(join('r', id), tmp);
-execSync(`mv -T ${tmp} ${join('dist', 'current')}`);
+// rename(2) replaces the old link in one step, as mv -T did, with no coreutils dependency.
+renameSync(tmp, join('dist', 'current'));
 console.log(`built ${rel}${local ? ' (local)' : ''}`);

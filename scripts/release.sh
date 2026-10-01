@@ -37,7 +37,7 @@ refuse() { echo "refused: $*" >&2; exit 1; }
 
 pin() { node -p "require('./PIN.json').$1"; }
 ID=$(pin islandId)
-[[ "$ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || refuse "PIN.json islandId is not a plain tag name: $ID"
+[[ "$ID" =~ ^[a-z0-9][a-z0-9.-]{0,63}$ ]] || refuse "PIN.json islandId does not match the islandId grammar ^[a-z0-9][a-z0-9.-]{0,63}$ (the site's ISLAND_ID_RE): $ID"
 PCBJAM_TAG=$(pin pcbjam.tag)
 ROOT_SHA=$(pin pcbjam.root)
 KICAD_SHA=$(pin pcbjam.kicad)
