@@ -15,7 +15,7 @@
 //
 // So every park of the wx scheduler (the engine's one suspension seam, the
 // pre-js globalThis.__wxScheduler) also waits on a kill switch. shutdown()
-// rejects it while the document is still alive: each parked activation
+// rejects every waiting park while the document is still alive: each parked activation
 // resumes through the scheduler's own turnstile with that error, unwinds and
 // finishes, and its stack is freed. Then the scheduler stops, the pthreads are
 // terminated, the timers and frames the page can still reach are cancelled,
@@ -65,6 +65,8 @@ export interface EngineTeardown {
   shutdown(): Promise<void>;
   /** True once shutdown() has started. */
   started(): boolean;
+  /** How many parks are waiting on the kill switch now (tests and diagnostics). */
+  pendingParks(): number;
 }
 
 export class IslandShutdownError extends Error {
@@ -87,17 +89,28 @@ const ENGINE_GLOBALS = ['Module', 'FS', 'wxElementRegistry', 'kicadWebOpenTool']
  */
 export function installEngineTeardown(win: Window): EngineTeardown {
   const w = win as TeardownWindow;
-  let reject: (e: Error) => void = () => undefined;
-  const kill = new Promise<never>((_, r) => { reject = r; });
-  kill.catch(() => undefined);
+  // The rejecters of the parks still waiting, each removed when its own park
+  // settles. No long-lived promise is raced: racing one pending kill promise
+  // would add a reaction to it per park (every animation frame) that is never
+  // freed until the shutdown.
+  const pending = new Set<(e: Error) => void>();
   let killed = false;
   let parksAfterKill = 0;
   let scheduler: WxScheduler | undefined;
 
-  /** A park's promise raced with the kill switch; past the cap a refused park waits forever. */
+  /** A park's promise that the kill switch can also end; after the kill it is refused, past the cap it waits forever. */
   const guard = (p: Promise<unknown>): Promise<unknown> => {
-    if (killed && ++parksAfterKill > MAX_PARKS_AFTER_KILL) return new Promise(() => undefined);
-    return Promise.race([p, kill]);
+    if (killed) {
+      if (++parksAfterKill > MAX_PARKS_AFTER_KILL) return new Promise(() => undefined);
+      return Promise.reject(new IslandShutdownError());
+    }
+    return new Promise((resolve, reject) => {
+      pending.add(reject);
+      p.then(
+        (v) => { pending.delete(reject); resolve(v); },
+        (e: unknown) => { pending.delete(reject); reject(e); },
+      );
+    });
   };
   const wrap = (s: WxScheduler): WxScheduler => {
     const suspendOn = s._suspendOn;
@@ -174,12 +187,15 @@ export function installEngineTeardown(win: Window): EngineTeardown {
   let run: Promise<void> | null = null;
   return {
     started: () => run != null,
+    pendingParks: () => pending.size,
     shutdown() {
       run ??= (async () => {
         // From here every park is refused, also those of an engine that is
         // still booting (its scheduler is wrapped when the glue installs it).
         killed = true;
-        reject(new IslandShutdownError());
+        const parked = [...pending];
+        pending.clear();
+        for (const reject of parked) reject(new IslandShutdownError());
         const s = scheduler;
         if (s != null) {
           await unwind(s);

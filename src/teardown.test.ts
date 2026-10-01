@@ -63,7 +63,55 @@ function fakeWindow() {
   return { win: win as unknown as Window & { __wxScheduler?: WxScheduler; dispatch: (t: string, e: unknown) => void } & Record<string, unknown>, cleared, cancelled, main, container, loseContext, bump: (n: number) => { timer += n; frame += n; } };
 }
 
+/** V8's own collector, exposed for the retention check (the node modules load by name: the type check has no node types). */
+async function forceGc(): Promise<() => void> {
+  const [v8, vm] = ['node:v8', 'node:vm'];
+  const { setFlagsFromString } = (await import(/* @vite-ignore */ v8)) as { setFlagsFromString(flags: string): void };
+  const { runInNewContext } = (await import(/* @vite-ignore */ vm)) as { runInNewContext(code: string): unknown };
+  setFlagsFromString('--expose-gc');
+  return runInNewContext('gc') as () => void;
+}
+
 describe('installEngineTeardown', () => {
+  it('a live editor keeps nothing per park: a thousand self-settling parks leave no waiting rejecter and no retained promise', async () => {
+    const { win } = fakeWindow();
+    const t = installEngineTeardown(win);
+    const s = fakeScheduler();
+    // What the scheduler receives for each park: the guarded promise.
+    const finalized = { n: 0 };
+    const registry = new FinalizationRegistry(() => { finalized.n++; });
+    const suspendOn = s._suspendOn;
+    s._suspendOn = (p: Promise<unknown>) => { registry.register(p, null); return suspendOn(p); };
+    win.__wxScheduler = s as unknown as WxScheduler;
+    const N = 1000;
+    for (let i = 0; i < N; i++) {
+      // A frame park: it waits, then its frame comes.
+      await expect(win.__wxScheduler!._suspendOn(new Promise((r) => setTimeout(() => r(i), 0)), 'frame', 0)).resolves.toBe(i);
+    }
+    expect(t.pendingParks()).toBe(0);
+    // Every guarded promise is collectable once its park settled: none is held
+    // by a promise that lives until the shutdown (a race against one would be).
+    const gc = await forceGc();
+    for (let round = 0; round < 20 && finalized.n < N; round++) { gc(); await settle(5); }
+    expect(finalized.n).toBe(N);
+    // The teardown is still live and still works.
+    expect(t.started()).toBe(false);
+  });
+
+  it('shutdown still unwinds a park that is waiting, and empties the waiting set', async () => {
+    const { win } = fakeWindow();
+    const t = installEngineTeardown(win);
+    const s = fakeScheduler();
+    win.__wxScheduler = s as unknown as WxScheduler;
+    for (let i = 0; i < 10; i++) await s._suspendOn(Promise.resolve(i));
+    const parked = expect(s._suspendOn(new Promise(() => undefined))).rejects.toMatchObject({ name: SHUTDOWN_ERROR });
+    expect(t.pendingParks()).toBe(1);
+    await t.shutdown();
+    await parked;
+    expect(t.pendingParks()).toBe(0);
+    expect(s._suspended.size).toBe(0);
+  });
+
   it('wraps the scheduler the glue installs, and shutdown resumes every parked activation with the shutdown error', async () => {
     const { win } = fakeWindow();
     const t = installEngineTeardown(win);
@@ -173,7 +221,7 @@ describe('installEngineTeardown', () => {
 describe('teardownOnPagehide', () => {
   it('tears down when the frame goes for good, never on a pagehide into the back/forward cache', () => {
     const { win } = fakeWindow();
-    const t = { shutdown: vi.fn(async () => undefined), started: () => false };
+    const t = { shutdown: vi.fn(async () => undefined), started: () => false, pendingParks: () => 0 };
     teardownOnPagehide(win, t);
     win.dispatch('pagehide', { persisted: true });
     expect(t.shutdown).not.toHaveBeenCalled();
