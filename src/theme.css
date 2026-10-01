@@ -107,6 +107,13 @@ html.cc-editor body {
 .cc-screen-blocked .cc-copy { color: var(--vw-alert-ink, #c0392b); }
 
 .cc-licences {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  font: inherit;
   font-size: 12px;
   color: var(--vw-link, #0a4a2e);
   text-decoration: underline;
@@ -117,6 +124,77 @@ html.cc-editor body {
   outline-offset: 2px;
   border-radius: 2px;
 }
+
+/* ---------------------------------------------------------------- the licences overlay */
+/* Above the island's screens and above the editor's own windows. */
+.cc-licences-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483600;
+  display: flex;
+  flex-direction: column;
+  background: var(--vw-paper, #fbfbf8);
+  color: var(--vw-ink, #1a1f23);
+}
+.cc-licences-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--vw-seam, rgba(26, 31, 35, 0.1));
+}
+.cc-licences-title {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.cc-licences-action {
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--vw-seam, rgba(26, 31, 35, 0.18));
+  background: transparent;
+  color: var(--vw-ink, #1a1f23);
+  cursor: pointer;
+}
+.cc-licences-action[hidden] { display: none; }
+.cc-licences-action:focus-visible,
+.cc-licences-doc a:focus-visible {
+  outline: 2px solid var(--vw-focus, #0a4a2e);
+  outline-offset: 2px;
+}
+.cc-licences-doc {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 16px 16px 48px;
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.cc-licences-doc:focus { outline: none; }
+.cc-licences-doc > * { max-width: 860px; margin-left: auto; margin-right: auto; }
+.cc-licences-doc main { display: block; }
+.cc-licences-doc h1 { font-size: 1.4rem; letter-spacing: -0.022em; margin: 0 0 4px; }
+.cc-licences-doc h2 { font-size: 1.05rem; letter-spacing: -0.015em; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--vw-seam, rgba(26, 31, 35, 0.1)); }
+.cc-licences-doc a { color: var(--vw-link, #0a4a2e); }
+.cc-licences-doc code { font-family: var(--vw-mono, ui-monospace, monospace); font-size: 0.9em; overflow-wrap: anywhere; }
+.cc-licences-doc table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
+.cc-licences-doc th,
+.cc-licences-doc td { text-align: left; vertical-align: top; padding: 6px 8px; border-bottom: 1px solid var(--vw-seam, rgba(26, 31, 35, 0.1)); }
+.cc-licences-doc pre,
+.cc-licences-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--vw-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.cc-licences-note { color: var(--vw-ink-3, #676c71); }
 
 @media (prefers-reduced-motion: reduce) {
   .cc-bar:not(.is-determinate) .cc-bar-fill {

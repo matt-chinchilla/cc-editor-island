@@ -326,7 +326,44 @@ test('the loader sweeps in day mode', async ({ page }) => {
   expect(await island.locator('#screen').evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgb(251, 251, 248)');
   expect(await island.locator('.cc-bar-fill').evaluate((el) => getComputedStyle(el).animationName)).toBe('cc-sweep');
   await page.screenshot({ path: test.info().outputPath('loader-day.png') });
+
+  // "Licences and source" opens in place: the frame never navigates, the loader
+  // keeps running under the overlay, Escape closes it and focus comes back.
+  const frameUrl = (): string | undefined => page.frames().find((f) => f.url().startsWith(`${ISLAND}/`))?.url();
+  const before = frameUrl();
+  expect(before).toBeDefined();
+  const control = island.locator('button.cc-licences');
+  const dialog = island.locator('[role="dialog"][aria-modal="true"]');
+  await control.click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('.cc-licences-doc h1')).toHaveText('Licences and source');
+  await expect(dialog.locator('script, style')).toHaveCount(0);
+  await expect(dialog.locator('.cc-licences-action', { hasText: 'Close' })).toBeFocused();
+  expect(frameUrl()).toBe(before);
+  await dialog.locator('a', { hasText: 'NOTICE.txt' }).click();
+  await expect(dialog.locator('.cc-licences-text')).toBeVisible();
+  expect(frameUrl()).toBe(before);
+  await dialog.locator('.cc-licences-action', { hasText: 'Back to the licences' }).click();
+  await expect(dialog.locator('.cc-licences-doc h1')).toHaveText('Licences and source');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(control).toBeFocused();
+  await expect(island.locator('.cc-loader')).toBeVisible();
+  expect(frameUrl()).toBe(before);
+  await page.screenshot({ path: test.info().outputPath('licences-closed-loader.png') });
+
+  // Left open across ev.ready, the overlay stays above the editor until closed.
+  await control.click();
+  await expect(dialog).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath('licences-over-loader.png') });
   release();
   await page.waitForFunction(() => (window as unknown as Harness).__events.some((e) => e.type === 'ev.ready'), null, { timeout: 170_000 });
+  await expect(island.locator('#screen')).toBeHidden();
+  await expect(dialog).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath('licences-over-editor.png') });
+  await dialog.locator('.cc-licences-action', { hasText: 'Close' }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(frameUrl()).toBe(before);
+  expect((await events(page)).filter((e) => e.type === 'ev.state' && e.phase === 'fatal')).toEqual([]);
   await page.screenshot({ path: test.info().outputPath('editor-day.png') });
 });

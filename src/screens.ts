@@ -5,15 +5,19 @@
 // mark and a thin bar that sweeps until progress arrives, then fills, and
 // sweeps again once the fill is complete (compile and engine start report no
 // progress, and a full static bar reads as stalled). No
-// progress sentence, no dialog, no button (owner ruling R15).
-// Every screen carries the "Licences and source" link.
+// progress sentence, no dialog (owner ruling R15).
+// Every screen carries the "Licences and source" control: a button that opens
+// the licences in place (src/licences.ts), never a link that would navigate
+// the sandboxed frame away from the editor.
+import { LICENCES_COPY, licencesButton } from './licences';
+
 export type ScreenKind = 'preflight' | 'loading' | 'blocked' | 'fatal' | 'toplevel';
 
 export const SCREEN_COPY = {
   toplevel: 'This page is the editor engine. Open it from circuitcenter.ai.',
   blocked: 'This browser cannot run the editor yet.',
   fatal: 'The editor stopped. Reload the page to start again.',
-  licences: 'Licences and source',
+  licences: LICENCES_COPY.title,
 } as const;
 
 const LOADER_LABEL = 'Starting the editor';
@@ -35,12 +39,6 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, te
   node.className = className;
   if (text != null) node.textContent = text;
   return node;
-}
-
-function licencesLink(): HTMLAnchorElement {
-  const a = el('a', 'cc-licences', SCREEN_COPY.licences);
-  a.href = `${import.meta.env.BASE_URL}licenses.html`;
-  return a;
 }
 
 /** A via: the ring and the drill, drawn in the silk ink. */
@@ -85,7 +83,7 @@ function buildLoader(root: HTMLElement): void {
   fill = el('div', 'cc-bar-fill');
   bar.append(fill);
   status.append(mark(), bar);
-  root.append(status, licencesLink());
+  root.append(status, licencesButton());
 }
 
 function buildMessage(root: HTMLElement, kind: 'blocked' | 'fatal' | 'toplevel', detail?: string): void {
@@ -93,7 +91,7 @@ function buildMessage(root: HTMLElement, kind: 'blocked' | 'fatal' | 'toplevel',
   if (kind !== 'toplevel') card.setAttribute('role', 'alert');
   card.append(el('p', 'cc-copy', SCREEN_COPY[kind]));
   if (detail != null && detail !== '') card.append(el('p', 'cc-detail', cleanDetail(detail)));
-  card.append(licencesLink());
+  card.append(licencesButton());
   root.append(card);
 }
 
