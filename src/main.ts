@@ -3,7 +3,8 @@
 // The island entry (spec section 4): refuse to boot at top level or on an
 // unknown host, post cc.hello BEFORE the engine boots, wrap window.open
 // BEFORE wx.js loads, probe the browser, boot the one frame, wait for the
-// engine's frame, then hand the window to the responder.
+// engine's frame, then hand the window to the responder. The engine is
+// released by the shutdown op or on pagehide (teardown.ts).
 //
 // OOM: the loader's createOomWatch is deliberately NOT started. Its recovery
 // reloads this frame in place with ?oomRetry=N (or opens a new tab under
@@ -23,6 +24,7 @@ import { cleanDetail, hideScreens, showScreen } from './screens';
 import { statusFatal } from './status';
 import { FRAME_TOKEN, frameToTool, type Frame } from './types';
 import { installQuitHandler } from './quit';
+import { installEngineTeardown, isShutdownError, teardownOnPagehide } from './teardown';
 import { installUnloadQuiet } from './unload-quiet';
 import { installWindowOpenWrapper } from './window-open';
 
@@ -48,9 +50,10 @@ function frameForTool(raw: string): Frame | null {
 }
 
 /** The runtime is initialised and a KiCad frame is on screen (the open flow's own readiness test). */
-async function engineUp(win: ToolWindow, timeoutMs: number): Promise<boolean> {
+async function engineUp(win: ToolWindow, timeoutMs: number, cancelled: () => boolean): Promise<boolean> {
   const deadline = performance.now() + timeoutMs;
   for (;;) {
+    if (cancelled()) return false;
     const frames = win.wxElementRegistry?.findAll({ visible: true }) ?? [];
     if (win.FS != null && frames.some((e) => /Frame$/.test(e.typeName) || e.name.endsWith('Frame'))) return true;
     if (performance.now() >= deadline) return false;
@@ -65,8 +68,11 @@ async function main(): Promise<void> {
   const { frame, theme } = parseBoot(location.search);
   document.documentElement.classList.toggle('dark', theme === 'night');
 
+  // Before the engine's scripts load: every park of its scheduler also waits on
+  // the teardown's kill switch, so the frame's realm can be released (teardown.ts).
+  const teardown = installEngineTeardown(window);
   // Hello goes out now, before anything heavy; events queue until the port connects.
-  const responder = startResponder({ parentOrigin: parent, page: window });
+  const responder = startResponder({ parentOrigin: parent, page: window, onShutdown: () => teardown.shutdown() });
   const popups = installWindowOpenWrapper(
     window,
     (topic) => responder.emit({ type: 'ev.help', topic }),
@@ -75,7 +81,7 @@ async function main(): Promise<void> {
 
   let fatal = false;
   const die = (code: FatalCode, raw?: string): void => {
-    if (fatal) return;
+    if (fatal || teardown.started()) return;
     fatal = true;
     if (raw != null && raw !== '') console.error('[editor] fatal', raw);
     showScreen('fatal', code);
@@ -87,11 +93,12 @@ async function main(): Promise<void> {
     else console.debug('[status]', text);
   };
   const onUncaught = (text: string): void => {
+    if (teardown.started()) return;
     if (looksLikeOom(text)) die('memory', text);
     else if (TERMINAL.test(text)) die('crash', text);
   };
-  window.addEventListener('error', (e) => onUncaught(e.error instanceof Error ? e.error.message : String(e.message ?? '')));
-  window.addEventListener('unhandledrejection', (e) => onUncaught(e.reason instanceof Error ? e.reason.message : String(e.reason ?? '')));
+  window.addEventListener('error', (e) => isShutdownError(e.error) || onUncaught(e.error instanceof Error ? e.error.message : String(e.message ?? '')));
+  window.addEventListener('unhandledrejection', (e) => isShutdownError(e.reason) || onUncaught(e.reason instanceof Error ? e.reason.message : String(e.reason ?? '')));
   let closed = false;
   const closing = (): void => {
     if (closed) return;
@@ -99,9 +106,14 @@ async function main(): Promise<void> {
     responder.emit({ type: 'ev.closing' });
   };
   window.addEventListener('pagehide', closing);
+  // Then the frame lets go of the engine (ev.closing above is already on the port).
+  teardownOnPagehide(window, teardown);
+  window.addEventListener('pagehide', (e) => { if (!e.persisted) responder.close(); });
   // File > Quit destroyed the editor's frame: tell the host, show the fatal
   // screen, navigate nowhere. Installed before the engine's own unload handler.
   installQuitHandler(window, () => {
+    // The teardown's unwinding destroys the editor's frame too: that is no Quit.
+    if (teardown.started()) return;
     closing();
     if (fatal) return;
     fatal = true;
@@ -154,11 +166,11 @@ async function main(): Promise<void> {
       onProgress: (loaded, total) => { if (!fatal && total > 0) showScreen('loading', undefined, loaded / total); },
       onAbort: (what) => die(looksLikeOom(what) ? 'memory' : 'boot_failed', what),
     });
-    if (!(await engineUp(window as ToolWindow, ENGINE_UP_TIMEOUT_MS))) die('engine_timeout');
+    if (!(await engineUp(window as ToolWindow, ENGINE_UP_TIMEOUT_MS, () => teardown.started()))) die('engine_timeout');
   } catch (err) {
     die('boot_failed', err instanceof Error ? err.message : String(err));
   }
-  if (fatal) return;
+  if (fatal || teardown.started()) return;
   hideScreens();
   responder.engineReady(window as ToolWindow, { tag: __ISLAND_TAG__, kicad: __KICAD_VERSION__ }, popups);
 }

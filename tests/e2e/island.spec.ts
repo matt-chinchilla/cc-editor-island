@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Chirichella Inc.
 // The headed suite over the local pair (tests/serve.mjs): the island boots in
 // the sandboxed, cross-origin isolated iframe the site uses, opens a handed-over
-// project, saves both ways, drops traversal paths, never leaves the pair and
-// never opens a popup. The harness (tests/harness/parent.html) speaks
+// project, saves both ways, drops traversal paths, never leaves the pair,
+// never opens a popup, and lets go of its engine on shutdown. The harness (tests/harness/parent.html) speaks
 // cc-editor/1 and keeps every event on window.__events.
 import { expect, test, type BrowserContext, type Frame, type Page } from '@playwright/test';
 
@@ -385,4 +385,41 @@ test('the loader sweeps in day mode', async ({ page }) => {
   await expect(island.locator('.cc-detail')).toHaveText('webgl_lost');
   await expect.poll(async () => (await events(page)).filter((e) => e.type === 'ev.state' && e.phase === 'fatal').map((e) => e.detail)).toEqual(['webgl_lost']);
   await page.screenshot({ path: test.info().outputPath('webgl-lost.png') });
+});
+
+test('shutdown releases the engine: the answer is the last message, and the removed frame leaves no document behind', async ({ page, browserName }) => {
+  const docs = async (): Promise<number | null> => {
+    if (browserName !== 'chromium') return null;
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('HeapProfiler.collectGarbage');
+    await cdp.send('HeapProfiler.collectGarbage');
+    const { documents } = await cdp.send('Memory.getDOMCounters');
+    await cdp.detach();
+    return documents;
+  };
+  const frame = await boot(page, 'fixture=glasgow&frame=sch', 'glasgow.kicad_sch');
+  const booted = await docs();
+  expect(await request(page, 'shutdown')).toEqual({});
+  // Nothing is answered after it, and nothing is emitted (no ev.closing either).
+  const after = await page.evaluate(() => Promise.race([
+    (window as unknown as Harness).__bridge.request('project.save').then(() => 'answered', () => 'answered'),
+    new Promise((r) => setTimeout(() => r('silent'), 1500)),
+  ]));
+  expect(after).toBe('silent');
+  expect((await events(page)).filter((e) => e.type === 'ev.closing')).toEqual([]);
+  // Every parked activation unwound, the engine's globals and stage are gone.
+  expect(await frame.evaluate(() => {
+    const w = window as unknown as { __wxScheduler?: { dead: boolean; _suspended: Map<unknown, unknown> }; Module?: unknown; FS?: unknown };
+    return { dead: w.__wxScheduler?.dead, parked: w.__wxScheduler?._suspended.size, Module: typeof w.Module, FS: typeof w.FS, canvases: document.querySelectorAll('canvas').length };
+  })).toEqual({ dead: true, parked: 0, Module: 'undefined', FS: 'undefined', canvases: 0 });
+  await page.evaluate(() => document.querySelector('iframe')?.remove());
+  // The top frame's event handler keeps the last subframe the pointer was over
+  // (a Blink reference, one frame at most): a move over the page lets it go.
+  await page.mouse.move(4, 880);
+  await page.waitForTimeout(3000);   // the detached document is collected after the frame's last task
+  const removed = await docs();
+  if (booted != null && removed != null) {
+    measure('documents', `${booted} with the editor, ${removed} after shutdown and removal`);
+    expect(removed).toBeLessThan(booted);
+  }
 });

@@ -1,0 +1,183 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 Chirichella Inc.
+import { describe, expect, it, vi } from 'vitest';
+import { installEngineTeardown, isShutdownError, MAX_PARKS_AFTER_KILL, SHUTDOWN_ERROR, teardownOnPagehide, type WxScheduler } from './teardown';
+
+const settle = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The wx scheduler's park contract, reduced: a park waits on its promise and
+ * resumes the activation with that promise's outcome; the activation is
+ * listed in _suspended while it waits.
+ */
+function fakeScheduler(opts: { terminal?: boolean } = {}) {
+  let seq = 0;
+  const s = {
+    _suspended: new Map<unknown, { id: unknown }>(),
+    _resumeReady: [] as unknown[],
+    _windowLive: null as { id: unknown } | null,
+    dead: false,
+    terminal: opts.terminal === true,
+    shutdown: vi.fn(function (this: { dead: boolean }) { this.dead = true; }),
+    _suspendOn(p: Promise<unknown>) {
+      const rec = { id: ++seq };
+      s._suspended.set(rec.id, rec);
+      // A trapped instance takes the wake but never resumes the activation (its pump is frozen).
+      if (s.terminal) { p.catch(() => undefined); return new Promise(() => undefined); }
+      return p.then((v) => { s._suspended.delete(rec.id); return v; }, (e) => { s._suspended.delete(rec.id); throw e; });
+    },
+    libctxSuspend(id: number, p: Promise<unknown>) {
+      const rec = { id: `lc${id}` };
+      s._suspended.set(rec.id, rec);
+      return p.then((v) => { s._suspended.delete(rec.id); return v; }, (e) => { s._suspended.delete(rec.id); throw e; });
+    },
+  };
+  return s;
+}
+
+function fakeWindow() {
+  const listeners = new Map<string, Array<(e: unknown) => void>>();
+  let timer = 0;
+  let frame = 0;
+  const cleared: number[] = [];
+  const cancelled: number[] = [];
+  const main = { replaceChildren: vi.fn() };
+  const container = { replaceChildren: vi.fn() };
+  const loseContext = vi.fn();
+  const win = {
+    addEventListener: (t: string, h: (e: unknown) => void) => { listeners.set(t, [...(listeners.get(t) ?? []), h]); },
+    dispatch: (t: string, e: unknown) => { for (const h of listeners.get(t) ?? []) h(e); },
+    setTimeout: (fn: () => void, ms: number) => { setTimeout(fn, ms); return ++timer; },
+    clearTimeout: (id: number) => { cleared.push(id); },
+    clearInterval: (id: number) => { cleared.push(id); },
+    requestAnimationFrame: () => ++frame,
+    cancelAnimationFrame: (id: number) => { cancelled.push(id); },
+    document: { getElementById: (id: string) => (id === 'main-window' ? main : id === 'window-container' ? container : null) },
+    PThread: { terminateAllThreads: vi.fn() },
+    GL: { contexts: { 1: { GLctx: { getExtension: (n: string) => (n === 'WEBGL_lose_context' ? { loseContext } : null) } }, 2: null } },
+    Module: { kicadOpenFile: () => undefined },
+    FS: {},
+    wxElementRegistry: {},
+    kicadWebOpenTool: () => true,
+  };
+  return { win: win as unknown as Window & { __wxScheduler?: WxScheduler; dispatch: (t: string, e: unknown) => void } & Record<string, unknown>, cleared, cancelled, main, container, loseContext, bump: (n: number) => { timer += n; frame += n; } };
+}
+
+describe('installEngineTeardown', () => {
+  it('wraps the scheduler the glue installs, and shutdown resumes every parked activation with the shutdown error', async () => {
+    const { win } = fakeWindow();
+    const t = installEngineTeardown(win);
+    const s = fakeScheduler();
+    win.__wxScheduler = s as unknown as WxScheduler;   // what the glue's pre-js does
+    expect(win.__wxScheduler).toBe(s);
+    const main = s._suspendOn(new Promise(() => undefined));          // main, parked on an animation frame that never comes
+    const coroutine = s.libctxSuspend(2, new Promise(() => undefined));
+    const outcomes = Promise.allSettled([main, coroutine]);
+    expect(s._suspended.size).toBe(2);
+    expect(t.started()).toBe(false);
+    await t.shutdown();
+    expect(t.started()).toBe(true);
+    const [a, b] = await outcomes;
+    expect(a.status).toBe('rejected');
+    expect(b.status).toBe('rejected');
+    expect(isShutdownError((a as PromiseRejectedResult).reason)).toBe(true);
+    expect((a as PromiseRejectedResult).reason.name).toBe(SHUTDOWN_ERROR);
+    expect(s._suspended.size).toBe(0);
+    expect(s.shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it('a park that settles on its own before the shutdown resumes normally', async () => {
+    const { win } = fakeWindow();
+    installEngineTeardown(win);
+    const s = fakeScheduler();
+    win.__wxScheduler = s as unknown as WxScheduler;
+    await expect(s._suspendOn(Promise.resolve(7))).resolves.toBe(7);
+  });
+
+  it('after the kill a park is refused at once, and past the cap it waits forever so a retry loop cannot spin', async () => {
+    const { win } = fakeWindow();
+    const t = installEngineTeardown(win);
+    const s = fakeScheduler();
+    win.__wxScheduler = s as unknown as WxScheduler;
+    await t.shutdown();
+    for (let i = 0; i < MAX_PARKS_AFTER_KILL; i++) {
+      await expect(s._suspendOn(new Promise(() => undefined))).rejects.toMatchObject({ name: SHUTDOWN_ERROR });
+    }
+    let settled = false;
+    void s._suspendOn(Promise.resolve(1)).finally(() => { settled = true; });
+    await settle(10);
+    expect(settled).toBe(false);
+  });
+
+  it('an engine still booting at the shutdown has its parks refused once its scheduler arrives', async () => {
+    const { win } = fakeWindow();
+    const t = installEngineTeardown(win);
+    await t.shutdown();
+    const s = fakeScheduler();
+    win.__wxScheduler = s as unknown as WxScheduler;
+    await expect(s._suspendOn(new Promise(() => undefined))).rejects.toMatchObject({ name: SHUTDOWN_ERROR });
+  });
+
+  it('releases the rest: pthreads, WebGL contexts, timers and frames, the engine globals and the stage', async () => {
+    const { win, cleared, cancelled, main, container, loseContext, bump } = fakeWindow();
+    bump(30);
+    const t = installEngineTeardown(win);
+    win.__wxScheduler = fakeScheduler() as unknown as WxScheduler;
+    await t.shutdown();
+    expect((win.PThread as { terminateAllThreads: () => void }).terminateAllThreads).toHaveBeenCalledTimes(1);
+    expect(loseContext).toHaveBeenCalledTimes(1);
+    for (const id of [1, 15, 30]) expect(cleared).toContain(id);
+    for (const id of [1, 15, 30]) expect(cancelled).toContain(id);
+    for (const k of ['Module', 'FS', 'wxElementRegistry', 'kicadWebOpenTool']) expect(win[k]).toBeUndefined();
+    expect(main.replaceChildren).toHaveBeenCalledTimes(1);
+    expect(container.replaceChildren).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs once: a second shutdown answers the first run', async () => {
+    const { win } = fakeWindow();
+    const t = installEngineTeardown(win);
+    const s = fakeScheduler();
+    win.__wxScheduler = s as unknown as WxScheduler;
+    const a = t.shutdown();
+    const b = t.shutdown();
+    expect(b).toBe(a);
+    await a;
+    expect(s.shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it('a trapped instance is not resumed: no wait for its parks, the rest is still released', async () => {
+    const { win } = fakeWindow();
+    const t = installEngineTeardown(win);
+    const s = fakeScheduler({ terminal: true });
+    win.__wxScheduler = s as unknown as WxScheduler;
+    void s._suspendOn(new Promise(() => undefined));
+    const t0 = Date.now();
+    await t.shutdown();
+    expect(Date.now() - t0).toBeLessThan(500);
+    expect(s._suspended.size).toBe(1);
+    expect((win.PThread as { terminateAllThreads: () => void }).terminateAllThreads).toHaveBeenCalled();
+  });
+
+  it('keeps the shutdown error off the console', () => {
+    const { win } = fakeWindow();
+    installEngineTeardown(win);
+    const ours = { reason: Object.assign(new Error('x'), { name: SHUTDOWN_ERROR }), preventDefault: vi.fn() };
+    const other = { reason: new Error('RuntimeError: unreachable'), preventDefault: vi.fn() };
+    win.dispatch('unhandledrejection', ours);
+    win.dispatch('unhandledrejection', other);
+    expect(ours.preventDefault).toHaveBeenCalled();
+    expect(other.preventDefault).not.toHaveBeenCalled();
+  });
+});
+
+describe('teardownOnPagehide', () => {
+  it('tears down when the frame goes for good, never on a pagehide into the back/forward cache', () => {
+    const { win } = fakeWindow();
+    const t = { shutdown: vi.fn(async () => undefined), started: () => false };
+    teardownOnPagehide(win, t);
+    win.dispatch('pagehide', { persisted: true });
+    expect(t.shutdown).not.toHaveBeenCalled();
+    win.dispatch('pagehide', { persisted: false });
+    expect(t.shutdown).toHaveBeenCalledTimes(1);
+  });
+});

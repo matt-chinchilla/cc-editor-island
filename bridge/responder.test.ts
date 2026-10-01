@@ -627,4 +627,103 @@ describe('startResponder', () => {
     await settle();
     expect(got).toEqual([{ id: 3, ok: false, error: { code: 'save_failed', message: 'the shown sheet is outside the project' } }]);
   });
+
+  it('shutdown runs the teardown, answers ok as its last message and closes the port', async () => {
+    resetUnloadQuietForTest();
+    const { page, parent } = fakePage();
+    const order: string[] = [];
+    const onShutdown = vi.fn(async () => { order.push('teardown'); await settle(5); order.push('teardown done'); });
+    const r = startResponder({ parentOrigin: PARENT, page, onShutdown });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] } });
+    await settle(100);
+    expect(typeof eng.win.kicadCollab?.onSave).toBe('function');
+    got.length = 0;
+    // Requests sent behind the shutdown are never answered.
+    port.postMessage({ id: 2, op: 'shutdown' });
+    port.postMessage({ id: 3, op: 'project.save' });
+    port.postMessage({ id: 4, op: 'nope' });
+    await settle(60);
+    expect(onShutdown).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['teardown', 'teardown done']);
+    expect(got).toEqual([{ id: 2, ok: true, result: {} }]);
+    expect(eng.Module.kicadSaveSchematic).not.toHaveBeenCalled();
+    // The save hook is gone and the engine's leave prompt stays quiet.
+    expect(eng.win.kicadCollab?.onSave).toBeUndefined();
+    expect(isQuiet(Date.now() + 3_600_000)).toBe(true);
+    // Nothing is emitted any more, and a second connect is never adopted.
+    r.emit({ type: 'ev.closing' });
+    r.emit({ type: 'ev.state', phase: 'fatal', detail: 'crash' });
+    await settle();
+    expect(got).toEqual([{ id: 2, ok: true, result: {} }]);
+    const again = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    again.port.postMessage({ id: 5, op: 'project.forget' });
+    await settle();
+    expect(again.got).toEqual([]);
+  });
+
+  it('shutdown answers ok without a teardown, and island_error (still closing) when the teardown fails', async () => {
+    const plain = fakePage();
+    startResponder({ parentOrigin: PARENT, page: plain.page });
+    const a = connect(plain.page, plain.parent.postMessage.mock.calls[0][0].nonce);
+    a.port.postMessage({ id: 1, op: 'shutdown', args: {} });
+    a.port.postMessage({ id: 2, op: 'project.forget' });
+    await settle();
+    expect(a.got).toEqual([{ id: 1, ok: true, result: {} }]);
+
+    const failing = fakePage();
+    startResponder({ parentOrigin: PARENT, page: failing.page, onShutdown: async () => { throw new Error('boom'); } });
+    const c = connect(failing.page, failing.parent.postMessage.mock.calls[0][0].nonce);
+    c.port.postMessage({ id: 1, op: 'shutdown' });
+    c.port.postMessage({ id: 2, op: 'project.forget' });
+    await settle();
+    expect(c.got).toEqual([{ id: 1, ok: false, error: { code: 'island_error', message: 'boom' } }]);
+  });
+
+  it('shutdown with args answers bad_args and keeps the bridge open', async () => {
+    const { page, parent } = fakePage();
+    const onShutdown = vi.fn(async () => undefined);
+    startResponder({ parentOrigin: PARENT, page, onShutdown });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    port.postMessage({ id: 1, op: 'shutdown', args: { now: true } });
+    port.postMessage({ id: 2, op: 'shutdown', extra: 1 });
+    port.postMessage({ id: 3, op: 'project.forget' });
+    await settle();
+    expect(onShutdown).not.toHaveBeenCalled();
+    expect(got).toEqual([
+      { id: 1, ok: false, error: { code: 'bad_args', message: 'shutdown' } },
+      { id: 2, ok: false, error: { code: 'bad_args', message: 'shutdown' } },
+      { id: 3, ok: true, result: {} },
+    ]);
+  });
+
+  it('close() (pagehide) drops queued events, answers nothing more and stops the save hook', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    r.emit({ type: 'ev.state', phase: 'booting' });
+    r.close();
+    r.close();
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    port.postMessage({ id: 1, op: 'project.forget' });
+    await settle();
+    expect(got).toEqual([]);
+
+    const live = fakePage();
+    const r2 = startResponder({ parentOrigin: PARENT, page: live.page });
+    const c = connect(live.page, live.parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r2.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    c.port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] } });
+    await settle(100);
+    c.got.length = 0;
+    r2.emit({ type: 'ev.closing' });
+    r2.close();
+    eng.win.kicadCollab?.onSave?.(`${ROOT}/blink.kicad_sch`);
+    c.port.postMessage({ id: 2, op: 'project.forget' });
+    await settle();
+    expect(c.got).toEqual([{ type: 'ev.closing' }]);
+    expect(eng.win.kicadCollab?.onSave).toBeUndefined();
+  });
 });

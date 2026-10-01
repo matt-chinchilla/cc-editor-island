@@ -26,6 +26,12 @@ export interface Responder {
   engineReady(win: ToolWindow, engine: { tag: string; kicad: string }, help: { attempts(): number }): void;
   /** A window.open the wrapper refused; after ev.ready each one is reported as ev.state popup. */
   popupBlocked(attempts: number): void;
+  /**
+   * The bridge's part of the teardown (the frame is going away): the save hook
+   * stops, the leave prompt stays quiet, the port closes and nothing else is
+   * answered or emitted. Idempotent.
+   */
+  close(): void;
 }
 
 type Answer = { ok: true; result: Record<string, unknown> } | { ok: false; code: string; message: string };
@@ -45,7 +51,7 @@ const MAX_QUEUED = 256;
 const MAX_FILES = 4096;
 const MAX_NAME = 255;
 const APPLY_TIMEOUT_MS = 30_000;
-const OPS = new Set(['project.open', 'project.save', 'project.forget', 'chrome.show', 'readonly']);
+const OPS = new Set(['project.open', 'project.save', 'project.forget', 'chrome.show', 'readonly', 'shutdown']);
 const EXT: Record<Frame, string> = { sch: '.kicad_sch', pcb: '.kicad_pcb' };
 
 const popupNote = (n: number): string => `${n} popup attempts blocked`;
@@ -127,8 +133,13 @@ function defaultOpen(written: string[], frame: Frame): string | undefined {
   return written.find((p) => p.endsWith(EXT[frame]));
 }
 
-export function startResponder(opts: { parentOrigin: string; page: Window }): Responder {
-  const { parentOrigin, page } = opts;
+export function startResponder(opts: {
+  parentOrigin: string;
+  page: Window;
+  /** The engine's teardown, run by the shutdown op before it answers (src/teardown.ts). */
+  onShutdown?: () => Promise<void>;
+}): Responder {
+  const { parentOrigin, page, onShutdown } = opts;
   const nonce = randomNonce();
   const root = `${PROJECT_ROOT}/${SLUG}`;
   let port: MessagePort | null = null;
@@ -141,8 +152,14 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
   /** The Ctrl+S hook: live only between a successful project.open and the next open or forget. */
   let saveHook: { handle: SaveHookHandle; filter: (absPath: string) => void } | null = null;
 
+  /** Set by the shutdown op or close(): from then on nothing is answered or emitted. */
+  let closed = false;
+  /** A shutdown request passed its checks: the port closes once it is answered. */
+  let shutdownStarted = false;
+
   /** Rebuilds each event with exactly its protocol keys; saved bytes travel as a transferred copy. */
   const emit = (ev: IslandEvent): void => {
+    if (closed) return;
     if (port == null) {
       if (queued.length >= MAX_QUEUED) queued.shift();
       queued.push(ev);
@@ -173,11 +190,12 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
   };
 
   const reply = (id: number, a: Answer): void => {
+    if (closed) return;
     port?.postMessage(a.ok ? { id, ok: true, result: a.result } : { id, ok: false, error: { code: a.code, message: a.message } });
   };
 
   const onConnect = (e: MessageEvent): void => {
-    if (port != null || e.origin !== parentOrigin || e.source !== page.parent) return;
+    if (closed || port != null || e.origin !== parentOrigin || e.source !== page.parent) return;
     const d: unknown = e.data;
     if (!isObj(d) || !onlyKeys(d, ['type', 'nonce']) || d.type !== 'cc.connect' || d.nonce !== nonce) return;
     const p = e.ports?.[0];
@@ -201,6 +219,7 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
   }
 
   async function handle(data: unknown): Promise<void> {
+    if (closed) return;
     if (!isObj(data) || typeof data.id !== 'number' || !Number.isSafeInteger(data.id) || typeof data.op !== 'string') return;
     const { id, op } = data;
     if (!OPS.has(op)) return reply(id, fail('unknown_op', op));
@@ -209,6 +228,28 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
       reply(id, await run(op, data.args));
     } catch (err) {
       reply(id, fail('island_error', describeError(err)));
+    }
+    // The shutdown answer is the last message on the port, whatever the teardown answered.
+    if (shutdownStarted) close();
+  }
+
+  /** The document and the save hook are dropped and the engine's leave prompt is stopped for good. */
+  function stopBridge(): void {
+    staged = null;
+    opened = null;
+    stopSaveHook();
+    quietForever();
+  }
+
+  function close(): void {
+    if (closed) return;
+    stopBridge();
+    closed = true;
+    queued.length = 0;
+    page.removeEventListener('message', onConnect);
+    if (port != null) {
+      port.onmessage = null;
+      port.close();
     }
   }
 
@@ -239,6 +280,13 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
         stopSaveHook();   // a Ctrl+S in the still-shown document emits nothing from here on
         quietForever();
         if (win?.FS != null) removeTree(win.FS, root);
+        return ok();
+      }
+      case 'shutdown': {
+        if (!noArgs(args)) return fail('bad_args', op);
+        shutdownStarted = true;
+        stopBridge();
+        await onShutdown?.();
         return ok();
       }
       case 'chrome.show': return toggle(op, args, 'kicadSetChrome');
@@ -399,5 +447,6 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
       // Before ev.ready the count travels once, in the booting note above.
       if (ready) emit({ type: 'ev.state', phase: 'popup', detail: popupNote(attempts) });
     },
+    close,
   };
 }

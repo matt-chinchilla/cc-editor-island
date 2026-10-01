@@ -21,6 +21,7 @@ Answers: `{ id, ok: true, result: object }` or `{ id, ok: false, error: { code: 
 | `project.forget` | none | `{}` |
 | `chrome.show` | `{ on: boolean }` | `{}` |
 | `readonly` | `{ on: boolean }` | `{}` |
+| `shutdown` | none | `{}` |
 
 "none" means the request carries no `args`, or an empty object.
 
@@ -42,12 +43,17 @@ Drops the document: the project folder is emptied, and from then on the frame em
 ### chrome.show and readonly
 `chrome.show { on }` turns KiCad's own window chrome on or off (the engine's `kicadSetChrome`); `readonly { on }` turns read-only mode on or off (`kicadSetReadOnly`). Each answers `{}` only when the engine confirms the change, else `not_applied`.
 
+### shutdown
+Releases the engine before the host removes the frame: the document is dropped (no `ev.saved` from here on, and the leave prompt stays quiet), every parked engine activation is unwound, the engine's threads are stopped, its WebGL contexts are released and its globals and window are cleared. The answer `{}` is the last message on the port: the frame then closes the port, answers nothing else (requests sent behind the shutdown included) and emits nothing, `ev.closing` included. The editor is not usable afterwards; the host removes the frame (or reloads it to start again). If the teardown fails the answer is `island_error`, and the port closes all the same. A shutdown sent before `ev.ready` stops the engine at its first park; the host still removes the frame.
+
+Without the op, removing or navigating the frame starts the same teardown from `pagehide`, and in Chromium that alone frees the frame's memory. The op lets the host wait for the release before it removes the frame. Without either, every removed frame kept its whole engine (its document and about 400 MB of renderer memory) for the life of the page.
+
 ### Error codes
 `message` is a short explanation for logs, never for display. A host should accept any `code` string; these are the ones the frame answers today.
 
 | code | when |
 |---|---|
-| `unknown_op` | `op` is not one of the five above; `message` is the op. |
+| `unknown_op` | `op` is not one of the six above; `message` is the op. |
 | `bad_args` | the request has a key other than `id`, `op` and `args`, or its args fail the checks above (an unknown key, a wrong type, too many files, a name too long, a non `Uint8Array` file, an `open` of the other kind, args on an op that takes none). |
 | `island_error` | the frame failed while handling the request (for example the file system refused to empty the project folder); `message` carries the failure. The next request is still handled. |
 | `not_ready` | the engine has not booted yet (before `ev.ready`), or `project.save` with no successfully opened document. |
@@ -70,7 +76,7 @@ Each event carries exactly the keys listed here.
 - `ev.saved { path: string, bytes: Uint8Array }` after every save of a file in the project folder, whether the user pressed Ctrl+S or the host sent `project.save`. One Ctrl+S may emit several (each sheet file of a schematic, the `.kicad_pro` beside a board). A file saved outside the project folder (a Save As elsewhere) is not reported. None is emitted after `project.forget` until the next successful `project.open`.
 - `ev.openTool { frame: "sch" | "pcb" }` when the editor's own Switch or Quit menu asks for the other frame; the frame does not navigate.
 - `ev.help { topic: string }` when the editor asked to open a KiCad help page; `topic` is the last path segment of the KiCad docs URL, `[a-z0-9_-]{1,64}`.
-- `ev.closing {}` on `pagehide`, and when the user chooses File > Quit (the frame then shows its fatal screen and navigates nowhere). Sent at most once.
+- `ev.closing {}` on `pagehide`, and when the user chooses File > Quit (the frame then shows its fatal screen and navigates nowhere). Sent at most once, and never after `shutdown` was answered.
 
 Unknown fields are rejected by both sides. An unknown event `type` is ignored by the host; an unknown `op` is answered `unknown_op`.
 
