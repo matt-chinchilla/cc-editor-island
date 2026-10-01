@@ -22,6 +22,7 @@ Answers: `{ id, ok: true, result: object }` or `{ id, ok: false, error: { code: 
 | `chrome.show` | `{ on: boolean }` | `{}` |
 | `readonly` | `{ on: boolean }` | `{}` |
 | `shutdown` | none | `{}` |
+| `key.press` | `{ key: string, code: string, ctrl?: boolean, shift?: boolean, alt?: boolean }` | `{}` |
 
 "none" means the request carries no `args`, or an empty object.
 
@@ -43,6 +44,11 @@ Drops the document: the project folder is emptied, and from then on the frame em
 ### chrome.show and readonly
 `chrome.show { on }` turns KiCad's own window chrome on or off (the engine's `kicadSetChrome`); `readonly { on }` turns read-only mode on or off (`kicadSetReadOnly`). Each answers `{}` only when the engine confirms the change, else `not_applied`.
 
+The frame boots with KiCad's chrome hidden (`kicadSetChrome(false)`); `chrome.show { on: true }` brings it back for that boot only. Loading a file shows KiCad's menu bar again (and an infobar for a file from an older KiCad), so while the chrome is hidden each successful `project.open` hides it again before it answers.
+
+### key.press
+Fires one KiCad hotkey: the frame dispatches a `keydown` and then a `keyup` carrying `key`, `code` and the three modifiers on its window, where KiCad reads its hotkeys, and answers `{}`. Keyboard focus is put on the drawing once at boot, so the first key is not lost; the op itself never clicks. `code` is one of `KeyA` to `KeyZ`, `Digit0` to `Digit9`, `F1` to `F12`, `Escape`, `Home`, `Delete`, `Backspace`, `Enter` or `Space`; `key` is one character, or one of `F1` to `F12`, `Escape`, `Home`, `Delete`, `Backspace` or `Enter`; each modifier, when given, is a boolean (absent means not held). Anything else answers `bad_args`. While a KiCad dialog is up the key is refused with `busy` rather than typed into the dialog.
+
 ### shutdown
 Releases the engine before the host removes the frame: the document is dropped (no `ev.saved` from here on, and the leave prompt stays quiet), every parked engine activation is unwound, the engine's threads are stopped, its WebGL contexts are released and its globals and window are cleared. The answer `{}` is the last message on the port: the frame then closes the port, answers nothing else (requests sent behind the shutdown included) and emits nothing, `ev.closing` included. The editor is not usable afterwards; the host removes the frame (or reloads it to start again). If the teardown fails the answer is `island_error`, and the port closes all the same. A shutdown sent before `ev.ready` stops the engine at its first park; the host still removes the frame. The host waits for the answer with a timeout (5 s, say) and removes the frame when it expires: in a background tab the browser may throttle the teardown's timers far past that, and the removal's `pagehide` covers the release.
 
@@ -53,7 +59,7 @@ Without the op, removing or navigating the frame runs a shorter teardown from `p
 
 | code | when |
 |---|---|
-| `unknown_op` | `op` is not one of the six above; `message` is the op. |
+| `unknown_op` | `op` is not one of the seven above; `message` is the op. |
 | `bad_args` | the request has a key other than `id`, `op` and `args`, or its args fail the checks above (an unknown key, a wrong type, too many files, a name too long, a non `Uint8Array` file, an `open` of the other kind, args on an op that takes none). |
 | `island_error` | the frame failed while handling the request (for example the file system refused to empty the project folder); `message` carries the failure. The next request is still handled. |
 | `not_ready` | the engine has not booted yet (before `ev.ready`), or `project.save` with no successfully opened document. |
@@ -61,7 +67,7 @@ Without the op, removing or navigating the frame runs a shorter teardown from `p
 | `open_failed` | the file to open was not written (dropped, or absent from `files`), or KiCad's load did not settle within the frame's time limit. |
 | `unsupported` | the engine build lacks the export the op needs; `message` names it. |
 | `not_applied` | `chrome.show` or `readonly`: the engine answered anything but success, or did not answer within 30 s. |
-| `busy` | `project.open` or `project.save` while the engine is still loading a file; nothing was changed, and the host may send the request again later. |
+| `busy` | `project.open` or `project.save` while the engine is still loading a file, or `key.press` while a KiCad dialog is up; nothing was changed, and the host may send the request again later. |
 | `save_failed` | `project.save`: the engine wrote nothing, or the sheet the editor is showing lies outside the project folder. |
 
 ## Events (frame to host): `{ type: string, ... }`

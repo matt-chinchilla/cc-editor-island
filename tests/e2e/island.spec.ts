@@ -162,7 +162,10 @@ test('boots inside the sandboxed iframe, opens Glasgow, saves both ways, never l
   expect(await page.evaluate(() => (window as unknown as Harness).__hellos)).toBe(1);
 
   // Ctrl+S in the editor reaches the host as ev.saved, with the board's bytes.
-  await clickIn(page, 640, 450);
+  // The click lands clear of the board: with the chrome hidden the canvas fills
+  // the frame, and a click on a dense spot opens KiCad's clarify-selection menu,
+  // which takes the key (e2e 2026-10-01).
+  await clickIn(page, 1250, 780);
   await page.keyboard.press('Control+s');
   await page.waitForFunction(() => (window as unknown as Harness).__events.some((e) => e.type === 'ev.saved' && e.path === 'glasgow.kicad_pcb'));
   const ctrlS = (await events(page)).find((e) => e.type === 'ev.saved' && e.path === 'glasgow.kicad_pcb');
@@ -208,6 +211,8 @@ test('boots inside the sandboxed iframe, opens Glasgow, saves both ways, never l
 test('a hierarchical schematic saves the shown sheet, the hotkeys work, and a second open replaces the first', async ({ page, context }) => {
   const w = watch(context, page);
   const frame = await boot(page, 'fixture=glasgow&frame=sch', 'glasgow.kicad_sch');
+  // The frame boots canvas only; this test reads the properties and hierarchy panes, so the chrome comes back.
+  expect(await request(page, 'chrome.show', { on: true })).toEqual({});
   // The sheet files the engine reports are absolute, so the root save lands on the root file.
   expect(await request(page, 'project.save')).toEqual({ path: 'glasgow.kicad_sch' });
   expect(await savedCount(page, 'glasgow.kicad_sch')).toBe(1);
@@ -426,4 +431,36 @@ test('shutdown releases the engine: the answer is the last message, and the remo
     measure('documents', `${booted} with the editor, ${removed} after shutdown and removal`);
     expect(removed).toBeLessThan(booted);
   }
+});
+
+test('boots with KiCad\'s chrome hidden, and key.press opens the chooser with no real click', async ({ page }) => {
+  const frame = await boot(page, 'fixture=glasgow&frame=sch', 'glasgow.kicad_sch');
+  // Canvas only: no menu bar, toolbar, status bar or pane is visible.
+  const types = new Set((await visibleWx(frame, {})).map((e) => e.typeName));
+  expect([...types].sort()).toEqual(['wxFrame', 'wxGLCanvas']);
+  const box = await frame.evaluate(() => {
+    const c = [...document.querySelectorAll<HTMLCanvasElement>('canvas.gl-canvas')].sort((a, b) => b.width * b.height - a.width * a.height)[0];
+    const r = c.getBoundingClientRect();
+    return { w: r.width, h: r.height, iw: innerWidth, ih: innerHeight };
+  });
+  expect((box.w * box.h) / (box.iw * box.ih)).toBeGreaterThan(0.95);
+  // No real click anywhere: the boot's own focus click is what makes this work.
+  expect(await visibleWx(frame, { type: 'wxDialog' })).toEqual([]);
+  expect(await request(page, 'key.press', { key: 'a', code: 'KeyA' })).toEqual({});
+  await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length, { timeout: 15_000 }).toBe(1);
+  // While the chooser is up, a key is refused rather than typed into it (the harness rejects with "code: message").
+  await expect(request(page, 'key.press', { key: 'w', code: 'KeyW' })).rejects.toThrow('busy: key.press');
+  await clickWx(page, frame, 'Cancel');
+  await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length).toBe(0);
+  // chrome.show brings the chrome back, and off again.
+  expect(await request(page, 'chrome.show', { on: true })).toEqual({});
+  await expect.poll(async () => (await visibleWx(frame, { type: 'wxMenuBar' })).length).toBe(1);
+  expect(await request(page, 'chrome.show', { on: false })).toEqual({});
+  await expect.poll(async () => (await visibleWx(frame, { type: 'wxMenuBar' })).length).toBe(0);
+});
+
+test('the board frame boots canvas only too', async ({ page }) => {
+  const frame = await boot(page, 'fixture=glasgow&frame=pcb', 'glasgow.kicad_pcb');
+  const types = new Set((await visibleWx(frame, {})).map((e) => e.typeName));
+  expect([...types].sort()).toEqual(['wxFrame', 'wxGLCanvas']);
 });

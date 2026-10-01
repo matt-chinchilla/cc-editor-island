@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memfsProjectDir } from '../loader/src/wasm/constants';
 import { describeError, startResponder } from './responder';
 import { isQuiet, resetUnloadQuietForTest } from '../src/unload-quiet';
@@ -72,6 +72,8 @@ function fakeFs() {
 function fakeEngine() {
   const { FS, files, dirs, busy, broken, pinned } = fakeFs();
   const opened: string[] = [];
+  /** The KiCad dialogs the registry reports as visible (key.press answers busy while one is up). */
+  const dialogs: Array<{ typeName: string; visible: boolean }> = [];
   const Module = {
     kicadOpenFile: vi.fn((p: string) => { opened.push(p); }),
     kicadOpenFileBusy: () => false,
@@ -84,9 +86,12 @@ function fakeEngine() {
   const win = {
     FS,
     Module,
-    wxElementRegistry: { findAll: () => [{ typeName: 'SCH_EDIT_FRAME', name: 'SchematicFrame', visible: true }], findByLabel: () => [] },
+    wxElementRegistry: {
+      findAll: (f: { type?: string; visible?: boolean } = {}) => (f.type === 'wxDialog' ? dialogs : [{ typeName: 'SCH_EDIT_FRAME', name: 'SchematicFrame', visible: true }]),
+      findByLabel: () => [],
+    },
   } as unknown as ToolWindow & { kicadCollab?: { onSave?: (p: string) => void } };
-  return { win, files, dirs, busy, broken, pinned, opened, Module };
+  return { win, files, dirs, busy, broken, pinned, opened, Module, dialogs };
 }
 
 const b = (s: string) => new TextEncoder().encode(s);
@@ -725,5 +730,80 @@ describe('startResponder', () => {
     await settle();
     expect(c.got).toEqual([{ type: 'ev.closing' }]);
     expect(eng.win.kicadCollab?.onSave).toBeUndefined();
+  });
+});
+
+describe('key.press', () => {
+  /** A responder whose port is connected; `ready` hands it a booted engine first. */
+  function respond(ready: boolean) {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    if (ready) r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    let id = 0;
+    const request = async (op: string, args?: unknown) => {
+      const n = ++id;
+      port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+      await settle();
+      return got.find((m) => m.id === n);
+    };
+    return { eng, request };
+  }
+  // No DOM in this suite: a KeyboardEvent stand-in that keeps key and code.
+  beforeEach(() => {
+    vi.stubGlobal('KeyboardEvent', class extends Event {
+      key: string; code: string;
+      constructor(type: string, init: KeyboardEventInit = {}) { super(type, init); this.key = init.key ?? ''; this.code = init.code ?? ''; }
+    });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('dispatches keydown and keyup on the engine window and answers {}', async () => {
+    const { eng, request } = respond(true);
+    const seen: string[] = [];
+    eng.win.dispatchEvent = vi.fn((e: Event) => { seen.push(`${e.type}:${(e as KeyboardEvent).key}:${(e as KeyboardEvent).code}`); return true; });
+    expect(await request('key.press', { key: 'a', code: 'KeyA' })).toEqual({ id: 1, ok: true, result: {} });
+    expect(seen).toEqual(['keydown:a:KeyA', 'keyup:a:KeyA']);
+  });
+
+  it('answers busy while a KiCad dialog is up, and bad_args outside the grammar', async () => {
+    const { eng, request } = respond(true);
+    eng.win.dispatchEvent = vi.fn(() => true);
+    eng.dialogs.push({ typeName: 'wxDialog', visible: true });
+    expect(await request('key.press', { key: 'a', code: 'KeyA' })).toMatchObject({ ok: false, error: { code: 'busy' } });
+    eng.dialogs.length = 0;
+    expect(await request('key.press', { key: 'a', code: 'Mouse' })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    expect(await request('key.press')).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    expect(eng.win.dispatchEvent).not.toHaveBeenCalled();
+  });
+
+  it('answers not_ready before the engine is up', async () => {
+    const { request } = respond(false);
+    expect(await request('key.press', { key: 'a', code: 'KeyA' })).toMatchObject({ ok: false, error: { code: 'not_ready' } });
+  });
+});
+
+describe('the chrome across opens', () => {
+  it('hides KiCad\'s chrome again after each open (loading a file shows the menu bar and an infobar), until chrome.show turns it on', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    const open = { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] };
+    port.postMessage({ id: 1, op: 'project.open', args: open });
+    await settle(100);
+    expect(eng.Module.kicadSetChrome.mock.calls).toEqual([[false]]);
+    expect(got.at(-1)).toMatchObject({ id: 1, ok: true });
+    port.postMessage({ id: 2, op: 'chrome.show', args: { on: true } });
+    port.postMessage({ id: 3, op: 'project.open', args: open });
+    await settle(100);
+    expect(eng.Module.kicadSetChrome.mock.calls).toEqual([[false], [true]]);
+    port.postMessage({ id: 4, op: 'chrome.show', args: { on: false } });
+    port.postMessage({ id: 5, op: 'project.open', args: open });
+    await settle(100);
+    expect(eng.Module.kicadSetChrome.mock.calls).toEqual([[false], [true], [false], [false]]);
+    expect(got.filter((m) => m.id != null).map((m) => m.ok)).toEqual([true, true, true, true, true]);
   });
 });

@@ -7,6 +7,7 @@
 // the exports the loader's global.d.ts declares (Module) and MEMFS.
 import { registerSaveHook, SAVE_COMMITTED, type SaveHookHandle } from '../loader/src/wasm/save-flow';
 import { parseBoot } from '../src/cc-config';
+import { parseKeyPress, pressKey } from '../src/keys';
 import { normalizePath, openStaged, PROJECT_ROOT, stageProject, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
 import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
@@ -51,7 +52,7 @@ const MAX_QUEUED = 256;
 const MAX_FILES = 4096;
 const MAX_NAME = 255;
 const APPLY_TIMEOUT_MS = 30_000;
-const OPS = new Set(['project.open', 'project.save', 'project.forget', 'chrome.show', 'readonly', 'shutdown']);
+const OPS = new Set(['project.open', 'project.save', 'project.forget', 'chrome.show', 'readonly', 'shutdown', 'key.press']);
 const EXT: Record<Frame, string> = { sch: '.kicad_sch', pcb: '.kicad_pcb' };
 
 const popupNote = (n: number): string => `${n} popup attempts blocked`;
@@ -151,6 +152,11 @@ export function startResponder(opts: {
   let opened: string | null = null;
   /** The Ctrl+S hook: live only between a successful project.open and the next open or forget. */
   let saveHook: { handle: SaveHookHandle; filter: (absPath: string) => void } | null = null;
+  /**
+   * Whether KiCad's chrome is meant to show. The frame boots with it hidden
+   * (src/main.ts, spec D16); chrome.show changes it for this boot.
+   */
+  let chromeOn = false;
 
   /** Set by the shutdown op or close(): from then on nothing is answered or emitted. */
   let closed = false;
@@ -291,6 +297,7 @@ export function startResponder(opts: {
       }
       case 'chrome.show': return toggle(op, args, 'kicadSetChrome');
       case 'readonly': return toggle(op, args, 'kicadSetReadOnly');
+      case 'key.press': return keyPress(args);
     }
     return fail('unknown_op', op);
   }
@@ -323,6 +330,10 @@ export function startResponder(opts: {
     opened = normalizePath(target);
     startSaveHook(win);   // a fresh hook lifetime for this document
     quietClear();   // a new document: the engine's leave prompt guards it again
+    // Loading a file shows the menu bar again, and an infobar when the file is
+    // from an older KiCad (e2e 2026-10-01): the hidden chrome is put back. A
+    // refusal leaves the chrome up and the open stands; chrome.show can retry.
+    if (!chromeOn) await withTimeout<unknown>(callChrome(win, false), APPLY_TIMEOUT_MS);
     return ok({ opened, dropped: staged.dropped });
   }
 
@@ -426,7 +437,37 @@ export function startResponder(opts: {
     // The binding answers false until the frame exists, and may answer through a
     // Promise when it queued behind a live open. Anything but true fails closed.
     const applied = await withTimeout<unknown>(fn(args.on), APPLY_TIMEOUT_MS);
-    return applied === true ? ok() : fail('not_applied', op);
+    if (applied !== true) return fail('not_applied', op);
+    if (name === 'kicadSetChrome') chromeOn = args.on;
+    return ok();
+  }
+
+  /** kicadSetChrome's own answer, or undefined when the export is missing, throws or rejects. */
+  async function callChrome(w: ToolWindow, on: boolean): Promise<unknown> {
+    const fn = w.Module?.kicadSetChrome;
+    if (typeof fn !== 'function') return undefined;
+    try { return await fn(on); } catch { return undefined; }
+  }
+
+  /**
+   * A KiCad hotkey from the host (spec D16). Refused while a dialog is up: the
+   * key would type into it. Never clicks: the boot put wx keyboard focus on the
+   * canvas once (src/main.ts), and a click in a drawing tool would place a point.
+   */
+  function keyPress(args: unknown): Answer {
+    const op = 'key.press';
+    const k = parseKeyPress(args);
+    if (k == null) return fail('bad_args', op);
+    const w = win;
+    if (w == null) return fail('not_ready', op);
+    if (dialogUp(w)) return fail('busy', op);
+    pressKey(w, k);
+    return ok();
+  }
+
+  /** A visible wxDialog in the engine's element registry; a registry that throws counts as none. */
+  function dialogUp(w: ToolWindow): boolean {
+    try { return (w.wxElementRegistry?.findAll({ type: 'wxDialog', visible: true }) ?? []).length > 0; } catch { return false; }
   }
 
   let ready = false;

@@ -28,6 +28,7 @@ import { installEngineTeardown, isShutdownError, teardownOnPagehide } from './te
 import { bootHeartbeat } from './boot-heartbeat';
 import { installUnloadQuiet } from './unload-quiet';
 import { installWindowOpenWrapper } from './window-open';
+import { focusCanvas } from './keys';
 
 declare const __ISLAND_TAG__: string;      // define'd by vite.config.ts from PIN.json
 declare const __KICAD_VERSION__: string;   // define'd by vite.config.ts
@@ -180,6 +181,13 @@ async function main(): Promise<void> {
     die('boot_failed', err instanceof Error ? err.message : String(err));
   }
   if (fatal || teardown.started()) return;
+  // The editor wears the viewer (spec D16): KiCad's menu bar, toolbars, panes
+  // and status bar never show; the page owns the chrome. kicadSetChrome is
+  // synchronous and resizes the GL canvas before it returns (spike 2026-10-01).
+  // Then one synthetic click on the canvas, as a reader's first click would be,
+  // so wx keyboard focus sits on the drawing and the first hotkey is not lost.
+  try { (window as ToolWindow).Module?.kicadSetChrome?.(false); } catch { /* chrome stays; the page can still send chrome.show */ }
+  focusCanvas(document);
   hideScreens();
   responder.engineReady(window as ToolWindow, { tag: __ISLAND_TAG__, kicad: __KICAD_VERSION__ }, popups);
 }
