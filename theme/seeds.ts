@@ -23,6 +23,13 @@ export function seedsFor(theme: Theme): Seeds {
     colorTheme: 'circuitcenter',
     toolbars: [{ name: 'pcbnew-toolbars.json', json: pcb }, { name: 'eeschema-toolbars.json', json: sch }],
     hotkeys,
-    common: { appearance: { icon_theme: theme === 'night' ? 1 : 0, toolbar_icon_size: 24, use_icons_in_menus: true }, api: { enable_server: false } },
+    common: {
+      appearance: { icon_theme: theme === 'night' ? 1 : 0, toolbar_icon_size: 24, use_icons_in_menus: true },
+      api: { enable_server: false },
+      // No anti-aliasing (0): the default supersampling (2) renders the full-frame canvas
+      // at twice its size each way on every repaint, and SMAA (1) has the engine drop its
+      // GL canvas for the software renderer (measured 2026-10-01, task F1 report).
+      graphics: { antialiasing_mode: 0 },
+    },
   };
 }

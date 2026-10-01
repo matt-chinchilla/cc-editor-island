@@ -15,4 +15,12 @@ describe('the seeds', () => {
     expect(t.board.background).toBe('rgb(0, 16, 35)');
     expect(t.board.copper.f).toBe('rgb(200, 52, 52)');
   });
+
+  it('turn the anti-aliasing off, so the full-frame canvas keeps up with the cursor', () => {
+    const s = seedsFor('day');
+    expect(s.common.graphics).toEqual({ antialiasing_mode: 0 });
+    // The keys the stage 1c seeds carry are still there beside it.
+    expect(s.common.api).toEqual({ enable_server: false });
+    expect((s.common.appearance as { toolbar_icon_size: number }).toolbar_icon_size).toBe(24);
+  });
 });

@@ -13,6 +13,9 @@
 // toolbar layouts the island writes under toolbars/ are read.
 // Modified by Circuit Center on 2026-09-30: the wasm fetch status label reads
 // "Loading the editor…".
+// Modified by Circuit Center on 2026-10-01: eeschema.json and pcbnew.json
+// also carry window.cursor (the small crosshair, always shown), so the
+// full-frame canvas keeps up with the pointer.
 import type { Tool } from "../../../src/types";
 import {
   KICAD_CONFIG_DIR,
@@ -598,6 +601,9 @@ async function doBoot(opts: BootOptions): Promise<void> {
           color_theme: opts.seeds.colorTheme,
           custom_toolbars: true,
         },
+        // The small crosshair (KiCad's CROSS_HAIR_MODE::SMALL_CROSS, 0): the
+        // full-window modes redraw a line across the whole canvas per move.
+        window: { cursor: { cross_hair_mode: 0, always_show_cursor: true } },
       },
       null,
       2,

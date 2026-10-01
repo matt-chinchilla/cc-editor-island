@@ -459,10 +459,22 @@ test('boots with KiCad\'s chrome hidden, and key.press opens the chooser with no
   await expect.poll(async () => (await visibleWx(frame, { type: 'wxMenuBar' })).length).toBe(0);
 });
 
-test('the board frame boots canvas only too', async ({ page }) => {
+/** A seeded config file of the frame's MEMFS, parsed. */
+const seededConfig = (frame: Frame, file: string): Promise<Record<string, any>> => frame.evaluate((name) => {
+  const FS = (window as unknown as { FS: { readFile(p: string, o: { encoding: 'utf8' }): string } }).FS;
+  return JSON.parse(FS.readFile(`/home/kicad/.config/kicad/kicad/10.0/${name}`, { encoding: 'utf8' })) as Record<string, any>;
+}, file);
+
+test('the board frame boots canvas only too, with the cheap cursor seeds', async ({ page }) => {
   const frame = await boot(page, 'fixture=glasgow&frame=pcb', 'glasgow.kicad_pcb');
   const types = new Set((await visibleWx(frame, {})).map((e) => e.typeName));
   expect([...types].sort()).toEqual(['wxFrame', 'wxGLCanvas']);
+  // No anti-aliasing and the small crosshair, so the full-frame canvas keeps up with the
+  // pointer (task F1: SMAA dropped the GL canvas, supersampling doubled every repaint).
+  expect((await seededConfig(frame, 'kicad_common.json')).graphics).toEqual({ antialiasing_mode: 0 });
+  for (const file of ['pcbnew.json', 'eeschema.json']) {
+    expect((await seededConfig(frame, file)).window?.cursor).toEqual({ cross_hair_mode: 0, always_show_cursor: true });
+  }
 });
 
 /** The appearance.color_theme an editor's seeded config selects, read from the frame's MEMFS. */
