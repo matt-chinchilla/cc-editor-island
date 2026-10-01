@@ -1,0 +1,3 @@
+SPDX-FileCopyrightText: The KiCad Developers, see AUTHORS.txt for contributors.
+SPDX-License-Identifier: GPL-3.0-or-later
+Comment: KiCad's default hotkey of every action, extracted from KiCad at commit 48f1e865216623283579984110a80210e7ccc789 (PIN.json kicad): common/tool/actions.cpp, eeschema/tools/sch_actions.cpp, pcbnew/tools/pcb_actions.cpp and pcbnew/router/router_tool.cpp (the __EMSCRIPTEN__ branches), key names as common/hotkeys_basic.cpp writes them; null where an action has none. The input of theme/pencil-tools.gen.mjs.
