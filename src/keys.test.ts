@@ -4,7 +4,7 @@
 // the document, the canvas and the three event classes are small stand-ins
 // built on node's own Event and EventTarget.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { focusCanvas, KEY_CODE_RE, parseKeyPress, pressKey } from './keys';
+import { focusCanvas, focusFrameOnPress, KEY_CODE_RE, parseKeyPress, pressKey } from './keys';
 
 /** An Event subclass that keeps every init field (key, code, clientX, ...) on the instance. */
 const eventClass = () => class extends Event {
@@ -69,5 +69,48 @@ describe('focusCanvas', () => {
     expect([...xs]).toEqual([10 + 1000 - 8]);   // 8 px inside the right edge
     attached = false;
     expect(focusCanvas(doc)).toBe(false);
+  });
+});
+
+describe('focusFrameOnPress', () => {
+  /** A frame window whose listeners the test calls with its own event objects (node cannot make a trusted event). */
+  function frameWindow(focused: boolean) {
+    const listeners = new Map<string, (e: Event) => void>();
+    const win = {
+      focused,
+      focus: vi.fn(() => { win.focused = true; }),
+      document: { hasFocus: () => win.focused },
+      addEventListener: vi.fn((t: string, h: (e: Event) => void, capture?: boolean) => { expect(capture).toBe(true); listeners.set(t, h); }),
+      removeEventListener: vi.fn((t: string) => { listeners.delete(t); }),
+    };
+    const press = (type: string, isTrusted: boolean) => listeners.get(type)?.({ type, isTrusted } as Event);
+    return { win, press, listeners };
+  }
+
+  it('focuses the frame on a real press when the page holds focus, once', () => {
+    const { win, press } = frameWindow(false);
+    focusFrameOnPress(win);
+    press('pointerdown', true);
+    expect(win.focus).toHaveBeenCalledTimes(1);
+    press('pointerup', true);
+    press('pointerdown', true);
+    expect(win.focus).toHaveBeenCalledTimes(1);   // the frame already has it
+  });
+
+  it('a touch press focuses on its pointerup', () => {
+    const { win, press } = frameWindow(false);
+    focusFrameOnPress(win);
+    press('pointerup', true);
+    expect(win.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it('never takes focus for a synthetic press, and stops when removed', () => {
+    const { win, press, listeners } = frameWindow(false);
+    const stop = focusFrameOnPress(win);
+    press('pointerdown', false);
+    press('pointerup', false);
+    expect(win.focus).not.toHaveBeenCalled();
+    stop();
+    expect(listeners.size).toBe(0);
   });
 });

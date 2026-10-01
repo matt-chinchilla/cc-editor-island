@@ -42,3 +42,24 @@ export function focusCanvas(doc: Document): boolean {
   for (const type of ['pointerup', 'mouseup', 'click']) canvas.dispatchEvent(type === 'pointerup' ? new PointerEvent(type, { ...up, pointerId: 1, isPrimary: true }) : new MouseEvent(type, up));
   return true;
 }
+
+/**
+ * A real press anywhere in the frame gives the frame the browser's keyboard
+ * focus. The engine cancels mousedown, so the browser never moves focus into
+ * the frame by itself: after a press on one of the host page's controls, a
+ * press in the drawing left focus on that control, and KiCad's hotkeys went
+ * to the page (review M5, 2026-10-01). Taking focus also blurs the host's
+ * window, which closes the host's popovers through the blur they already
+ * listen for (review P2). Synthetic presses (the boot's focusCanvas) never
+ * take focus: the frame must not steal it from the page on its own. Both
+ * pointerdown and pointerup count, as a touch press activates the frame only
+ * on its pointerup. Answers the function that removes the listeners.
+ */
+export function focusFrameOnPress(win: Pick<Window, 'addEventListener' | 'removeEventListener' | 'focus'> & { document: Pick<Document, 'hasFocus'> }): () => void {
+  const onPress = (e: Event): void => {
+    if (!e.isTrusted || win.document.hasFocus()) return;
+    win.focus();
+  };
+  for (const type of ['pointerdown', 'pointerup']) win.addEventListener(type, onPress, true);
+  return () => { for (const type of ['pointerdown', 'pointerup']) win.removeEventListener(type, onPress, true); };
+}

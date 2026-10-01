@@ -16,8 +16,8 @@ Answers: `{ id, ok: true, result: object }` or `{ id, ok: false, error: { code: 
 
 | op | args | result |
 |---|---|---|
-| `project.open` | `{ name: string, files: [{ path: string, bytes: Uint8Array }], open?: string }` | `{ opened: string, dropped: string[] }` |
-| `project.save` | none | `{ path: string }` |
+| `project.open` | `{ name: string, files: [{ path: string, bytes: Uint8Array }], open?: string }` | `{ opened: string, dropped: string[], chrome: boolean }` |
+| `project.save` | none | `{ path: string, saved: string[] }` |
 | `project.forget` | none | `{}` |
 | `chrome.show` | `{ on: boolean }` | `{}` |
 | `readonly` | `{ on: boolean }` | `{}` |
@@ -39,10 +39,18 @@ Answers: `{ id, ok: true, result: object }` or `{ id, ok: false, error: { code: 
 - `open`, when given, names the file KiCad opens. It must end with the frame's own extension (`.kicad_sch` in a `sch` frame, `.kicad_pcb` in a `pcb` frame) or the request answers `bad_args`, so a later `project.save` can never write one kind of file into the other. It must be one of the written files, or the open answers `open_failed`.
 - Without `open`, the frame opens the file of its own kind that shares the base name of a `.kicad_pro` in `files` (the project's root sheet or board), else the first file of its own kind, else answers `nothing_to_open`.
 - `opened` is the normalised path KiCad opened.
+- `chrome` says whether any of KiCad's own window chrome (its menu bar, toolbars, status bar or infobar) is still visible when the open answers. While the chrome is meant hidden, the frame hides it again after the load and then watches it for about 1.5 s, hiding it each time KiCad shows it again, before answering; so the answer comes about 1.5 s after the load. `true` then means the engine would not hide it: a host that wants the chrome hidden sends `chrome.show { on: false }` again. After `chrome.show { on: true }`, `chrome` is simply whether it is visible. An older island answers without the field; a host treats it as unknown.
 - A host never sends `project.open` over a live document: to show another project it reloads the frame (or removes it and makes a new one). If it does send one while the open document holds unsaved edits, KiCad raises its own "Save Changes?" dialog inside the frame; the open may answer before the dialog is closed, and `project.open` and `project.save` answer `busy` until the user closes it.
 
 ### project.save
-Saves the open document through the engine and answers the project-relative path written; the bytes arrive first, as `ev.saved`. In a schematic, the sheet the editor is showing is saved to that sheet's own file. Only bytes the engine itself wrote count: when the engine writes nothing, the file keeps its previous bytes and the request answers `save_failed`.
+Saves the project through the engine's own Save and answers once every file it wrote has arrived as `ev.saved`; the answer is never sent before them.
+
+- In a `sch` frame it is KiCad's Save, the same path as Ctrl+S in the editor: every sheet file of the hierarchy and the project file (`.kicad_pro`), whichever sheet the editor is showing and whichever sheets hold edits. The frame waits until every sheet file the engine's sheet tree names (and the root's `.kicad_pro`, when one was staged) has arrived, then a short pause with nothing more; without a sheet tree, until about 2 s pass with nothing more.
+- In a `pcb` frame it is the board: the board file the frame opened.
+
+`saved` lists the project-relative paths written, in the order they arrived, each once; `path` names the document the editor is showing (in a schematic, the file of the sheet on screen; the opened file when that sheet is outside the project), kept for hosts older than `saved`. Only bytes the engine itself wrote count: when it writes nothing (in a `sch` frame, no file within about 8 s), the request answers `save_failed` and, in a `pcb` frame, the file keeps its previous bytes. In a `sch` frame the save is a key press, so it answers `busy` while a popup menu or a dialog is up (see `key.press`), and nothing is pressed.
+
+A host applies every `ev.saved` to its copy of the project, and resolves its save on the answer, never on the first `ev.saved`. An answer without `saved` comes from an older island: what it wrote is unknown, and only the answer says the save is over.
 
 ### project.forget
 Drops the document: the project folder is emptied, and from then on the frame emits no `ev.saved` (a Ctrl+S in the document KiCad still shows is not reported) until the next successful `project.open`. The host reloads or removes the frame afterwards. The answer is `{}`; if emptying the folder fails it is `island_error`, and the document is dropped all the same.
@@ -50,13 +58,15 @@ Drops the document: the project folder is emptied, and from then on the frame em
 ### chrome.show and readonly
 `chrome.show { on }` turns KiCad's own window chrome on or off (the engine's `kicadSetChrome`); `readonly { on }` turns read-only mode on or off (`kicadSetReadOnly`). Each answers `{}` only when the engine confirms the change, else `not_applied`.
 
-The frame boots with KiCad's chrome hidden (`kicadSetChrome(false)`); `chrome.show { on: true }` brings it back for that boot only. Loading a file shows KiCad's menu bar again (and an infobar for a file from an older KiCad), so while the chrome is hidden each successful `project.open` hides it again before it answers.
+The frame boots with KiCad's chrome hidden (`kicadSetChrome(false)`); `chrome.show { on: true }` brings it back for that boot only. Loading a file shows KiCad's menu bar again (and an infobar for a file from an older KiCad), so while the chrome is hidden each `project.open` that reached the load (`open_failed` included) hides it again and watches it before it answers; the successful answer's `chrome` says whether it stayed hidden.
 
 ### key.press
-Fires one KiCad hotkey: the frame dispatches a `keydown` and then a `keyup` carrying `key`, `code` and the three modifiers on its window, where KiCad reads its hotkeys, and answers `{}`. Keyboard focus is put on the drawing once at boot, so the first key is not lost; the op itself never clicks. `code` is one of `KeyA` to `KeyZ`, `Digit0` to `Digit9`, `F1` to `F12`, `Escape`, `Home`, `Delete`, `Backspace`, `Enter` or `Space`; `key` is one character, or one of `F1` to `F12`, `Escape`, `Home`, `Delete`, `Backspace` or `Enter`; each modifier, when given, is a boolean (absent means not held). Anything else answers `bad_args`. While a KiCad dialog is up the key is refused with `busy` rather than typed into the dialog.
+Fires one KiCad hotkey: the frame dispatches a `keydown` and then a `keyup` carrying `key`, `code` and the three modifiers on its window, where KiCad reads its hotkeys, and answers `{}`. Keyboard focus is put on the drawing once at boot, so the first key is not lost; the op itself never clicks. `code` is one of `KeyA` to `KeyZ`, `Digit0` to `Digit9`, `F1` to `F12`, `Escape`, `Home`, `Delete`, `Backspace`, `Enter` or `Space`; `key` is one character, or one of `F1` to `F12`, `Escape`, `Home`, `Delete`, `Backspace` or `Enter`; each modifier, when given, is a boolean (absent means not held). Anything else answers `bad_args`. While a popup menu (a context menu, KiCad's clarify-selection menu) or a dialog (any wx type whose name contains `Dialog`, except a progress dialog) is up, the key is refused with `busy` rather than landing in it.
+
+A real press anywhere in the frame (a pointer down, or a touch's pointer up) gives the frame the browser's keyboard focus when it does not have it, so the user's own keys reach KiCad and not the host page; this also blurs the host's window. The boot's own focus click never takes the browser's focus.
 
 ### view.fit
-Fits the drawing to the view: the frame presses KiCad's Zoom to Fit hotkey (`Home`) exactly as `key.press { key: "Home", code: "Home" }` would, and answers `{}`. While a KiCad dialog is up it answers `busy` and nothing is pressed.
+Fits the drawing to the view: the frame presses KiCad's Zoom to Fit hotkey (`Home`) exactly as `key.press { key: "Home", code: "Home" }` would, and answers `{}`. While a popup menu or a dialog is up (as for `key.press`) it answers `busy` and nothing is pressed.
 
 ### sheet.tree and sheet.enter
 `sheet.tree` answers the schematic's sheet hierarchy as the engine reports it. `current` is the path of the sheet the editor is showing. Each row of `sheets` carries the sheet's `path` (`/` for the root, then one lower case UUID and a slash per level), its `name`, its page number as a string (`page`), its `depth` below the root, the path of its `parent` (empty for the root) and the base name of its file (`file`, for example `io_banks.kicad_sch`; never a path, and empty when the engine gives none). A row the engine reports without a string `path` or `name` is left out. In a `pcb` frame the engine has no sheet tree and the request answers `unsupported`.
@@ -80,14 +90,14 @@ Without the op, removing or navigating the frame runs a shorter teardown from `p
 |---|---|
 | `unknown_op` | `op` is not one of the thirteen above; `message` is the op. |
 | `bad_args` | the request has a key other than `id`, `op` and `args`, or its args fail the checks above (an unknown key, a wrong type, too many files, a name too long, a non `Uint8Array` file, an `open` of the other kind, args on an op that takes none). |
-| `island_error` | the frame failed while handling the request (for example the file system refused to empty the project folder); `message` carries the failure. The next request is still handled. |
+| `island_error` | the frame failed while handling the request (for example the file system refused to empty the project folder, or `sheet.tree` or `layers.get` got no answer from the engine within 30 s); `message` carries the failure. The next request is still handled. |
 | `not_ready` | the engine has not booted yet (before `ev.ready`), or `project.save` with no successfully opened document. |
 | `nothing_to_open` | `project.open` named no file and `files` holds none of the frame's kind. |
 | `open_failed` | the file to open was not written (dropped, or absent from `files`), or KiCad's load did not settle within the frame's time limit. |
 | `unsupported` | the engine build lacks the export the op needs, or the export answers nothing in this frame's kind (`sheet.tree` in a `pcb` frame, `layers.get` in a `sch` frame); `message` names the export. |
 | `not_applied` | `chrome.show`, `readonly`, `sheet.enter`, `layers.visible` or `layers.active`: the engine answered anything but success, or did not answer within 30 s. |
-| `busy` | `project.open` or `project.save` while the engine is still loading a file, or `key.press` or `view.fit` while a KiCad dialog is up; nothing was changed, and the host may send the request again later. |
-| `save_failed` | `project.save`: the engine wrote nothing, or the sheet the editor is showing lies outside the project folder. |
+| `busy` | `project.open` or `project.save` while the engine is still loading a file, or `key.press`, `view.fit` or a schematic's `project.save` while a popup menu or a dialog is up; nothing was changed, and the host may send the request again later. |
+| `save_failed` | `project.save`: the engine wrote nothing (in a `sch` frame, no file arrived within about 8 s; in a `pcb` frame, also when the board save gave no answer within 30 s). |
 
 ## Events (frame to host): `{ type: string, ... }`
 Each event carries exactly the keys listed here.
@@ -99,9 +109,10 @@ Each event carries exactly the keys listed here.
   - `booting`: while the engine's files load, `booting` repeats at most once every 2 s with `detail` the whole percent loaded, digits only (`0` to `100`), so a host that bounds the boot by inactivity sees it is still moving. Neither the first nor the 100 percent tick is promised.
   - `staging` and `opening` mark a `project.open` in progress.
 - `ev.ready { caps: string[], engine: { tag: string, kicad: string } }` once, after the engine booted and its editor window is up, and before any `project.open`: the host opens its project after this event. `caps` are the engine export names found on `Module`. `engine.tag` is the PCBJam release tag the engine was built from; `engine.kicad` is the KiCad version string (for example `10.0`), not a commit.
-- `ev.saved { path: string, bytes: Uint8Array }` after every save of a file in the project folder, whether the user pressed Ctrl+S or the host sent `project.save`. One Ctrl+S may emit several (each sheet file of a schematic, the `.kicad_pro` beside a board). A file saved outside the project folder (a Save As elsewhere) is not reported. None is emitted after `project.forget` until the next successful `project.open`.
+- `ev.saved { path: string, bytes: Uint8Array }` after every save of a file in the project folder, whether the user pressed Ctrl+S or the host sent `project.save`. One Ctrl+S, and one `project.save` in a schematic, emits several (each sheet file of a schematic and its `.kicad_pro`; a board's Ctrl+S, the `.kicad_pro` beside the board). A file saved outside the project folder (a Save As elsewhere) is not reported. None is emitted after `project.forget` until the next successful `project.open`.
 - `ev.openTool { frame: "sch" | "pcb" }` when the editor's own Switch or Quit menu asks for the other frame; the frame does not navigate.
 - `ev.help { topic: string }` when the editor asked to open a KiCad help page; `topic` is the last path segment of the KiCad docs URL, `[a-z0-9_-]{1,64}`.
+- `ev.menu { open: boolean }` when something of KiCad's own is drawn over its canvas: `open: true` when a popup menu (a context menu, KiCad's clarify-selection menu) or any dialog (a wx type whose name contains `Dialog`, progress dialogs included) shows while none was up, `open: false` when the last of them closes. A host hides what it draws over the frame while it is open, so the menu or dialog is not covered. A popup menu is reported at once, a dialog within about 100 ms. Nothing is sent while nothing is up, nor after `shutdown` was answered or the frame went away.
 - `ev.closing {}` on `pagehide`, and when the user chooses File > Quit (the frame then shows its fatal screen and navigates nowhere). Sent at most once, and never after `shutdown` was answered.
 
 Unknown fields are rejected by both sides. An unknown event `type` is ignored by the host; an unknown `op` is answered `unknown_op`.

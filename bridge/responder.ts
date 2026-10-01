@@ -7,10 +7,11 @@
 // the exports the loader's global.d.ts declares (Module) and MEMFS.
 import { registerSaveHook, SAVE_COMMITTED, type SaveHookHandle } from '../loader/src/wasm/save-flow';
 import { parseBoot } from '../src/cc-config';
-import { parseKeyPress, pressKey } from '../src/keys';
+import { parseKeyPress, pressKey, type KeyPress } from '../src/keys';
 import { normalizePath, openStaged, PROJECT_ROOT, stageProject, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
 import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
+import { keysBlocked, watchMenus } from './modal';
 
 declare const __ISLAND_ID__: string;   // define'd by vite.config.ts from PIN.json
 
@@ -20,6 +21,7 @@ export type IslandEvent =
   | { type: 'ev.saved'; path: string; bytes: Uint8Array }
   | { type: 'ev.openTool'; frame: Frame }
   | { type: 'ev.help'; topic: string }
+  | { type: 'ev.menu'; open: boolean }
   | { type: 'ev.closing' };
 
 export interface Responder {
@@ -51,7 +53,33 @@ const SLUG = 'cc';
 const MAX_QUEUED = 256;
 const MAX_FILES = 4096;
 const MAX_NAME = 255;
-const APPLY_TIMEOUT_MS = 30_000;
+/**
+ * The bridge's waits, in ms: the bound on each engine call (so no call can
+ * hold the serial request chain, shutdown included), project.open's chrome
+ * re-hide and project.save's save-all. Measured on the local pair (2026-10-01): a Ctrl+S in the Glasgow
+ * schematic reported its first file 20 to 160 ms after the key and its last
+ * (four files, 1.3 MB) within 110 ms of the first. The unit tests shorten them.
+ */
+export const timing = {
+  /** How long an engine call may take before it counts as unanswered (not_applied, save_failed, island_error). */
+  applyMs: 30_000,
+  /** After an open, how long the chrome is watched for KiCad showing it again. */
+  chromeSettleMs: 1_500,
+  chromePollMs: 100,
+  /** A save-all that reported no file by then failed (the key never reached the editor). */
+  firstSaveMs: 8_000,
+  /** Once every expected file is in, how long no further file may arrive. */
+  saveSettleMs: 150,
+  /** Without the full expected set, how long a pause ends the save-all. */
+  saveQuietMs: 2_000,
+  /** The save-all's ceiling, whatever arrives. */
+  saveAllMs: 20_000,
+  savePollMs: 25,
+};
+/** KiCad's own Save (eeschema's Ctrl+S): every sheet of the schematic and the project file. */
+const SAVE_KEY: KeyPress = { key: 's', code: 'KeyS', ctrl: true, shift: false, alt: false };
+/** KiCad's window chrome as the element registry names it (measured with chrome.show on, 2026-10-01). */
+const CHROME_RE = /^wx(MenuBar|AuiToolBar|ToolBar|StatusBar)$|InfoBar/i;
 const OPS = new Set(['project.open', 'project.save', 'project.forget', 'chrome.show', 'readonly', 'shutdown', 'key.press', 'view.fit', 'sheet.tree', 'sheet.enter', 'layers.get', 'layers.visible', 'layers.active']);
 /** A sheet path as the engine reports it: "/" then one UUID and a slash per level. */
 const SHEET_PATH_RE = /^\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/)*$/;
@@ -68,6 +96,7 @@ const noArgs = (args: unknown): boolean => args === undefined || (isObj(args) &&
 const isLayerId = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 127;
 /** The last segment of a MEMFS path: the engine's absolute paths never leave the frame. */
 const baseName = (p: string): string => p.slice(p.lastIndexOf('/') + 1);
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 function randomNonce(): string {
   const a = new Uint8Array(16);
@@ -164,6 +193,11 @@ export function startResponder(opts: {
    */
   let chromeOn = false;
 
+  /** While a host save-all runs: every path its ev.saved carried, in order, with when it arrived. */
+  let collecting: Array<{ path: string; at: number }> | null = null;
+  /** Stops the popup menu and dialog watch (ev.menu); set by engineReady. */
+  let stopMenus: (() => void) | null = null;
+
   /** Set by the shutdown op or close(): from then on nothing is answered or emitted. */
   let closed = false;
   /** A shutdown request passed its checks: the port closes once it is answered. */
@@ -194,6 +228,9 @@ export function startResponder(opts: {
         return;
       case 'ev.help':
         port.postMessage({ type: ev.type, topic: ev.topic });
+        return;
+      case 'ev.menu':
+        port.postMessage({ type: ev.type, open: ev.open });
         return;
       case 'ev.closing':
         port.postMessage({ type: ev.type });
@@ -247,6 +284,8 @@ export function startResponder(opts: {
 
   /** The document and the save hook are dropped and the engine's leave prompt is stopped for good. */
   function stopBridge(): void {
+    stopMenus?.();
+    stopMenus = null;
     staged = null;
     opened = null;
     stopSaveHook();
@@ -338,16 +377,45 @@ export function startResponder(opts: {
     const target = typeof a.open === 'string' ? a.open : defaultOpen(staged.written, frame);
     if (target == null) return fail('nothing_to_open', `no ${EXT[frame]} file`);
     emit({ type: 'ev.state', phase: 'opening' });
-    const how = await openStaged(win, staged, target, (m) => console.debug('[open]', m));
-    if (how === 'failed') return fail('open_failed', target);
+    const w = win;
+    const how = await openStaged(w, staged, target, (m) => console.debug('[open]', m));
+    if (how === 'failed') {
+      // A load that did not settle may still have shown the menu bar.
+      await settleChrome(w);
+      return fail('open_failed', target);
+    }
     opened = normalizePath(target);
-    startSaveHook(win);   // a fresh hook lifetime for this document
+    startSaveHook(w);   // a fresh hook lifetime for this document
     quietClear();   // a new document: the engine's leave prompt guards it again
     // Loading a file shows the menu bar again, and an infobar when the file is
-    // from an older KiCad (e2e 2026-10-01): the hidden chrome is put back. A
-    // refusal leaves the chrome up and the open stands; chrome.show can retry.
-    if (!chromeOn) await withTimeout<unknown>(callChrome(win, false), APPLY_TIMEOUT_MS);
-    return ok({ opened, dropped: staged.dropped });
+    // from an older KiCad (e2e 2026-10-01): the hidden chrome is put back and
+    // watched, since KiCad can show it again after the load settled (a menu bar
+    // in 2 of 14 e2e runs). A refusal leaves the chrome up and the open stands:
+    // the answer's chrome says so, and the host sends chrome.show again.
+    const chrome = await settleChrome(w);
+    return ok({ opened, dropped: staged.dropped, chrome });
+  }
+
+  /** Any of KiCad's window chrome is on screen. */
+  function chromeVisible(w: ToolWindow): boolean {
+    try { return (w.wxElementRegistry?.findAll({ visible: true }) ?? []).some((e) => CHROME_RE.test(e.typeName)); } catch { return false; }
+  }
+
+  /**
+   * While the chrome is meant hidden: hides it, then watches it for
+   * timing.chromeSettleMs and hides it again each time it shows. Answers
+   * whether any of it is still visible at the end (with the chrome meant
+   * shown, whether it is).
+   */
+  async function settleChrome(w: ToolWindow): Promise<boolean> {
+    if (chromeOn) return chromeVisible(w);
+    await withTimeout<unknown>(callChrome(w, false), timing.applyMs);
+    const end = Date.now() + timing.chromeSettleMs;
+    while (!closed && !chromeOn && Date.now() < end) {
+      await sleep(timing.chromePollMs);
+      if (!chromeOn && chromeVisible(w)) await withTimeout<unknown>(callChrome(w, false), timing.applyMs);
+    }
+    return chromeVisible(w);
   }
 
   /**
@@ -369,6 +437,7 @@ export function startResponder(opts: {
         const path = normalizePath(relPath);
         if (staged == null || path == null) return { kind: 'not-committed' };
         emit({ type: 'ev.saved', path, bytes });
+        collecting?.push({ path, at: Date.now() });
         return SAVE_COMMITTED;
       },
     });
@@ -400,15 +469,19 @@ export function startResponder(opts: {
   }
 
   /**
-   * kicadSaveSchematic writes the sheet the editor is SHOWING (the current
-   * sheet), so it is saved to that sheet's own file, never over the root.
-   * Without the sheet tree (an older build) the opened file is the target.
+   * The file of the sheet the editor is SHOWING (the current sheet): the
+   * project.save answer's `path`. Without the sheet tree (an older build) the
+   * opened file; null when the shown sheet lies outside the project.
    */
   async function schematicTarget(w: ToolWindow, fallback: string): Promise<string | null> {
     const tree = w.Module?.kicadSheetsGetTree;
     if (typeof tree !== 'function') return fallback;
     let state: unknown;
-    try { state = JSON.parse(String((await tree()) || 'null')); } catch { return fallback; }
+    try {
+      const text = await withTimeout<unknown>(tree(), timing.applyMs);
+      if (text === 'timeout') return fallback;
+      state = JSON.parse(String(text || 'null'));
+    } catch { return fallback; }
     if (!isObj(state) || typeof state.current !== 'string' || !Array.isArray(state.sheets)) return fallback;
     const row = (state.sheets as unknown[]).find((s) => isObj(s) && s.path === state.current);
     if (!isObj(row) || typeof row.file !== 'string' || row.file === '') return fallback;
@@ -419,27 +492,103 @@ export function startResponder(opts: {
     const op = 'project.save';
     const w = win;
     if (w?.FS == null || staged == null || opened == null) return fail('not_ready', op);
-    const name = frame === 'pcb' ? 'kicadSaveBoard' : 'kicadSaveSchematic';
-    const save = w.Module?.[name];
-    if (typeof save !== 'function') return fail('unsupported', name);
-    const target = frame === 'pcb' ? opened : await schematicTarget(w, opened);
-    if (target == null) return fail('save_failed', 'the shown sheet is outside the project');
+    return frame === 'pcb' ? saveBoard(w, w.FS, opened) : saveSchematic(w, opened);
+  }
+
+  /** The board through kicadSaveBoard: the one file the frame shows. */
+  async function saveBoard(w: ToolWindow, FS: EmscriptenFS, target: string): Promise<Answer> {
+    const save = w.Module?.kicadSaveBoard;
+    if (typeof save !== 'function') return fail('unsupported', 'kicadSaveBoard');
     const abs = `${root}/${target}`;
     // The save exports swallow every failure and write nothing, and the target
     // already holds the staged bytes. So the file is taken away first (its path
     // stays the one the engine holds) and only bytes the engine wrote back count;
-    // a save that wrote nothing puts the previous bytes back and fails.
-    const before = readBytes(w.FS, abs);
-    try { if (before != null) w.FS.unlink(abs); } catch { return fail('save_failed', target); }
-    try { await save(abs); } catch { /* judged by the file below */ }
-    const bytes = readBytes(w.FS, abs);
+    // a save that wrote nothing puts the previous bytes back and fails. A save
+    // that never answers is judged the same way after timing.applyMs, so the
+    // request chain moves on.
+    const before = readBytes(FS, abs);
+    try { if (before != null) FS.unlink(abs); } catch { return fail('save_failed', target); }
+    try { await withTimeout<unknown>(save(abs), timing.applyMs); } catch { /* judged by the file below */ }
+    const bytes = readBytes(FS, abs);
     if (bytes == null || bytes.byteLength === 0) {
-      try { if (before != null) w.FS.writeFile(abs, before); } catch { /* the answer is save_failed either way */ }
+      try { if (before != null) FS.writeFile(abs, before); } catch { /* the answer is save_failed either way */ }
       return fail('save_failed', target);
     }
     emit({ type: 'ev.saved', path: target, bytes });
     quietFor(SAVE_QUIET_MS);   // the host has the bytes and may reload the frame now
-    return ok({ path: target });
+    return ok({ path: target, saved: [target] });
+  }
+
+  /**
+   * The schematic through KiCad's own Save, the Ctrl+S path: it writes every
+   * sheet file of the hierarchy and the project file, each reported by the
+   * save hook as ev.saved (kicadSaveSchematic writes only the sheet on screen,
+   * so edits on any other sheet would be lost). The answer waits until every
+   * sheet file and the project file are in, then a short pause with nothing
+   * more; without the sheet list it waits for a longer pause. `path` names the
+   * sheet the editor is showing, for hosts older than `saved`.
+   */
+  async function saveSchematic(w: ToolWindow, fallback: string): Promise<Answer> {
+    const op = 'project.save';
+    if (keysBlocked(w)) return fail('busy', op);   // the key would land in the menu or dialog
+    const shown = (await schematicTarget(w, fallback)) ?? fallback;
+    const expected = await expectedSaves(w, fallback);
+    const got: Array<{ path: string; at: number }> = [];
+    collecting = got;
+    const start = Date.now();
+    try {
+      pressKey(w, SAVE_KEY);
+      for (;;) {
+        await sleep(timing.savePollMs);
+        const now = Date.now();
+        if (closed || now - start >= timing.saveAllMs) break;
+        if (got.length === 0) {
+          if (now - start >= timing.firstSaveMs) break;
+          continue;
+        }
+        const idle = now - got[got.length - 1].at;
+        const all = expected != null && [...expected].every((p) => got.some((g) => g.path === p));
+        if (idle >= (all ? timing.saveSettleMs : timing.saveQuietMs)) break;
+      }
+      // The hook hands a file saved twice in a row over a microtask later: drain it.
+      await sleep(0);
+    } finally {
+      collecting = null;
+    }
+    const saved = [...new Set(got.map((g) => g.path))];
+    if (saved.length === 0) return fail('save_failed', 'the editor saved nothing');
+    quietFor(SAVE_QUIET_MS);   // the host has the bytes and may reload the frame now
+    return ok({ path: shown, saved });
+  }
+
+  /**
+   * The files KiCad's Save writes: every sheet file the engine's sheet tree
+   * names (inside the project) and the root's .kicad_pro when it was staged.
+   * Null without a usable sheet tree.
+   */
+  async function expectedSaves(w: ToolWindow, fallback: string): Promise<Set<string> | null> {
+    const tree = w.Module?.kicadSheetsGetTree;
+    if (typeof tree !== 'function') return null;
+    let state: unknown;
+    try {
+      const text = await withTimeout<unknown>(tree(), timing.applyMs);
+      if (text === 'timeout') return null;
+      state = JSON.parse(String(text || 'null'));
+    } catch { return null; }
+    if (!isObj(state) || !Array.isArray(state.sheets)) return null;
+    const files = new Set<string>();
+    let rootFile = fallback;
+    for (const row of state.sheets as unknown[]) {
+      if (!isObj(row) || typeof row.file !== 'string') continue;
+      const rel = relInRoot(row.file);
+      if (rel == null) continue;
+      files.add(rel);
+      if (row.path === '/') rootFile = rel;
+    }
+    if (files.size === 0) return null;
+    const pro = `${rootFile.slice(0, -'.kicad_sch'.length)}.kicad_pro`;
+    if (rootFile.endsWith('.kicad_sch') && staged?.written.includes(pro)) files.add(pro);
+    return files;
   }
 
   async function toggle(op: string, args: unknown, name: 'kicadSetChrome' | 'kicadSetReadOnly'): Promise<Answer> {
@@ -449,7 +598,7 @@ export function startResponder(opts: {
     if (typeof fn !== 'function') return fail('unsupported', name);
     // The binding answers false until the frame exists, and may answer through a
     // Promise when it queued behind a live open. Anything but true fails closed.
-    const applied = await withTimeout<unknown>(fn(args.on), APPLY_TIMEOUT_MS);
+    const applied = await withTimeout<unknown>(fn(args.on), timing.applyMs);
     if (applied !== true) return fail('not_applied', op);
     if (name === 'kicadSetChrome') chromeOn = args.on;
     return ok();
@@ -463,8 +612,8 @@ export function startResponder(opts: {
   }
 
   /**
-   * A KiCad hotkey from the host (spec D16). Refused while a dialog is up: the
-   * key would type into it. Never clicks: the boot put wx keyboard focus on the
+   * A KiCad hotkey from the host (spec D16). Refused while a popup menu or a
+   * dialog is up: the key would land in it. Never clicks: the boot put wx keyboard focus on the
    * canvas once (src/main.ts), and a click in a drawing tool would place a point.
    */
   function keyPress(args: unknown): Answer {
@@ -473,7 +622,7 @@ export function startResponder(opts: {
     if (k == null) return fail('bad_args', op);
     const w = win;
     if (w == null) return fail('not_ready', op);
-    if (dialogUp(w)) return fail('busy', op);
+    if (keysBlocked(w)) return fail('busy', op);
     pressKey(w, k);
     return ok();
   }
@@ -487,7 +636,8 @@ export function startResponder(opts: {
     const fn = win?.Module?.[name];
     if (typeof fn !== 'function') return 'unsupported';
     let text: unknown;
-    try { text = await fn(); } catch { return null; }
+    try { text = await withTimeout<unknown>(fn(), timing.applyMs); } catch { return null; }
+    if (text === 'timeout') return null;
     if (typeof text !== 'string' || text === '') return 'unsupported';
     try { const v: unknown = JSON.parse(text); return isObj(v) ? v : null; } catch { return null; }
   }
@@ -519,7 +669,7 @@ export function startResponder(opts: {
     if (win == null) return fail('not_ready', op);
     const fn = win.Module?.kicadSheetsEnter;
     if (typeof fn !== 'function') return fail('unsupported', 'kicadSheetsEnter');
-    const applied = await withTimeout<unknown>(fn(args.path), APPLY_TIMEOUT_MS);
+    const applied = await withTimeout<unknown>(fn(args.path), timing.applyMs);
     return applied === true ? ok() : fail('not_applied', op);
   }
 
@@ -541,7 +691,7 @@ export function startResponder(opts: {
     if (win == null) return fail('not_ready', op);
     const fn = win.Module?.[name];
     if (typeof fn !== 'function') return fail('unsupported', name);
-    const applied = await withTimeout<unknown>(call(fn as (...a: unknown[]) => unknown), APPLY_TIMEOUT_MS);
+    const applied = await withTimeout<unknown>(call(fn as (...a: unknown[]) => unknown), timing.applyMs);
     return applied === true ? ok() : fail('not_applied', op);
   }
 
@@ -557,11 +707,6 @@ export function startResponder(opts: {
     return layerCall(op, 'kicadLayersSetActive', (fn) => fn(args.id));
   }
 
-  /** A visible wxDialog in the engine's element registry; a registry that throws counts as none. */
-  function dialogUp(w: ToolWindow): boolean {
-    try { return (w.wxElementRegistry?.findAll({ type: 'wxDialog', visible: true }) ?? []).length > 0; } catch { return false; }
-  }
-
   let ready = false;
   return {
     emit,
@@ -569,6 +714,8 @@ export function startResponder(opts: {
       if (ready) return;
       ready = true;
       win = w;
+      // Popup menus and dialogs over the canvas: the host hides what it draws there.
+      stopMenus = watchMenus(w, (open) => emit({ type: 'ev.menu', open }));
       // The Ctrl+S hook is registered by each successful project.open (startSaveHook).
       const mod: Record<string, unknown> = w.Module ?? {};
       const caps = Object.keys(mod).filter((k) => /^kicad[A-Za-z0-9]*$/.test(k) && typeof mod[k] === 'function').sort();

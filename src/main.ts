@@ -28,7 +28,7 @@ import { installEngineTeardown, isShutdownError, teardownOnPagehide } from './te
 import { bootHeartbeat } from './boot-heartbeat';
 import { installUnloadQuiet } from './unload-quiet';
 import { installWindowOpenWrapper } from './window-open';
-import { focusCanvas } from './keys';
+import { focusCanvas, focusFrameOnPress } from './keys';
 
 declare const __ISLAND_TAG__: string;      // define'd by vite.config.ts from PIN.json
 declare const __KICAD_VERSION__: string;   // define'd by vite.config.ts
@@ -188,6 +188,10 @@ async function main(): Promise<void> {
   // so wx keyboard focus sits on the drawing and the first hotkey is not lost.
   try { (window as ToolWindow).Module?.kicadSetChrome?.(false); } catch { /* chrome stays; the page can still send chrome.show */ }
   focusCanvas(document);
+  // From now on a real press in the frame gives it the browser's keyboard
+  // focus, so the hotkeys reach KiCad and not the page (after the synthetic
+  // click above, which must not take focus from the page).
+  focusFrameOnPress(window);
   hideScreens();
   responder.engineReady(window as ToolWindow, { tag: __ISLAND_TAG__, kicad: __KICAD_VERSION__ }, popups);
 }

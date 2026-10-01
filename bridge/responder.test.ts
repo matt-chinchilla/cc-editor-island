@@ -1,13 +1,30 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memfsProjectDir } from '../loader/src/wasm/constants';
-import { describeError, startResponder } from './responder';
+import { describeError, startResponder, timing } from './responder';
 import { isQuiet, resetUnloadQuietForTest } from '../src/unload-quiet';
 
 const PARENT = 'http://circuitcenter.localhost';
 const ROOT = memfsProjectDir('cc');
 const settle = (ms = 20) => new Promise((r) => setTimeout(r, ms));
+
+// The chrome watch after an open and the save-all's waits, shortened: an open
+// answers about 30 ms after its load, a save-all about 25 ms after its last file.
+beforeAll(() => {
+  Object.assign(timing, { chromeSettleMs: 30, chromePollMs: 5, firstSaveMs: 60, saveSettleMs: 10, saveQuietMs: 40, saveAllMs: 300, savePollMs: 2 });
+});
+// No DOM in this suite: a KeyboardEvent stand-in that keeps every init field (key, code, ctrlKey, ...).
+beforeEach(() => {
+  vi.stubGlobal('KeyboardEvent', class extends Event {
+    constructor(type: string, init: Record<string, unknown> = {}) {
+      const { bubbles, cancelable, composed, ...rest } = init as EventInit & Record<string, unknown>;
+      super(type, { bubbles, cancelable, composed });
+      Object.assign(this, rest);
+    }
+  });
+});
+afterEach(() => { vi.unstubAllGlobals(); });
 
 function fakePage(search = '?frame=sch&theme=day') {
   const listeners = new Map<string, Set<(e: unknown) => void>>();
@@ -68,16 +85,36 @@ function fakeFs() {
   return { FS, files, dirs, busy, broken, pinned };
 }
 
-/** A booted engine: a visible frame, the programmatic open and the save exports. */
+/**
+ * A booted engine: a visible frame, the programmatic open and the save
+ * exports. Its Ctrl+S (a keydown with ctrlKey and KeyS on its window) writes
+ * every .kicad_sch and .kicad_pro file of the project a few ms later, each
+ * reported to the save hook, as KiCad's own Save does (e2e 2026-10-01).
+ */
 function fakeEngine() {
   const { FS, files, dirs, busy, broken, pinned } = fakeFs();
   const opened: string[] = [];
   /** The KiCad dialogs the registry reports as visible (key.press answers busy while one is up). */
   const dialogs: Array<{ typeName: string; visible: boolean }> = [];
+  /** KiCad's window chrome in the registry: kicadSetChrome(false) removes it, (true) shows the menu bar. */
+  const chrome: Array<{ typeName: string; visible: boolean }> = [];
+  /** Whether a wx popup menu (.wx-menu-popup) is in the document. */
+  const ui = { popup: false };
+  /** The files Ctrl+S writes; by default every sheet and project file in the folder, in staging order. */
+  const ctrlSFiles = (): string[] => [...files.keys()].filter((p) => /\.kicad_(sch|pro)$/.test(p));
+  const ctrlS = vi.fn(() => {
+    setTimeout(() => {
+      for (const p of ctrlSFiles()) {
+        FS.writeFile(p, `(saved ${p.slice(p.lastIndexOf('/') + 1)})`);
+        win.kicadCollab?.onSave?.(p);
+      }
+    }, 5);
+  });
   const Module = {
     kicadOpenFile: vi.fn((p: string) => { opened.push(p); }),
     kicadOpenFileBusy: () => false,
     kicadSaveSchematic: vi.fn((p: string) => { FS.writeFile(p, '(kicad_sch saved)'); }),
+    kicadSaveBoard: vi.fn((p: string): unknown => { FS.writeFile(p, '(kicad_pcb saved)'); return undefined; }),
     kicadSheetsGetTree: vi.fn(() => JSON.stringify({ current: '/', sheets: [{ depth: 0, file: `${ROOT}/blink.kicad_sch`, name: 'blink', page: '1', parent: '', path: '/' }] })),
     kicadSheetsEnter: vi.fn((p: string) => p === '/' || p === '/00000000-0000-0000-0000-00005c7b59b0/'),
     kicadLayersGetState: vi.fn(() => JSON.stringify({ active: 0, layers: [
@@ -86,7 +123,11 @@ function fakeEngine() {
     ] })),
     kicadLayersSetVisible: vi.fn((id: number) => id === 0 || id === 2),
     kicadLayersSetActive: vi.fn((id: number) => id === 0 || id === 2),
-    kicadSetChrome: vi.fn(() => true),
+    kicadSetChrome: vi.fn((on: boolean) => {
+      chrome.length = 0;
+      if (on) chrome.push({ typeName: 'wxMenuBar', visible: true });
+      return true;
+    }),
     kicadSetReadOnly: vi.fn(async () => true),
     notAnExport: 1,
   };
@@ -94,11 +135,18 @@ function fakeEngine() {
     FS,
     Module,
     wxElementRegistry: {
-      findAll: (f: { type?: string; visible?: boolean } = {}) => (f.type === 'wxDialog' ? dialogs : [{ typeName: 'SCH_EDIT_FRAME', name: 'SchematicFrame', visible: true }]),
+      findAll: (f: { type?: string; visible?: boolean } = {}) => [{ typeName: 'SCH_EDIT_FRAME', name: 'SchematicFrame', visible: true }, ...dialogs, ...chrome]
+        .filter((e) => (f.type == null || e.typeName === f.type) && (f.visible !== true || e.visible)),
       findByLabel: () => [],
     },
+    document: { querySelector: (sel: string) => (ui.popup && sel === '.wx-menu-popup' ? {} : null) },
+    dispatchEvent: (e: Event) => {
+      const k = e as KeyboardEvent;
+      if (e.type === 'keydown' && k.ctrlKey && k.code === 'KeyS') ctrlS();
+      return true;
+    },
   } as unknown as ToolWindow & { kicadCollab?: { onSave?: (p: string) => void } };
-  return { win, files, dirs, busy, broken, pinned, opened, Module, dialogs };
+  return { win, files, dirs, busy, broken, pinned, opened, Module, dialogs, chrome, ui, ctrlS };
 }
 
 const b = (s: string) => new TextEncoder().encode(s);
@@ -233,7 +281,7 @@ describe('startResponder', () => {
     await settle();
     expect(got).toEqual([
       { type: 'ev.state', phase: 'booting', detail: '2 popup attempts blocked' },
-      { type: 'ev.ready', caps: ['kicadLayersGetState', 'kicadLayersSetActive', 'kicadLayersSetVisible', 'kicadOpenFile', 'kicadOpenFileBusy', 'kicadSaveSchematic', 'kicadSetChrome', 'kicadSetReadOnly', 'kicadSheetsEnter', 'kicadSheetsGetTree'], engine: { tag: 'v0.2.3-cc1', kicad: '10.0' } },
+      { type: 'ev.ready', caps: ['kicadLayersGetState', 'kicadLayersSetActive', 'kicadLayersSetVisible', 'kicadOpenFile', 'kicadOpenFileBusy', 'kicadSaveBoard', 'kicadSaveSchematic', 'kicadSetChrome', 'kicadSetReadOnly', 'kicadSheetsEnter', 'kicadSheetsGetTree'], engine: { tag: 'v0.2.3-cc1', kicad: '10.0' } },
     ]);
     got.length = 0;
 
@@ -247,19 +295,25 @@ describe('startResponder', () => {
     expect(got).toEqual([
       { type: 'ev.state', phase: 'staging' },
       { type: 'ev.state', phase: 'opening' },
-      { id: 1, ok: true, result: { opened: 'blink.kicad_sch', dropped: ['../../../../.config/kicad/kicad/10.0/kicad_common.json'] } },
+      { id: 1, ok: true, result: { opened: 'blink.kicad_sch', dropped: ['../../../../.config/kicad/kicad/10.0/kicad_common.json'], chrome: false } },
     ]);
     expect(eng.opened).toEqual([`${ROOT}/blink.kicad_sch`]);
     expect([...eng.files.keys()].every((k) => k.startsWith(`${ROOT}/`))).toBe(true);
     got.length = 0;
 
+    // The host's save is KiCad's own Save (Ctrl+S): every sheet and the project
+    // file arrive as ev.saved, and only then the answer, which lists them.
     port.postMessage({ id: 2, op: 'project.save' });
-    await settle();
-    expect(eng.Module.kicadSaveSchematic).toHaveBeenCalledWith(`${ROOT}/blink.kicad_sch`);
-    expect(got).toHaveLength(2);
-    expect(got[0]).toEqual({ type: 'ev.saved', path: 'blink.kicad_sch', bytes: b('(kicad_sch saved)') });
+    await settle(100);
+    expect(eng.ctrlS).toHaveBeenCalledTimes(1);
+    expect(eng.Module.kicadSaveSchematic).not.toHaveBeenCalled();
+    expect(got).toEqual([
+      { type: 'ev.saved', path: 'blink.kicad_pro', bytes: b('(saved blink.kicad_pro)') },
+      { type: 'ev.saved', path: 'sub/power.kicad_sch', bytes: b('(saved power.kicad_sch)') },
+      { type: 'ev.saved', path: 'blink.kicad_sch', bytes: b('(saved blink.kicad_sch)') },
+      { id: 2, ok: true, result: { path: 'blink.kicad_sch', saved: ['blink.kicad_pro', 'sub/power.kicad_sch', 'blink.kicad_sch'] } },
+    ]);
     expect(got[0].bytes).toBeInstanceOf(Uint8Array);
-    expect(got[1]).toEqual({ id: 2, ok: true, result: { path: 'blink.kicad_sch' } });
     got.length = 0;
 
     // Ctrl+S inside the editor: the fork's chokepoint calls kicadCollab.onSave(absPath).
@@ -301,7 +355,7 @@ describe('startResponder', () => {
     got.length = 0;
     port.postMessage({ id: 2, op: 'project.open', args: { name: 'b', files: [{ path: 'b.kicad_sch', bytes: b('(kicad_sch b)') }] } });
     await settle(100);
-    expect(got.at(-1)).toEqual({ id: 2, ok: true, result: { opened: 'b.kicad_sch', dropped: [] } });
+    expect(got.at(-1)).toEqual({ id: 2, ok: true, result: { opened: 'b.kicad_sch', dropped: [], chrome: false } });
     expect([...eng.files.keys()]).toEqual([`${ROOT}/b.kicad_sch`]);
     expect(eng.dirs.has(`${ROOT}/lib`)).toBe(false);
     got.length = 0;
@@ -338,7 +392,7 @@ describe('startResponder', () => {
     got.length = 0;
     port.postMessage({ id: 5, op: 'project.open', args: { name: 'y', files: [{ path: 'other.kicad_sch', bytes: b('(kicad_sch other)') }] } });
     await settle(100);
-    expect(got.at(-1)).toEqual({ id: 5, ok: true, result: { opened: 'other.kicad_sch', dropped: [] } });
+    expect(got.at(-1)).toEqual({ id: 5, ok: true, result: { opened: 'other.kicad_sch', dropped: [], chrome: false } });
   });
 
   it('quiets the engine leave prompt after a host save that emitted ev.saved, and after forget until the next successful open', async () => {
@@ -352,9 +406,9 @@ describe('startResponder', () => {
     await settle(100);
     expect(isQuiet()).toBe(false);
     // A save that wrote nothing emits no ev.saved and leaves the prompt alone.
-    eng.Module.kicadSaveSchematic.mockImplementationOnce(() => undefined);
+    eng.ctrlS.mockImplementationOnce(() => undefined);
     port.postMessage({ id: 2, op: 'project.save' });
-    await settle();
+    await settle(150);
     expect(got.at(-1)).toMatchObject({ id: 2, ok: false });
     expect(isQuiet()).toBe(false);
     // Ctrl+S inside the editor is the user's save, not the host's: no quiet either.
@@ -362,8 +416,8 @@ describe('startResponder', () => {
     await settle();
     expect(isQuiet()).toBe(false);
     port.postMessage({ id: 3, op: 'project.save' });
-    await settle();
-    expect(got.at(-1)).toEqual({ id: 3, ok: true, result: { path: 'blink.kicad_sch' } });
+    await settle(100);
+    expect(got.at(-1)).toEqual({ id: 3, ok: true, result: { path: 'blink.kicad_sch', saved: ['blink.kicad_sch'] } });
     expect(isQuiet()).toBe(true);
     expect(isQuiet(Date.now() + 9_000)).toBe(true);
     expect(isQuiet(Date.now() + 10_001)).toBe(false);
@@ -378,7 +432,7 @@ describe('startResponder', () => {
     expect(isQuiet(Date.now() + 3_600_000)).toBe(true);
     port.postMessage({ id: 6, op: 'project.open', args: { name: 'y', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] } });
     await settle(100);
-    expect(got.at(-1)).toEqual({ id: 6, ok: true, result: { opened: 'blink.kicad_sch', dropped: [] } });
+    expect(got.at(-1)).toEqual({ id: 6, ok: true, result: { opened: 'blink.kicad_sch', dropped: [], chrome: false } });
     expect(isQuiet()).toBe(false);
     resetUnloadQuietForTest();
   });
@@ -478,7 +532,7 @@ describe('startResponder', () => {
       { path: 'proj/a.kicad_sch', bytes: b('(kicad_sch a)') }, { path: 'proj/lib/a.kicad_sym', bytes: b('(kicad_symbol_lib)') },
     ] } });
     await settle(100);
-    expect(got.at(-1)).toEqual({ id: 1, ok: true, result: { opened: 'proj/a.kicad_sch', dropped: [] } });
+    expect(got.at(-1)).toEqual({ id: 1, ok: true, result: { opened: 'proj/a.kicad_sch', dropped: [], chrome: false } });
     // KiCad changed into the opened file's own folder, below the project root.
     eng.busy.add(`${ROOT}/proj`);
     got.length = 0;
@@ -491,7 +545,7 @@ describe('startResponder', () => {
     got.length = 0;
     port.postMessage({ id: 3, op: 'project.open', args: { name: 'b', files: [{ path: 'b.kicad_sch', bytes: b('(kicad_sch b)') }] } });
     await settle(100);
-    expect(got.at(-1)).toEqual({ id: 3, ok: true, result: { opened: 'b.kicad_sch', dropped: [] } });
+    expect(got.at(-1)).toEqual({ id: 3, ok: true, result: { opened: 'b.kicad_sch', dropped: [], chrome: false } });
     expect([...eng.files.keys()]).toEqual([`${ROOT}/b.kicad_sch`]);
     got.length = 0;
     port.postMessage({ id: 4, op: 'project.forget' });
@@ -523,35 +577,59 @@ describe('startResponder', () => {
     expect(describeError({ some: 'object' })).toBe('[object Object]');
   });
 
-  it('answers save_failed and emits nothing when the engine save writes nothing', async () => {
-    const { page, parent } = fakePage();
+  it('answers save_failed and emits nothing when the board save writes nothing', async () => {
+    const { page, parent } = fakePage('?frame=pcb&theme=day');
     const r = startResponder({ parentOrigin: PARENT, page });
     const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
     const eng = fakeEngine();
-    eng.Module.kicadSaveSchematic.mockImplementation(() => undefined);   // the binding swallowed a failure
+    eng.Module.kicadSaveBoard.mockImplementation(() => undefined);   // the binding swallowed a failure
     r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
-    port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch staged)') }] } });
+    port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_pcb', bytes: b('(kicad_pcb staged)') }] } });
     await settle(100);
     got.length = 0;
     port.postMessage({ id: 2, op: 'project.save' });
     await settle();
-    expect(eng.Module.kicadSaveSchematic).toHaveBeenCalledWith(`${ROOT}/blink.kicad_sch`);
-    expect(got).toEqual([{ id: 2, ok: false, error: { code: 'save_failed', message: 'blink.kicad_sch' } }]);
+    expect(eng.Module.kicadSaveBoard).toHaveBeenCalledWith(`${ROOT}/blink.kicad_pcb`);
+    expect(got).toEqual([{ id: 2, ok: false, error: { code: 'save_failed', message: 'blink.kicad_pcb' } }]);
     // The staged bytes are back where the engine expects its document.
-    expect(eng.files.get(`${ROOT}/blink.kicad_sch`)).toEqual(b('(kicad_sch staged)'));
+    expect(eng.files.get(`${ROOT}/blink.kicad_pcb`)).toEqual(b('(kicad_pcb staged)'));
     // A save that throws after writing nothing fails the same way.
-    eng.Module.kicadSaveSchematic.mockImplementation(() => { throw new Error('boom'); });
+    eng.Module.kicadSaveBoard.mockImplementation(() => { throw new Error('boom'); });
     got.length = 0;
     port.postMessage({ id: 3, op: 'project.save' });
     await settle();
-    expect(got).toEqual([{ id: 3, ok: false, error: { code: 'save_failed', message: 'blink.kicad_sch' } }]);
+    expect(got).toEqual([{ id: 3, ok: false, error: { code: 'save_failed', message: 'blink.kicad_pcb' } }]);
     // A save that writes an empty file is a failure too.
-    eng.Module.kicadSaveSchematic.mockImplementation((p: string) => { eng.win.FS!.writeFile(p, new Uint8Array(0)); });
+    eng.Module.kicadSaveBoard.mockImplementation((p: string) => { eng.win.FS!.writeFile(p, new Uint8Array(0)); return undefined; });
     got.length = 0;
     port.postMessage({ id: 4, op: 'project.save' });
     await settle();
-    expect(got).toEqual([{ id: 4, ok: false, error: { code: 'save_failed', message: 'blink.kicad_sch' } }]);
-    expect(eng.files.get(`${ROOT}/blink.kicad_sch`)).toEqual(b('(kicad_sch staged)'));
+    expect(got).toEqual([{ id: 4, ok: false, error: { code: 'save_failed', message: 'blink.kicad_pcb' } }]);
+    expect(eng.files.get(`${ROOT}/blink.kicad_pcb`)).toEqual(b('(kicad_pcb staged)'));
+    // A save that never answers fails once the engine call's bound runs out, and the next request is answered.
+    const applyMs = timing.applyMs;
+    timing.applyMs = 40;
+    try {
+      eng.Module.kicadSaveBoard.mockImplementation(() => new Promise(() => undefined));
+      got.length = 0;
+      port.postMessage({ id: 5, op: 'project.save' });
+      port.postMessage({ id: 6, op: 'readonly', args: { on: false } });
+      await settle(120);
+      expect(got).toEqual([
+        { id: 5, ok: false, error: { code: 'save_failed', message: 'blink.kicad_pcb' } },
+        { id: 6, ok: true, result: {} },
+      ]);
+    } finally { timing.applyMs = applyMs; }
+    // A board save that writes answers the board alone: the frame shows one file.
+    eng.Module.kicadSaveBoard.mockImplementation((p: string) => { eng.win.FS!.writeFile(p, '(kicad_pcb saved)'); return undefined; });
+    got.length = 0;
+    port.postMessage({ id: 7, op: 'project.save' });
+    await settle();
+    expect(got).toEqual([
+      { type: 'ev.saved', path: 'blink.kicad_pcb', bytes: b('(kicad_pcb saved)') },
+      { id: 7, ok: true, result: { path: 'blink.kicad_pcb', saved: ['blink.kicad_pcb'] } },
+    ]);
+    expect(eng.ctrlS).not.toHaveBeenCalled();
   });
 
   it('answers island_error when a handler rejects and still answers the next request', async () => {
@@ -614,11 +692,11 @@ describe('startResponder', () => {
     ]);
   });
 
-  it('saves the sheet the schematic editor is showing to that sheet file', async () => {
+  /** A connected responder over a booted sch engine with a two-sheet schematic opened; `request` answers its reply. */
+  async function twoSheets(eng = fakeEngine()) {
     const { page, parent } = fakePage();
     const r = startResponder({ parentOrigin: PARENT, page });
     const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
-    const eng = fakeEngine();
     r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
     port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [
       { path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }, { path: 'sub/power.kicad_sch', bytes: b('(kicad_sch)') },
@@ -628,16 +706,76 @@ describe('startResponder', () => {
       { path: '/', file: `${ROOT}/blink.kicad_sch` }, { path: '/a/', file: `${ROOT}/sub/power.kicad_sch` },
     ] }));
     got.length = 0;
-    port.postMessage({ id: 2, op: 'project.save' });
-    await settle();
-    expect(eng.Module.kicadSaveSchematic).toHaveBeenCalledWith(`${ROOT}/sub/power.kicad_sch`);
-    expect(got.at(-1)).toEqual({ id: 2, ok: true, result: { path: 'sub/power.kicad_sch' } });
-    // A current sheet outside the project is refused, never saved over the root.
-    eng.Module.kicadSheetsGetTree.mockReturnValue(JSON.stringify({ current: '/b/', sheets: [{ path: '/b/', file: '/tmp/elsewhere.kicad_sch' }] }));
-    got.length = 0;
-    port.postMessage({ id: 3, op: 'project.save' });
-    await settle();
-    expect(got).toEqual([{ id: 3, ok: false, error: { code: 'save_failed', message: 'the shown sheet is outside the project' } }]);
+    let id = 1;
+    const request = async (op: string, args?: unknown, wait = 100) => {
+      const n = ++id;
+      port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+      await settle(wait);
+      return got.find((m) => m.id === n);
+    };
+    return { eng, got, request };
+  }
+
+  it('saves every sheet through KiCad\'s own Save, and names the shown sheet in path', async () => {
+    const { eng, got, request } = await twoSheets();
+    expect(await request('project.save')).toEqual({ id: 2, ok: true, result: { path: 'sub/power.kicad_sch', saved: ['blink.kicad_sch', 'sub/power.kicad_sch'] } });
+    // Every ev.saved arrived before the answer.
+    expect(got.map((m) => m.type ?? `answer ${m.id}`)).toEqual(['ev.saved', 'ev.saved', 'answer 2']);
+    expect(eng.Module.kicadSaveSchematic).not.toHaveBeenCalled();
+    // A shown sheet outside the project still saves the project; path falls back to the opened file.
+    eng.Module.kicadSheetsGetTree.mockReturnValue(JSON.stringify({ current: '/b/', sheets: [
+      { path: '/', file: `${ROOT}/blink.kicad_sch` }, { path: '/b/', file: '/tmp/elsewhere.kicad_sch' },
+    ] }));
+    expect(await request('project.save')).toEqual({ id: 3, ok: true, result: { path: 'blink.kicad_sch', saved: ['blink.kicad_sch', 'sub/power.kicad_sch'] } });
+  });
+
+  it('waits for every sheet file the tree names, even when they arrive apart', async () => {
+    const eng = fakeEngine();
+    const { got, request } = await twoSheets(eng);
+    // The root at 5 ms, the sub-sheet 30 ms later: past the settle pause, inside the quiet pause.
+    eng.ctrlS.mockImplementation(() => {
+      setTimeout(() => { eng.files.set(`${ROOT}/blink.kicad_sch`, b('(root)')); eng.win.kicadCollab?.onSave?.(`${ROOT}/blink.kicad_sch`); }, 5);
+      setTimeout(() => { eng.files.set(`${ROOT}/sub/power.kicad_sch`, b('(power)')); eng.win.kicadCollab?.onSave?.(`${ROOT}/sub/power.kicad_sch`); }, 35);
+    });
+    expect(await request('project.save', undefined, 150)).toMatchObject({ ok: true, result: { saved: ['blink.kicad_sch', 'sub/power.kicad_sch'] } });
+    expect(got.map((m) => m.type ?? 'answer')).toEqual(['ev.saved', 'ev.saved', 'answer']);
+  });
+
+  it('without a sheet tree, answers after a quiet pause with whatever KiCad saved', async () => {
+    const eng = fakeEngine();
+    const { request } = await twoSheets(eng);
+    eng.Module.kicadSheetsGetTree.mockReturnValue('');
+    const t0 = Date.now();
+    expect(await request('project.save', undefined, 150)).toMatchObject({ ok: true, result: { path: 'blink.kicad_sch', saved: ['blink.kicad_sch', 'sub/power.kicad_sch'] } });
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(timing.saveQuietMs);
+  });
+
+  it('answers save_failed when KiCad saves nothing, and busy (pressing nothing) while a menu or a dialog is up', async () => {
+    const { eng, got, request } = await twoSheets();
+    eng.ctrlS.mockImplementationOnce(() => undefined);
+    expect(await request('project.save', undefined, 150)).toEqual({ id: 2, ok: false, error: { code: 'save_failed', message: 'the editor saved nothing' } });
+    expect(got.filter((m) => m.type === 'ev.saved')).toEqual([]);
+    eng.ctrlS.mockClear();
+    eng.ui.popup = true;
+    expect(await request('project.save')).toMatchObject({ ok: false, error: { code: 'busy' } });
+    eng.ui.popup = false;
+    eng.dialogs.push({ typeName: 'wxGenericMessageDialog', visible: true });
+    expect(await request('project.save')).toMatchObject({ ok: false, error: { code: 'busy' } });
+    expect(eng.ctrlS).not.toHaveBeenCalled();
+  });
+
+  it('a sheet tree that never answers ends as island_error, and the next request is answered', async () => {
+    const eng = fakeEngine();
+    const { request } = await twoSheets(eng);
+    const applyMs = timing.applyMs;
+    timing.applyMs = 40;
+    try {
+      eng.Module.kicadSheetsGetTree.mockImplementation(() => new Promise(() => undefined) as unknown as string);
+      expect(await request('sheet.tree')).toMatchObject({ ok: false, error: { code: 'island_error' } });
+      expect(await request('readonly', { on: false })).toMatchObject({ ok: true });
+      // project.save falls back to the opened file and the quiet pause.
+      expect(await request('project.save', undefined, 250)).toMatchObject({ ok: true, result: { path: 'blink.kicad_sch' } });
+    } finally { timing.applyMs = applyMs; }
   });
 
   it('shutdown runs the teardown, answers ok as its last message and closes the port', async () => {
@@ -757,14 +895,6 @@ describe('key.press', () => {
     };
     return { eng, request };
   }
-  // No DOM in this suite: a KeyboardEvent stand-in that keeps key and code.
-  beforeEach(() => {
-    vi.stubGlobal('KeyboardEvent', class extends Event {
-      key: string; code: string;
-      constructor(type: string, init: KeyboardEventInit = {}) { super(type, init); this.key = init.key ?? ''; this.code = init.code ?? ''; }
-    });
-  });
-  afterEach(() => { vi.unstubAllGlobals(); });
 
   it('dispatches keydown and keyup on the engine window and answers {}', async () => {
     const { eng, request } = respond(true);
@@ -783,6 +913,23 @@ describe('key.press', () => {
     expect(await request('key.press', { key: 'a', code: 'Mouse' })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
     expect(await request('key.press')).toMatchObject({ ok: false, error: { code: 'bad_args' } });
     expect(eng.win.dispatchEvent).not.toHaveBeenCalled();
+  });
+
+  it('answers busy while a popup menu or any dialog type is up, but not for a progress dialog alone', async () => {
+    const { eng, request } = respond(true);
+    eng.win.dispatchEvent = vi.fn(() => true);
+    eng.ui.popup = true;   // a context menu or KiCad's clarify-selection menu
+    expect(await request('key.press', { key: 'a', code: 'KeyA' })).toMatchObject({ ok: false, error: { code: 'busy' } });
+    expect(await request('view.fit')).toMatchObject({ ok: false, error: { code: 'busy' } });
+    eng.ui.popup = false;
+    for (const typeName of ['wxGenericMessageDialog', 'wxRichMessageDialog', 'wxFileDialog', 'wxTextEntryDialog']) {
+      eng.dialogs.splice(0, eng.dialogs.length, { typeName, visible: true });
+      expect(await request('key.press', { key: 'a', code: 'KeyA' })).toMatchObject({ ok: false, error: { code: 'busy' } });
+    }
+    expect(eng.win.dispatchEvent).not.toHaveBeenCalled();
+    eng.dialogs.splice(0, eng.dialogs.length, { typeName: 'wxGenericProgressDialog', visible: true }, { typeName: 'wxDialog', visible: false });
+    expect(await request('key.press', { key: 'a', code: 'KeyA' })).toMatchObject({ ok: true });
+    expect(eng.win.dispatchEvent).toHaveBeenCalledTimes(2);
   });
 
   it('answers not_ready before the engine is up', async () => {
@@ -812,6 +959,94 @@ describe('the chrome across opens', () => {
     await settle(100);
     expect(eng.Module.kicadSetChrome.mock.calls).toEqual([[false], [true], [false], [false]]);
     expect(got.filter((m) => m.id != null).map((m) => m.ok)).toEqual([true, true, true, true, true]);
+    // With the chrome meant shown, the answer says it is.
+    port.postMessage({ id: 6, op: 'chrome.show', args: { on: true } });
+    port.postMessage({ id: 7, op: 'project.open', args: open });
+    await settle(100);
+    expect(got.at(-1)).toMatchObject({ id: 7, ok: true, result: { chrome: true } });
+  });
+
+  it('hides the menu bar again when KiCad shows it after the load settled, and answers chrome false', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    // The load shows the menu bar 15 ms after it returned: after the first hide.
+    eng.Module.kicadOpenFile.mockImplementation((p: string) => { eng.opened.push(p); setTimeout(() => eng.chrome.push({ typeName: 'wxMenuBar', visible: true }), 15); });
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] } });
+    await settle(150);
+    expect(got.at(-1)).toEqual({ id: 1, ok: true, result: { opened: 'blink.kicad_sch', dropped: [], chrome: false } });
+    expect(eng.Module.kicadSetChrome.mock.calls).toEqual([[false], [false]]);
+    expect(eng.chrome).toEqual([]);
+  });
+
+  it('answers chrome true when the engine will not hide it, so the host sends chrome.show again', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    eng.Module.kicadOpenFile.mockImplementation((p: string) => { eng.opened.push(p); eng.chrome.push({ typeName: 'wxMenuBar', visible: true }); });
+    eng.Module.kicadSetChrome.mockImplementation(() => false);
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] } });
+    await settle(150);
+    expect(got.at(-1)).toEqual({ id: 1, ok: true, result: { opened: 'blink.kicad_sch', dropped: [], chrome: true } });
+    // The watch kept trying while the bar stayed up.
+    expect(eng.Module.kicadSetChrome.mock.calls.length).toBeGreaterThan(2);
+  });
+
+  it('hides the chrome on open_failed too', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    eng.chrome.push({ typeName: 'wxMenuBar', visible: true });
+    port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }], open: 'missing.kicad_sch' } });
+    await settle(150);
+    expect(got.at(-1)).toMatchObject({ id: 1, ok: false, error: { code: 'open_failed' } });
+    expect(eng.Module.kicadSetChrome).toHaveBeenCalledWith(false);
+    expect(eng.chrome).toEqual([]);
+  });
+});
+
+describe('ev.menu', () => {
+  it('reports a popup menu or a dialog opening and the last one closing, and nothing after shutdown', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    const menus = () => got.filter((m) => m.type === 'ev.menu');
+    await settle(150);
+    expect(menus()).toEqual([]);   // nothing is up: nothing is reported
+    eng.ui.popup = true;
+    await settle(150);
+    expect(menus()).toEqual([{ type: 'ev.menu', open: true }]);
+    // A dialog over the menu changes nothing; the menu closing with the dialog still up neither.
+    eng.dialogs.push({ typeName: 'wxDialog', visible: true });
+    (eng.win.wxElementRegistry as unknown as { version: number }).version = 2;
+    eng.ui.popup = false;
+    await settle(150);
+    expect(menus()).toHaveLength(1);
+    eng.dialogs.length = 0;
+    (eng.win.wxElementRegistry as unknown as { version: number }).version = 3;
+    await settle(150);
+    expect(menus()).toEqual([{ type: 'ev.menu', open: true }, { type: 'ev.menu', open: false }]);
+    // A progress dialog is drawn over the canvas too.
+    eng.dialogs.push({ typeName: 'wxGenericProgressDialog', visible: true });
+    (eng.win.wxElementRegistry as unknown as { version: number }).version = 4;
+    await settle(150);
+    expect(menus().at(-1)).toEqual({ type: 'ev.menu', open: true });
+    expect(Object.keys(menus()[0]).sort()).toEqual(['open', 'type']);
+    port.postMessage({ id: 1, op: 'shutdown' });
+    await settle(30);
+    const before = got.length;
+    eng.dialogs.length = 0;
+    (eng.win.wxElementRegistry as unknown as { version: number }).version = 5;
+    await settle(150);
+    expect(got.length).toBe(before);
   });
 });
 
@@ -834,14 +1069,6 @@ describe('sheets, layers and fit', () => {
       },
     };
   }
-  // No DOM in this suite: a KeyboardEvent stand-in that keeps key and code.
-  beforeEach(() => {
-    vi.stubGlobal('KeyboardEvent', class extends Event {
-      key: string; code: string;
-      constructor(type: string, init: KeyboardEventInit = {}) { super(type, init); this.key = init.key ?? ''; this.code = init.code ?? ''; }
-    });
-  });
-  afterEach(() => { vi.unstubAllGlobals(); });
 
   it('sheet.tree drops the absolute file path for its base name and keeps the rest', async () => {
     const r = booted(fakeEngine());
