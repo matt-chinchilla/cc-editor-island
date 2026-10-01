@@ -26,6 +26,10 @@ Then `npm test` runs the unit tests (vitest), `npm run typecheck` the type check
 
 `loader/` (our copy of PCBJam's loader, `loader/pristine` beside it) and `notices/` are committed, so a build needs neither `upstream/` nor the GitHub CLI. `npm run sync-upstream` checks PCBJam out at the pin into `upstream/`; it is a step for bumping the pin only, and it needs `gh` signed in.
 
+## Memory
+
+The engine parks its main loop and its tool coroutines on suspended WebAssembly stacks, and a suspended stack keeps its frame's whole realm alive. Before the teardown (`src/teardown.ts`), every removed editor frame kept its document and its engine for the life of the page: ten boots and removals kept about 3.6 GB of renderer memory in Chrome. The island now releases the engine on the `shutdown` op and on `pagehide` (`PROTOCOL.md`). Measured in Chrome 154 over ten boots and removals, with the op or with removal alone: documents, DOM nodes, listeners and the JS heap return to their pre-boot values after every removal, and the renderer ends 96 to 161 MB above where it started. That residual, 7 to 14 MB per boot, sits in Chrome's own allocator (PartitionAlloc), outside the engine's realm. Firefox was not measured.
+
 ## Source offer
 
 For every build we serve, the complete corresponding source is this repository at the release tagged with that build's `islandId` (for example `v0.2.3-cc1`), together with the `cc/<islandId>` tags on our four mirrors of PCBJam, KiCad, wxWidgets and pcbjam-shared.
