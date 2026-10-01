@@ -5,7 +5,7 @@
 // is accepted; every request and its args pass a closed check; events carry
 // exactly the keys PROTOCOL.md lists; the engine is reached only through
 // the exports the loader's global.d.ts declares (Module) and MEMFS.
-import { registerSaveHook, SAVE_COMMITTED } from '../loader/src/wasm/save-flow';
+import { registerSaveHook, SAVE_COMMITTED, type SaveHookHandle } from '../loader/src/wasm/save-flow';
 import { parseBoot } from '../src/cc-config';
 import { normalizePath, openStaged, PROJECT_ROOT, stageProject, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
@@ -29,6 +29,9 @@ export interface Responder {
 }
 
 type Answer = { ok: true; result: Record<string, unknown> } | { ok: false; code: string; message: string };
+
+/** The engine window with the save callback slot the fork calls (save-flow.ts's SaveHookWindow). */
+type CollabWindow = ToolWindow & { kicadCollab?: { onSave?: (absPath: string) => void } };
 
 /** MEMFS's errno for a busy directory (the engine's working directory). */
 const EBUSY = 10;
@@ -135,6 +138,8 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
   const frame: Frame = parseBoot(page.location.search).frame;
   let staged: StagedProject | null = null;
   let opened: string | null = null;
+  /** The Ctrl+S hook: live only between a successful project.open and the next open or forget. */
+  let saveHook: { handle: SaveHookHandle; filter: (absPath: string) => void } | null = null;
 
   /** Rebuilds each event with exactly its protocol keys; saved bytes travel as a transferred copy. */
   const emit = (ev: IslandEvent): void => {
@@ -231,6 +236,7 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
         // until the next successful project.open.
         staged = null;
         opened = null;
+        stopSaveHook();   // a Ctrl+S in the still-shown document emits nothing from here on
         quietForever();
         if (win?.FS != null) removeTree(win.FS, root);
         return ok();
@@ -258,6 +264,7 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
     // The previous project is gone from here on, even if the wipe below fails.
     staged = null;
     opened = null;
+    stopSaveHook();
     removeTree(win.FS, root);   // every open starts from an empty project folder
     staged = stageProject(win, SLUG, files);
     const target = typeof a.open === 'string' ? a.open : defaultOpen(staged.written, frame);
@@ -266,8 +273,53 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
     const how = await openStaged(win, staged, target, (m) => console.debug('[open]', m));
     if (how === 'failed') return fail('open_failed', target);
     opened = normalizePath(target);
+    startSaveHook(win);   // a fresh hook lifetime for this document
     quietClear();   // a new document: the engine's leave prompt guards it again
     return ok({ opened, dropped: staged.dropped });
+  }
+
+  /**
+   * Ctrl+S inside the editor: the fork's save chokepoints call
+   * window.kicadCollab.onSave(absPath) after the bytes hit MEMFS; the loader's
+   * hook reads them back and hands us the project-relative path. The hook also
+   * takes a bare file in the projects home (a blank editor's Save-As) as part
+   * of the project; the island does not: only a path under the staged root
+   * reaches the hook, anything else is logged and ignored.
+   */
+  function startSaveHook(tool: ToolWindow): void {
+    stopSaveHook();
+    const w = tool as CollabWindow;
+    const handle = registerSaveHook(w, {
+      slug: SLUG,
+      log: (m) => console.debug('[save]', m),
+      onStatus: () => undefined,
+      saveBytes: async (relPath, bytes) => {
+        const path = normalizePath(relPath);
+        if (staged == null || path == null) return { kind: 'not-committed' };
+        emit({ type: 'ev.saved', path, bytes });
+        return SAVE_COMMITTED;
+      },
+    });
+    const inner = w.kicadCollab?.onSave;
+    const filter = (absPath: string): void => {
+      if (typeof absPath !== 'string' || !absPath.startsWith(`${root}/`) || staged == null) {
+        console.debug('[save] ignoring a save outside the project folder', absPath);
+        return;
+      }
+      inner?.(absPath);
+    };
+    w.kicadCollab = { ...w.kicadCollab, onSave: filter };
+    saveHook = { handle, filter };
+  }
+
+  /** Ends the hook's lifetime: its queued saves are dropped and the engine's save callback is removed. */
+  function stopSaveHook(): void {
+    if (saveHook == null) return;
+    const { handle, filter } = saveHook;
+    saveHook = null;
+    handle.stop();
+    const w = win as CollabWindow | null;
+    if (w?.kicadCollab?.onSave === filter) delete w.kicadCollab.onSave;
   }
 
   /** A MEMFS path inside the project folder as a project-relative path, else null. */
@@ -336,20 +388,7 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
       if (ready) return;
       ready = true;
       win = w;
-      // Ctrl+S inside the editor: the fork's save chokepoints call
-      // window.kicadCollab.onSave(absPath) after the bytes hit MEMFS; the hook
-      // reads them back and hands us the project-relative path.
-      registerSaveHook(w, {
-        slug: SLUG,
-        log: (m) => console.debug('[save]', m),
-        onStatus: () => undefined,
-        saveBytes: async (relPath, bytes) => {
-          const path = normalizePath(relPath);
-          if (path == null) return { kind: 'not-committed' };
-          emit({ type: 'ev.saved', path, bytes });
-          return SAVE_COMMITTED;
-        },
-      });
+      // The Ctrl+S hook is registered by each successful project.open (startSaveHook).
       const mod: Record<string, unknown> = w.Module ?? {};
       const caps = Object.keys(mod).filter((k) => /^kicad[A-Za-z0-9]*$/.test(k) && typeof mod[k] === 'function').sort();
       const n = help.attempts();

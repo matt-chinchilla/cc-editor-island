@@ -371,6 +371,63 @@ describe('startResponder', () => {
     resetUnloadQuietForTest();
   });
 
+  it('ends the Ctrl+S hook on forget: a later save emits nothing until the next open registers a fresh hook', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    // Before any open there is no hook: the engine's callback slot is empty.
+    expect(eng.win.kicadCollab?.onSave).toBeUndefined();
+    port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] } });
+    await settle(100);
+    const firstHook = eng.win.kicadCollab?.onSave;
+    expect(typeof firstHook).toBe('function');
+    port.postMessage({ id: 2, op: 'project.forget' });
+    await settle();
+    expect(eng.win.kicadCollab?.onSave).toBeUndefined();
+    got.length = 0;
+    // The engine still shows the document; Ctrl+S writes it back under the wiped root.
+    eng.files.set(`${ROOT}/blink.kicad_sch`, b('(kicad_sch after forget)'));
+    firstHook?.(`${ROOT}/blink.kicad_sch`);
+    eng.win.kicadCollab?.onSave?.(`${ROOT}/blink.kicad_sch`);
+    await settle();
+    expect(got).toEqual([]);
+    // The next open registers a fresh hook, and Ctrl+S emits again.
+    port.postMessage({ id: 3, op: 'project.open', args: { name: 'y', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch y)') }] } });
+    await settle(100);
+    expect(eng.win.kicadCollab?.onSave).not.toBe(firstHook);
+    got.length = 0;
+    eng.files.set(`${ROOT}/blink.kicad_sch`, b('(kicad_sch y edited)'));
+    eng.win.kicadCollab?.onSave?.(`${ROOT}/blink.kicad_sch`);
+    await settle();
+    expect(got).toEqual([{ type: 'ev.saved', path: 'blink.kicad_sch', bytes: b('(kicad_sch y edited)') }]);
+  });
+
+  it('emits ev.saved only for paths under the staged root: a bare Save-As file in the projects home is ignored', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] } });
+    await settle(100);
+    got.length = 0;
+    const home = ROOT.slice(0, ROOT.lastIndexOf('/'));
+    eng.files.set(`${home}/copy.kicad_sch`, b('(kicad_sch copy)'));
+    eng.win.kicadCollab?.onSave?.(`${home}/copy.kicad_sch`);
+    eng.files.set(`${ROOT}2/blink.kicad_sch`, b('(kicad_sch sibling)'));
+    eng.win.kicadCollab?.onSave?.(`${ROOT}2/blink.kicad_sch`);
+    await settle();
+    expect(got).toEqual([]);
+    expect(debug.mock.calls.some((c) => String(c[1]) === `${home}/copy.kicad_sch`)).toBe(true);
+    eng.win.kicadCollab?.onSave?.(`${ROOT}/blink.kicad_sch`);
+    await settle();
+    expect(got).toEqual([{ type: 'ev.saved', path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }]);
+    debug.mockRestore();
+  });
+
   it('keeps only the busy working directory: any other rmdir failure answers island_error with its errno', async () => {
     const { page, parent } = fakePage();
     const r = startResponder({ parentOrigin: PARENT, page });
