@@ -24,7 +24,7 @@ function serveFile(root, urlPath, res, headers) {
   if (!existsSync(file) && existsSync(`${file}.gz`)) { file = `${file}.gz`; encoding = 'gzip'; }
   if (!existsSync(file) || statSync(file).isDirectory()) { res.writeHead(404, headers); return res.end(); }
   const ext = extname(encoding ? file.slice(0, -3) : file);
-  const type = file.endsWith('/NOTICE') ? 'text/plain; charset=utf-8' : TYPES[ext] ?? 'application/octet-stream';
+  const type = TYPES[ext] ?? 'application/octet-stream';
   res.writeHead(200, { ...headers, 'Content-Type': type, ...(encoding ? { 'Content-Encoding': encoding } : {}), 'Cache-Control': p.startsWith('/current/') ? 'no-cache' : 'public, max-age=31536000, immutable' });
   createReadStream(file).pipe(res);
 }

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Chirichella Inc.
 // Lays out one release: dist/r/<islandId>/{index.html, island.json, assets/, wasm/<tool>/<tag>/}
 // plus dist/island.json and dist/current -> r/<islandId>, with the release's notices
-// (licenses.html, LICENSE.txt, NOTICE) from scripts/notices.mjs, whose census fails the build.
+// (licenses.html, LICENSE.txt, NOTICE.txt) from scripts/notices.mjs, whose census fails the build.
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -62,7 +62,7 @@ for (const name of FILES) {
 // 2. The page and its module.
 execSync('npx vite build', { stdio: 'inherit' });
 
-// 2b. The notices: licenses.html, LICENSE.txt and NOTICE beside the page. The census
+// 2b. The notices: licenses.html, LICENSE.txt and NOTICE.txt beside the page. The census
 // inside exits 1 (and so stops the build before current moves) when versions.sh names a
 // dependency with no licence entry or a changed copied file lacks its dated notice.
 execSync(`node scripts/notices.mjs ${rel}`, { stdio: 'inherit' });

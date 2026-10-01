@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Chirichella Inc.
 // The release's notices and the census that guards them.
 //
-//   node scripts/notices.mjs            census, then write dist/r/<islandId>/{licenses.html, LICENSE.txt, NOTICE}
+//   node scripts/notices.mjs            census, then write dist/r/<islandId>/{licenses.html, LICENSE.txt, NOTICE.txt}
 //   node scripts/notices.mjs --check    census only
 //   node scripts/notices.mjs <outDir>   census, then write into <outDir>
 //
@@ -231,7 +231,7 @@ export function render({ versions, modified }, pin, texts) {
 <p>Copyright (c) ${YEAR} ${esc(OWNER)} for the files ${esc(BRAND)} wrote. KiCad, PCBJam, wxWidgets and the libraries listed below are copyright their own authors.</p>
 <p>This program is free software. The editor as a whole is conveyed to you under the GNU General Public License, version 3, and you may redistribute it and modify it under those terms. The files ${esc(BRAND)} wrote may also be used under any later version of that licence.</p>
 <p>There is no warranty for this program, to the extent permitted by applicable law. It is provided as is, without warranty of any kind, either expressed or implied, including the implied warranties of merchantability and fitness for a particular purpose. Sections 15 and 16 of the licence say this in full.</p>
-<p>The licence is served beside this page: <a href="LICENSE.txt">LICENSE.txt</a>. A plain text copy of this page is in <a href="NOTICE">NOTICE</a>.</p>`]);
+<p>The licence is served beside this page: <a href="LICENSE.txt">LICENSE.txt</a>. A plain text copy of this page is in <a href="NOTICE.txt">NOTICE.txt</a>.</p>`]);
 
   own.push(['Where the source is', `
 <p>The complete corresponding source of this release is available at no charge from the places below, and stays there for as long as this release is served (GNU GPL version 3, section 6(d)).</p>
@@ -371,9 +371,9 @@ function main() {
   const { html, notice } = render(result, pin, texts);
   if (!existsSync(out)) mkdirSync(out, { recursive: true });
   writeFileSync(join(out, 'licenses.html'), html);
-  writeFileSync(join(out, 'NOTICE'), notice);
+  writeFileSync(join(out, 'NOTICE.txt'), notice);
   copyFileSync('LICENSE', join(out, 'LICENSE.txt'));
-  console.log(`notices: wrote ${join(out, 'licenses.html')}, ${join(out, 'NOTICE')}, ${join(out, 'LICENSE.txt')}`);
+  console.log(`notices: wrote ${join(out, 'licenses.html')}, ${join(out, 'NOTICE.txt')}, ${join(out, 'LICENSE.txt')}`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main();
