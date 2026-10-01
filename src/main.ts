@@ -20,6 +20,7 @@ import { seedsFor } from '../theme/seeds';
 import { engineBase } from './assets';
 import { parentOriginFor, parseBoot } from './cc-config';
 import { cleanDetail, hideScreens, showScreen } from './screens';
+import { statusFatal } from './status';
 import { FRAME_TOKEN, frameToTool, type Frame } from './types';
 import { installQuitHandler } from './quit';
 import { installUnloadQuiet } from './unload-quiet';
@@ -34,7 +35,7 @@ const ENGINE_UP_TIMEOUT_MS = 180_000;
  * The fatal details the island emits and renders: its own closed words. Engine
  * and loader text (error messages, status lines) goes to the console only.
  */
-type FatalCode = 'memory' | 'crash' | 'boot_failed' | 'engine_timeout' | 'no_container';
+type FatalCode = 'memory' | 'crash' | 'boot_failed' | 'engine_timeout' | 'no_container' | 'webgl_lost';
 /** Uncaught errors that mean the wasm instance is gone (the loader's fatal-screen set). */
 const TERMINAL = /RuntimeError|\babort(ed)?\b|\bindex out of bounds|indirect call signature|memory access out of bounds|unreachable executed|null function or function signature/i;
 
@@ -79,6 +80,11 @@ async function main(): Promise<void> {
     if (raw != null && raw !== '') console.error('[editor] fatal', raw);
     showScreen('fatal', code);
     responder.emit({ type: 'ev.state', phase: 'fatal', detail: code });
+  };
+  const loaderStatus = (text: string): void => {
+    const code = statusFatal(text);
+    if (code != null) die(code, text);
+    else console.debug('[status]', text);
   };
   const onUncaught = (text: string): void => {
     if (looksLikeOom(text)) die('memory', text);
@@ -141,8 +147,10 @@ async function main(): Promise<void> {
       libsSource: staticLibsSource(),
       log: (m) => console.debug('[editor]', m),
       // The booting phase is already out; loader and engine status lines stay in
-      // the console, and the loading animation is fed by onProgress alone.
-      onStatus: (text) => console.debug('[status]', text),
+      // the console, and the loading animation is fed by onProgress alone. The one
+      // line that means the editor is gone (WebGL context lost) becomes the closed
+      // fatal code; its text is still only logged.
+      onStatus: (text) => loaderStatus(text),
       onProgress: (loaded, total) => { if (!fatal && total > 0) showScreen('loading', undefined, loaded / total); },
       onAbort: (what) => die(looksLikeOom(what) ? 'memory' : 'boot_failed', what),
     });

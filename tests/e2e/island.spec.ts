@@ -369,4 +369,20 @@ test('the loader sweeps in day mode', async ({ page }) => {
   expect(frameUrl()).toBe(before);
   expect((await events(page)).filter((e) => e.type === 'ev.state' && e.phase === 'fatal')).toEqual([]);
   await page.screenshot({ path: test.info().outputPath('editor-day.png') });
+
+  // A lost WebGL context (a GPU reset) ends at the fatal screen with the closed code, never a frozen canvas.
+  const frame = page.frames().find((f) => f.url().startsWith(`${ISLAND}/`));
+  if (frame == null) throw new Error('no island frame');
+  // The loader's listener sits on its #canvas; the event is dispatched there (that canvas holds no
+  // WebGL context of its own to lose through WEBGL_lose_context), so the island's mapping is what runs.
+  const lost = await frame.evaluate(() => {
+    const canvas = document.getElementById('canvas');
+    return canvas?.dispatchEvent(new Event('webglcontextlost', { cancelable: true })) === false;   // the listener called preventDefault
+  });
+  expect(lost).toBe(true);
+  await expect(island.locator('#screen')).toBeVisible();
+  await expect(island.locator('.cc-copy')).toHaveText('The editor stopped. Reload the page to start again.');
+  await expect(island.locator('.cc-detail')).toHaveText('webgl_lost');
+  await expect.poll(async () => (await events(page)).filter((e) => e.type === 'ev.state' && e.phase === 'fatal').map((e) => e.detail)).toEqual(['webgl_lost']);
+  await page.screenshot({ path: test.info().outputPath('webgl-lost.png') });
 });
