@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { installUnloadQuiet, isQuiet, quietFor, quietForever, resetUnloadQuietForTest } from './unload-quiet';
+import { installUnloadQuiet, isQuiet, quietClear, quietFor, quietForever, resetUnloadQuietForTest } from './unload-quiet';
 
 describe('unload quiet', () => {
   beforeEach(() => resetUnloadQuietForTest());
@@ -26,6 +26,16 @@ describe('unload quiet', () => {
     quietForever();
     expect(isQuiet(0)).toBe(true);
     expect(isQuiet(Number.MAX_SAFE_INTEGER)).toBe(true);
+  });
+
+  it('is off again after quietClear, both the forever flag and an open window', () => {
+    quietForever();
+    quietFor(10_000, 1_000);
+    quietClear();
+    expect(isQuiet(1_000)).toBe(false);
+    expect(isQuiet(Number.MAX_SAFE_INTEGER)).toBe(false);
+    quietFor(10_000, 1_000);
+    expect(isQuiet(5_000)).toBe(true);
   });
 
   it('stops the handlers registered after it only while quiet, and never sets returnValue', () => {

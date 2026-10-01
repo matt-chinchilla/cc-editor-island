@@ -4,10 +4,11 @@
 // modified document. When the host is about to reload this frame (a frame
 // switch right after the host's own save, or a forget), that prompt is wrong:
 // the host already has the bytes or has dropped the document. The responder
-// marks those moments; a capture-phase listener installed before the engine
-// boots then stops the engine's handler from running. It never sets
-// returnValue, so the island itself never asks. A user reload with truly
-// unsaved edits outside those moments still gets the engine's prompt.
+// marks those moments, and clears them when a new document is opened; a
+// capture-phase listener installed before the engine boots then stops the
+// engine's handler from running. It never sets returnValue, so the island
+// itself never asks. A user reload with truly unsaved edits outside those
+// moments still gets the engine's prompt.
 let until = 0;
 let forever = false;
 
@@ -16,9 +17,18 @@ export function quietFor(ms: number, now: number = Date.now()): void {
   until = Math.max(until, now + ms);
 }
 
-/** Quiet for the rest of this page's life. */
+/** Quiet for the rest of this page's life, or until quietClear. */
 export function quietForever(): void {
   forever = true;
+}
+
+/**
+ * Ends any quiet window and the forever flag: a project.open after a forget
+ * or a save puts a new document in the engine, whose edits deserve the prompt.
+ */
+export function quietClear(): void {
+  until = 0;
+  forever = false;
 }
 
 export function isQuiet(now: number = Date.now()): boolean {
@@ -26,8 +36,7 @@ export function isQuiet(now: number = Date.now()): boolean {
 }
 
 export function resetUnloadQuietForTest(): void {
-  until = 0;
-  forever = false;
+  quietClear();
 }
 
 /**

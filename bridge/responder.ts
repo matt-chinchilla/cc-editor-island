@@ -9,7 +9,7 @@ import { registerSaveHook, SAVE_COMMITTED } from '../loader/src/wasm/save-flow';
 import { parseBoot } from '../src/cc-config';
 import { normalizePath, openStaged, PROJECT_ROOT, stageProject, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
-import { quietFor, quietForever } from '../src/unload-quiet';
+import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
 
 declare const __ISLAND_ID__: string;   // define'd by vite.config.ts from PIN.json
 
@@ -227,7 +227,8 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
       case 'project.forget': {
         if (!noArgs(args)) return fail('bad_args', op);
         // The host dropped the document whatever the wipe below answers: the
-        // bridge forgets it first, and no leave prompt is raised for it again.
+        // bridge forgets it first, and no leave prompt is raised for it again
+        // until the next successful project.open.
         staged = null;
         opened = null;
         quietForever();
@@ -265,6 +266,7 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
     const how = await openStaged(win, staged, target, (m) => console.debug('[open]', m));
     if (how === 'failed') return fail('open_failed', target);
     opened = normalizePath(target);
+    quietClear();   // a new document: the engine's leave prompt guards it again
     return ok({ opened, dropped: staged.dropped });
   }
 

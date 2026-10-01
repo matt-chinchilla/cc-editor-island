@@ -329,7 +329,7 @@ describe('startResponder', () => {
     expect(got.at(-1)).toEqual({ id: 5, ok: true, result: { opened: 'other.kicad_sch', dropped: [] } });
   });
 
-  it('quiets the engine leave prompt after a host save that emitted ev.saved, and for good after forget', async () => {
+  it('quiets the engine leave prompt after a host save that emitted ev.saved, and after forget until the next successful open', async () => {
     resetUnloadQuietForTest();
     const { page, parent } = fakePage();
     const r = startResponder({ parentOrigin: PARENT, page });
@@ -358,6 +358,16 @@ describe('startResponder', () => {
     port.postMessage({ id: 4, op: 'project.forget' });
     await settle();
     expect(isQuiet(Date.now() + 3_600_000)).toBe(true);
+    // An open that fails leaves the quiet in place; a successful one clears it,
+    // so the reopened document's edits get the engine's prompt again.
+    port.postMessage({ id: 5, op: 'project.open', args: { name: 'y', files: [{ path: 'notes.txt', bytes: b('x') }] } });
+    await settle(100);
+    expect(got.at(-1)).toMatchObject({ id: 5, ok: false, error: { code: 'nothing_to_open' } });
+    expect(isQuiet(Date.now() + 3_600_000)).toBe(true);
+    port.postMessage({ id: 6, op: 'project.open', args: { name: 'y', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] } });
+    await settle(100);
+    expect(got.at(-1)).toEqual({ id: 6, ok: true, result: { opened: 'blink.kicad_sch', dropped: [] } });
+    expect(isQuiet()).toBe(false);
     resetUnloadQuietForTest();
   });
 
