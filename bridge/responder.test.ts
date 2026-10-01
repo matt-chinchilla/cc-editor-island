@@ -920,7 +920,7 @@ describe('key.press', () => {
     eng.win.dispatchEvent = vi.fn(() => true);
     eng.ui.popup = true;   // a context menu or KiCad's clarify-selection menu
     expect(await request('key.press', { key: 'a', code: 'KeyA' })).toMatchObject({ ok: false, error: { code: 'busy' } });
-    expect(await request('view.fit')).toMatchObject({ ok: false, error: { code: 'busy' } });
+    expect(await request('view.fit')).toMatchObject({ ok: false, error: { code: 'busy', message: 'view.fit' } });
     eng.ui.popup = false;
     for (const typeName of ['wxGenericMessageDialog', 'wxRichMessageDialog', 'wxFileDialog', 'wxTextEntryDialog']) {
       eng.dialogs.splice(0, eng.dialogs.length, { typeName, visible: true });

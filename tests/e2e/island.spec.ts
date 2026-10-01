@@ -11,7 +11,7 @@ const PAGE = 'http://circuitcenter.localhost:4173';
 const ISLAND = 'http://editor.circuitcenter.localhost:4174';
 const PAIR = new Set([PAGE, ISLAND]);
 
-interface Ev { type: string; phase?: string; detail?: string; path?: string; bytes?: number; text?: string; topic?: string; caps?: string[]; at: number }
+interface Ev { type: string; phase?: string; detail?: string; path?: string; bytes?: number; text?: string; topic?: string; caps?: string[]; open?: boolean; at: number }
 interface Harness {
   __events: Ev[];
   __hellos: number;
@@ -72,10 +72,10 @@ async function boot(page: Page, query: string, opened?: string): Promise<Frame> 
 }
 
 /** A click at a point of the island's viewport. */
-async function clickIn(page: Page, x: number, y: number): Promise<void> {
+async function clickIn(page: Page, x: number, y: number, button: 'left' | 'right' = 'left'): Promise<void> {
   const box = await page.locator('iframe').boundingBox();
   if (box == null) throw new Error('no iframe box');
-  await page.mouse.click(box.x + x, box.y + y);
+  await page.mouse.click(box.x + x, box.y + y, { button });
 }
 
 /** The visible wx elements (dialogs, buttons) the engine's registry reports, in viewport coordinates. */
@@ -174,7 +174,7 @@ test('boots inside the sandboxed iframe, opens Glasgow, saves both ways, never l
   // A host-driven save does too, exactly once: the save hook does not emit a second copy.
   const before = await savedCount(page, 'glasgow.kicad_pcb');
   const saved = await request(page, 'project.save');
-  expect(saved).toEqual({ path: 'glasgow.kicad_pcb' });
+  expect(saved).toEqual({ path: 'glasgow.kicad_pcb', saved: ['glasgow.kicad_pcb'] });
   // One more round trip through the island before counting, so a late hook emission would be in.
   expect(await request(page, 'readonly', { on: false })).toEqual({});
   expect(await savedCount(page, 'glasgow.kicad_pcb')).toBe(before + 1);
@@ -208,14 +208,23 @@ test('boots inside the sandboxed iframe, opens Glasgow, saves both ways, never l
   fencedNote(w);
 });
 
-test('a hierarchical schematic saves the shown sheet, the hotkeys work, and a second open replaces the first', async ({ page, context }) => {
+/** Every file of the Glasgow schematic KiCad's own Save writes: the three sheets and the project file. */
+const GLASGOW_SAVE = ['glasgow.kicad_pro', 'glasgow.kicad_sch', 'io_banks.kicad_sch', 'io_buffer.kicad_sch'];
+/** project.save's answer with `saved` sorted (the engine's own order is not part of the protocol). */
+async function saveAll(page: Page): Promise<{ path: unknown; saved: string[] }> {
+  const r = await request(page, 'project.save');
+  return { path: r.path, saved: [...(r.saved as string[])].sort() };
+}
+
+test('a hierarchical schematic saves every sheet, the hotkeys work, and a second open replaces the first', async ({ page, context }) => {
   const w = watch(context, page);
   const frame = await boot(page, 'fixture=glasgow&frame=sch', 'glasgow.kicad_sch');
   // The frame boots canvas only; this test reads the properties and hierarchy panes, so the chrome comes back.
   expect(await request(page, 'chrome.show', { on: true })).toEqual({});
-  // The sheet files the engine reports are absolute, so the root save lands on the root file.
-  expect(await request(page, 'project.save')).toEqual({ path: 'glasgow.kicad_sch' });
-  expect(await savedCount(page, 'glasgow.kicad_sch')).toBe(1);
+  // KiCad's own Save writes every sheet and the project file; path names the root, the sheet on screen.
+  expect(await saveAll(page)).toEqual({ path: 'glasgow.kicad_sch', saved: GLASGOW_SAVE });
+  // Every file's ev.saved came before the answer.
+  for (const f of GLASGOW_SAVE) expect(await savedCount(page, f)).toBe(1);
   // Selecting a symbol makes this engine reach for ws://localhost:4242 (the
   // stage 0 probe saw :4243 too); the CSP refuses it, so no socket opens. With
   // ws: allowed in connect-src this test goes red on the sockets check below.
@@ -229,9 +238,9 @@ test('a hierarchical schematic saves the shown sheet, the hotkeys work, and a se
   expect(tree).toBeDefined();
   await clickIn(page, 99, 384);   // the "IO_Banks (page 2)" row of the hierarchy pane
   await expect.poll(async () => JSON.parse(await frame.evaluate(() => (window as unknown as { Module: { kicadSheetsGetTree(): string } }).Module.kicadSheetsGetTree())).current).not.toBe('/');
-  expect(await request(page, 'project.save')).toEqual({ path: 'io_banks.kicad_sch' });
-  const sub = (await events(page)).filter((e) => e.type === 'ev.saved').at(-1);
-  expect(sub?.path).toBe('io_banks.kicad_sch');
+  expect(await saveAll(page)).toEqual({ path: 'io_banks.kicad_sch', saved: GLASGOW_SAVE });
+  const sub = (await events(page)).filter((e) => e.type === 'ev.saved' && e.path === 'io_banks.kicad_sch').at(-1);
+  expect(await savedCount(page, 'io_banks.kicad_sch')).toBe(2);
   expect(sub?.text?.startsWith('(kicad_sch')).toBe(true);
 
   // The seeded hotkey A starts placing a symbol: the chooser opens.
@@ -245,9 +254,10 @@ test('a hierarchical schematic saves the shown sheet, the hotkeys work, and a se
 
   // project.open over the opened, unmodified project: answered, and no modal is left up.
   const again = await page.evaluate(() => (window as unknown as Harness).__openFixture());
-  expect(again).toEqual({ opened: 'glasgow.kicad_sch', dropped: [] });
+  // The chrome was turned on for this boot, so the answer says it shows.
+  expect(again).toEqual({ opened: 'glasgow.kicad_sch', dropped: [], chrome: true });
   expect((await visibleWx(frame, {})).filter((e) => /Dialog/.test(e.typeName))).toEqual([]);
-  expect(await request(page, 'project.save')).toEqual({ path: 'glasgow.kicad_sch' });
+  expect(await saveAll(page)).toEqual({ path: 'glasgow.kicad_sch', saved: GLASGOW_SAVE });
 
   // Guaranteed by the sandbox; the popup proof is the Glasgow pcb test's ev.state popup and window.open checks.
   expect(w.popups).toEqual([]);
@@ -433,11 +443,24 @@ test('shutdown releases the engine: the answer is the last message, and the remo
   }
 });
 
+/** The wx types on screen, sorted. */
+const shownTypes = async (frame: Frame): Promise<string[]> => [...new Set((await visibleWx(frame, {})).map((e) => e.typeName))].sort();
+
+/**
+ * Canvas only, and it stays so: KiCad can show its menu bar again after the
+ * open answered (2 of 14 runs before the open watched it), so the check polls
+ * until only the frame and its canvas show, then looks again a second later.
+ */
+async function expectCanvasOnly(page: Page, frame: Frame): Promise<void> {
+  await expect.poll(() => shownTypes(frame), { timeout: 10_000 }).toEqual(['wxFrame', 'wxGLCanvas']);
+  await page.waitForTimeout(1_000);
+  expect(await shownTypes(frame)).toEqual(['wxFrame', 'wxGLCanvas']);
+}
+
 test('boots with KiCad\'s chrome hidden, and key.press opens the chooser with no real click', async ({ page }) => {
   const frame = await boot(page, 'fixture=glasgow&frame=sch', 'glasgow.kicad_sch');
-  // Canvas only: no menu bar, toolbar, status bar or pane is visible.
-  const types = new Set((await visibleWx(frame, {})).map((e) => e.typeName));
-  expect([...types].sort()).toEqual(['wxFrame', 'wxGLCanvas']);
+  // Canvas only: no menu bar, toolbar, status bar or pane is visible, and the open said so.
+  await expectCanvasOnly(page, frame);
   const box = await frame.evaluate(() => {
     const c = [...document.querySelectorAll<HTMLCanvasElement>('canvas.gl-canvas')].sort((a, b) => b.width * b.height - a.width * a.height)[0];
     const r = c.getBoundingClientRect();
@@ -459,16 +482,53 @@ test('boots with KiCad\'s chrome hidden, and key.press opens the chooser with no
   await expect.poll(async () => (await visibleWx(frame, { type: 'wxMenuBar' })).length).toBe(0);
 });
 
+test('a press in the drawing takes the keyboard back from the host page, so its keys reach KiCad', async ({ page }) => {
+  const frame = await boot(page, 'fixture=glasgow&frame=sch', 'glasgow.kicad_sch');
+  // A control of the host page takes the focus, as the viewer's own buttons do.
+  await page.evaluate(() => { const b = document.createElement('button'); b.id = 'host-control'; b.textContent = 'host'; document.body.prepend(b); });
+  await page.click('#host-control');
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe('host-control');
+  expect(await frame.evaluate(() => document.hasFocus())).toBe(false);
+  // A press in the drawing (KiCad cancels the mousedown, so the browser alone would leave the focus on the button).
+  await clickIn(page, 1100, 730);
+  await expect.poll(() => frame.evaluate(() => document.hasFocus())).toBe(true);
+  expect(await page.evaluate(() => document.activeElement?.tagName)).toBe('IFRAME');
+  // The user's own key reaches KiCad: A opens the symbol chooser.
+  expect(await visibleWx(frame, { type: 'wxDialog' })).toEqual([]);
+  await page.keyboard.press('a');
+  await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length, { timeout: 15_000 }).toBe(1);
+});
+
+test('a popup menu is reported as ev.menu while it is up, and holds the host\'s keys back', async ({ page }) => {
+  await boot(page, 'fixture=glasgow&frame=pcb', 'glasgow.kicad_pcb');
+  const menus = async (): Promise<boolean[]> => (await events(page)).filter((e) => e.type === 'ev.menu').map((e) => e.open === true);
+  expect(await menus()).toEqual([]);
+  // A right press on the board opens KiCad's context menu (a wx-dom popup, not a wxWindow).
+  await clickIn(page, 640, 400, 'right');
+  await expect.poll(menus, { timeout: 10_000 }).toEqual([true]);
+  // While it is up, a key from the host would land in it: refused.
+  await expect(request(page, 'key.press', { key: 'a', code: 'KeyA' })).rejects.toThrow('busy: key.press');
+  await expect(request(page, 'view.fit')).rejects.toThrow('busy: view.fit');
+  await page.keyboard.press('Escape');
+  await expect.poll(menus, { timeout: 10_000 }).toEqual([true, false]);
+  expect(await request(page, 'view.fit')).toEqual({});
+});
+
 /** A seeded config file of the frame's MEMFS, parsed. */
 const seededConfig = (frame: Frame, file: string): Promise<Record<string, any>> => frame.evaluate((name) => {
   const FS = (window as unknown as { FS: { readFile(p: string, o: { encoding: 'utf8' }): string } }).FS;
   return JSON.parse(FS.readFile(`/home/kicad/.config/kicad/kicad/10.0/${name}`, { encoding: 'utf8' })) as Record<string, any>;
 }, file);
 
-test('the board frame boots canvas only too, with the cheap cursor seeds', async ({ page }) => {
+test('the board frame boots canvas only too, and the island wrote the cheap cursor seeds', async ({ page }) => {
   const frame = await boot(page, 'fixture=glasgow&frame=pcb', 'glasgow.kicad_pcb');
-  const types = new Set((await visibleWx(frame, {})).map((e) => e.typeName));
-  expect([...types].sort()).toEqual(['wxFrame', 'wxGLCanvas']);
+  await expectCanvasOnly(page, frame);
+  // These read back the seed files the island wrote into MEMFS before main(),
+  // which proves the seeds were written, not that KiCad applied them: the
+  // engine keeps its settings in memory and never writes these files back
+  // during a session, and neither anti-aliasing nor the crosshair mode shows
+  // through anything the page can read (review P26, 2026-10-01; the idle
+  // pointer is the system arrow either way). The seeds carry no meta.version.
   // No anti-aliasing, so the full-frame canvas keeps up with the pointer (task F1: SMAA
   // dropped the GL canvas, supersampling doubled every repaint).
   expect((await seededConfig(frame, 'kicad_common.json')).graphics).toEqual({ antialiasing_mode: 0 });
@@ -491,35 +551,52 @@ test('a seeded topbar chord opens the schematic checker: Ctrl+Alt+7 runs ERC', a
   await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length, { timeout: 15_000 }).toBe(1);
 });
 
-test('a seeded chord starts a tool KiCad gives no key: Ctrl+Alt+R draws a schematic rectangle', async ({ page }) => {
+test('a seeded chord starts a tool KiCad gives no key, and one project.save keeps the edits on every sheet', async ({ page }) => {
   const frame = await boot(page, 'fixture=glasgow&frame=sch', 'glasgow.kicad_sch');
-  // The harness keeps only the first 4 KiB of a save, so the count reads the saved root file from MEMFS.
-  const rectangles = async (): Promise<number> => {
-    expect(await request(page, 'project.save')).toEqual({ path: 'glasgow.kicad_sch' });
-    return frame.evaluate(() => {
-      const FS = (window as unknown as { FS: { readdir(p: string): string[]; stat(p: string): { mode: number }; isDir(m: number): boolean; readFile(p: string, o: { encoding: 'utf8' }): string } }).FS;
-      const walk = (dir: string): string | null => {
-        for (const n of FS.readdir(dir).filter((x) => x !== '.' && x !== '..')) {
-          const p = `${dir}/${n}`;
-          if (FS.isDir(FS.stat(p).mode)) { const f = walk(p); if (f != null) return f; } else if (n === 'glasgow.kicad_sch') return p;
-        }
-        return null;
-      };
-      const path = walk('/home/kicad/documents/kicad/10.0/projects');
-      return path == null ? -1 : FS.readFile(path, { encoding: 'utf8' }).split('(rectangle').length - 1;
-    });
-  };
-  const before = await rectangles();
-  // A tool started by its hotkey takes the pointer as its first click, so the pointer goes to one corner first.
+  // The harness keeps only the first 4 KiB of a save, so the counts read the saved sheet files from MEMFS.
+  const rectangles = (file: string): Promise<number> => frame.evaluate((name) => {
+    const FS = (window as unknown as { FS: { readdir(p: string): string[]; stat(p: string): { mode: number }; isDir(m: number): boolean; readFile(p: string, o: { encoding: 'utf8' }): string } }).FS;
+    const walk = (dir: string): string | null => {
+      for (const n of FS.readdir(dir).filter((x) => x !== '.' && x !== '..')) {
+        const p = `${dir}/${n}`;
+        if (FS.isDir(FS.stat(p).mode)) { const f = walk(p); if (f != null) return f; } else if (n === name) return p;
+      }
+      return null;
+    };
+    const path = walk('/home/kicad/documents/kicad/10.0/projects');
+    return path == null ? -1 : FS.readFile(path, { encoding: 'utf8' }).split('(rectangle').length - 1;
+  }, file);
   const box = await page.locator('iframe').boundingBox();
   if (box == null) throw new Error('no iframe box');
-  await page.mouse.move(box.x + 1000, box.y + 640, { steps: 4 });
-  // theme/user.hotkeys binds eeschema.InteractiveDrawing.drawRectangle to Ctrl+Alt+R (theme/pencil-tools.json).
-  expect(await request(page, 'key.press', { key: 'r', code: 'KeyR', ctrl: true, alt: true })).toEqual({});
-  // A click at the opposite corner finishes the rectangle; Escape leaves the tool.
-  await clickIn(page, 1150, 730);
-  expect(await request(page, 'key.press', { key: 'Escape', code: 'Escape' })).toEqual({});
-  await expect.poll(rectangles, { timeout: 10_000 }).toBe(before + 1);
+  /** A tool started by its hotkey takes the pointer as its first click, so the pointer goes to one corner first. */
+  const drawRectangle = async (): Promise<void> => {
+    await page.mouse.move(box.x + 1000, box.y + 640, { steps: 4 });
+    // theme/user.hotkeys binds eeschema.InteractiveDrawing.drawRectangle to Ctrl+Alt+R (theme/pencil-tools.json).
+    expect(await request(page, 'key.press', { key: 'r', code: 'KeyR', ctrl: true, alt: true })).toEqual({});
+    // A click at the opposite corner finishes the rectangle; Escape leaves the tool.
+    await clickIn(page, 1150, 730);
+    expect(await request(page, 'key.press', { key: 'Escape', code: 'Escape' })).toEqual({});
+  };
+  expect(await saveAll(page)).toEqual({ path: 'glasgow.kicad_sch', saved: GLASGOW_SAVE });
+  const root = await rectangles('glasgow.kicad_sch');
+  const banks = await rectangles('io_banks.kicad_sch');
+
+  // One rectangle on the root sheet, one on IO_Banks.
+  await drawRectangle();
+  const tree = await request(page, 'sheet.tree') as { sheets: Array<{ path: string; name: string }> };
+  const io = tree.sheets.find((x) => x.name === 'IO_Banks');
+  expect(io).toBeDefined();
+  expect(await request(page, 'sheet.enter', { path: io!.path })).toEqual({});
+  await expect.poll(async () => ((await request(page, 'sheet.tree')) as { current: string }).current, { timeout: 10_000 }).toBe(io!.path);
+  await drawRectangle();
+
+  // One save from IO_Banks writes both sheets (review M11: it used to write only the sheet on screen).
+  const savedBefore = (await events(page)).filter((e) => e.type === 'ev.saved').length;
+  expect(await saveAll(page)).toEqual({ path: 'io_banks.kicad_sch', saved: GLASGOW_SAVE });
+  // Every ev.saved of the save reached the host before the answer.
+  expect((await events(page)).filter((e) => e.type === 'ev.saved').length - savedBefore).toBe(GLASGOW_SAVE.length);
+  expect(await rectangles('glasgow.kicad_sch')).toBe(root + 1);
+  expect(await rectangles('io_banks.kicad_sch')).toBe(banks + 1);
 });
 
 /** The appearance.color_theme an editor's seeded config selects, read from the frame's MEMFS. */

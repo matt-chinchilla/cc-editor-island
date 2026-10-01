@@ -344,7 +344,7 @@ export function startResponder(opts: {
       case 'readonly': return toggle(op, args, 'kicadSetReadOnly');
       case 'key.press': return keyPress(args);
       // KiCad's Zoom to Fit is its Home hotkey; through keyPress, so a dialog that is up answers busy.
-      case 'view.fit': return noArgs(args) ? keyPress({ key: 'Home', code: 'Home' }) : fail('bad_args', op);
+      case 'view.fit': return noArgs(args) ? keyPress({ key: 'Home', code: 'Home' }, op) : fail('bad_args', op);
       case 'sheet.tree': return noArgs(args) ? sheetTree() : fail('bad_args', op);
       case 'sheet.enter': return sheetEnter(args);
       case 'layers.get': return noArgs(args) ? layersGet() : fail('bad_args', op);
@@ -616,8 +616,7 @@ export function startResponder(opts: {
    * dialog is up: the key would land in it. Never clicks: the boot put wx keyboard focus on the
    * canvas once (src/main.ts), and a click in a drawing tool would place a point.
    */
-  function keyPress(args: unknown): Answer {
-    const op = 'key.press';
+  function keyPress(args: unknown, op = 'key.press'): Answer {
     const k = parseKeyPress(args);
     if (k == null) return fail('bad_args', op);
     const w = win;
