@@ -5,6 +5,8 @@ The Circuit Center editor island: the page that runs the KiCad editor in the bro
 
 It holds PCBJam's KiCad in WebAssembly engine, pinned at PCBJam tag v0.2.3 (root commit and gitlinks in `PIN.json`), our own loader, and the responder for the `cc-editor/1` message protocol.
 
+Since stage 1c the frame boots canvas only (KiCad's menus, toolbars and panes hidden; `chrome.show` brings them back), and the protocol carries seven ops for the host's own controls: `key.press`, `view.fit`, `sheet.tree`, `sheet.enter`, `layers.get`, `layers.visible` and `layers.active` (`PROTOCOL.md`).
+
 ## Licence
 
 This repository is GPL-3.0-or-later (see `LICENSE`). KiCad and PCBJam are GPL-3.0; the island follows the same licence. Files copied from PCBJam keep their original headers, and any we changed say so. `PROTOCOL.md` alone is MIT, so a host page can speak the protocol under any licence.
