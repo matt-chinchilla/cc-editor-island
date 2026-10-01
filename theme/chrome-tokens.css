@@ -7,7 +7,8 @@
  * <head> before main() so wx measures its widget clones with the native stack already set.
  *
  * Rule of the sheet: colour, font family, border, radius, shadow and padding only where the
- * box does not grow. Every widget keeps its sizer-written left/top/width/height. Nothing here
+ * box does not grow. No transition and no filter: anything that moves moves by transform and
+ * opacity only. Every widget keeps its sizer-written left/top/width/height. Nothing here
  * changes a size, a font size or a line-height.
  *
  * Token names are the viewer's --vw-* names (frontend/src/public/pages/viewer/_workspaceTokens.scss)
@@ -138,7 +139,6 @@ html.cc-editor.cc-editor .wx-menu-title {
   font-weight: 520 !important;
   border-radius: 6px !important;
   background: transparent !important;
-  transition: background-color 120ms ease, color 120ms ease;
 }
 html.cc-editor.cc-editor .wx-menu-title:hover,
 html.cc-editor.cc-editor .wx-menu-title[aria-expanded="true"] {
@@ -147,7 +147,8 @@ html.cc-editor.cc-editor .wx-menu-title[aria-expanded="true"] {
 }
 
 /* ------------------------------------------------------------------ menu popups: body > div.wx-menu-popup (> div rows, no row class)
- * A menu floats over content, so it may be glass. Its box is content-sized by the browser,
+ * A menu floats over content. On desktop it is the glass tint laid over the solid card colour:
+ * opaque, the same ink contrast as the old blurred glass, and no filter. Its box is content-sized by the browser,
  * so padding here is free. Rows: 6px 12px inside the port's 2px 14px 2px 6px would grow the
  * row, so we keep the port's padding and change only colour, radius and the separator. */
 html.cc-editor.cc-editor .wx-menu-popup {
@@ -158,15 +159,12 @@ html.cc-editor.cc-editor .wx-menu-popup {
   box-shadow: var(--vw-card-shadow) !important;
   color: var(--vw-ink) !important;
 }
-@supports (backdrop-filter: blur(1px)) {
-  @media (min-width: 769px) {
-    html.cc-editor.cc-editor .wx-menu-popup {
-      background: linear-gradient(rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.88)) !important;
-      backdrop-filter: saturate(180%) blur(20px);
-    }
-    html.cc-editor.cc-editor.dark .wx-menu-popup {
-      background: linear-gradient(rgba(35, 41, 48, 0.94), rgba(27, 32, 37, 0.92)) !important;
-    }
+@media (min-width: 769px) {
+  html.cc-editor.cc-editor .wx-menu-popup {
+    background: linear-gradient(rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.88)), var(--vw-card-solid) !important;
+  }
+  html.cc-editor.cc-editor.dark .wx-menu-popup {
+    background: linear-gradient(rgba(35, 41, 48, 0.94), rgba(27, 32, 37, 0.92)), var(--vw-card-solid) !important;
   }
 }
 html.cc-editor.cc-editor .wx-menu-popup > div {
@@ -221,7 +219,6 @@ html.cc-editor.cc-editor .wx-tab-strip > button[role="tab"] {
   position: static !important;
   top: auto !important;
   margin: 1px 0 0 1px !important;      /* the port's own margin, restated so nothing shifts */
-  transition: background-color 120ms ease, color 120ms ease;
 }
 html.cc-editor.cc-editor .wx-tab-strip > button[role="tab"]:hover { background: var(--vw-hover) !important; color: var(--vw-ink) !important; }
 html.cc-editor.cc-editor .wx-tab-strip > button[role="tab"][aria-selected="true"] {
@@ -241,7 +238,6 @@ html.cc-editor.cc-editor button.wx-dom-control {
   color: var(--vw-ink) !important;
   font-weight: 520 !important;
   box-shadow: var(--vw-glass-top) !important;
-  transition: background-color 120ms ease, box-shadow 150ms ease;
 }
 @media (hover: hover) {
   html.cc-editor.cc-editor button.wx-dom-control:hover {
@@ -339,7 +335,6 @@ html.cc-editor.cc-editor [data-wx-scrollbar] .wx-sb-thumb {
   background: var(--vw-glass-border) !important;
   border: 0 !important;
   border-radius: 4px !important;
-  transition: background-color 120ms ease;
 }
 html.cc-editor.cc-editor [data-wx-scrollbar] .wx-sb-thumb:hover { background: var(--vw-ink-4) !important; }
 /* spin buttons: div[data-wx-spin] > button.wx-spin-up / .wx-spin-down */
@@ -369,7 +364,6 @@ html.cc-editor.cc-editor .window-titlebar {
 html.cc-editor.cc-editor .window-titlebar-close {
   color: var(--vw-ink-3) !important;
   border-radius: 6px !important;
-  transition: background-color 120ms ease, color 120ms ease;
 }
 html.cc-editor.cc-editor .window-titlebar-close:hover { background: var(--vw-hover) !important; color: var(--vw-ink) !important; }  /* never red */
 /* .wx-inert (modal barrier) and .window-resize-handle.* keep the port's behaviour; no rule here on purpose. */
@@ -378,11 +372,6 @@ html.cc-editor.cc-editor .window-titlebar-close:hover { background: var(--vw-hov
 html.cc-editor.cc-editor canvas#canvas,
 html.cc-editor.cc-editor canvas.gl-canvas { outline: none !important; }
 
-/* ------------------------------------------------------------------ reduced motion: one block for the whole skin */
-@media (prefers-reduced-motion: reduce) {
-  html.cc-editor.cc-editor .wx-menu-title,
-  html.cc-editor.cc-editor .wx-tab-strip > button[role="tab"],
-  html.cc-editor.cc-editor button.wx-dom-control,
-  html.cc-editor.cc-editor [data-wx-scrollbar] .wx-sb-thumb,
-  html.cc-editor.cc-editor .window-titlebar-close { transition: none !important; }
-}
+/* ------------------------------------------------------------------ motion
+ * None: hover states change instantly (the chrome moves only by transform and opacity, and
+ * nothing here does either), so there is nothing for reduced motion to stop. */
