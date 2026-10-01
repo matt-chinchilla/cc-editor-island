@@ -24,3 +24,11 @@ npm run e2e             # browser tests (Playwright)
 ## Source offer
 
 For every build we serve, the complete corresponding source is this repository at the release tagged with that build's `islandId` (for example `v0.2.3-cc1`), together with the `cc/<islandId>` tags on our four mirrors of PCBJam, KiCad, wxWidgets and pcbjam-shared.
+
+## Publishing
+
+Nothing here runs on its own; the owner runs each step, and each script takes `--dry-run` to read GitHub and print every write as `DRY: ...` instead.
+
+1. Create this repository on GitHub (the owner's step, once): `gh repo create matt-chinchilla/cc-editor-island --public --source=. --push`.
+2. `bash scripts/mirrors.sh`: forks pcbjam, kicad-source-mirror, wxWidgets and pcbjam-shared under matt-chinchilla once, then tags `cc/<islandId>` on each at the commits in `PIN.json`. A tag that exists at another commit is never moved.
+3. `npm run build`, commit, then `bash scripts/release.sh`: assembles `release/<islandId>/` (the source tarball of HEAD, `SHA256SUMS` over every file that ships, the dependency source archives verified against the sha256 pins in `notices/versions.sh`, `RELEASE_NOTES.md`) and publishes the release tagged `<islandId>`.
