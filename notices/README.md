@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # notices
 
-The sources of the release's licence page and the census that guards it. `scripts/notices.mjs` reads them; `scripts/build.mjs` runs it after the Vite build, so every release carries `licenses.html`, `LICENSE.txt` and `NOTICE` in `dist/r/<islandId>/`, and a failed census stops the build before `dist/current` moves.
+The sources of the release's licence page and the census that guards it. `scripts/notices.mjs` reads them; `scripts/build.mjs` runs it after the Vite build, so every release carries `licenses.html`, `LICENSE.txt` and `NOTICE.txt` in `dist/r/<islandId>/`, and a failed census stops the build before `dist/current` moves.
 
 ## The sources
 
@@ -16,7 +16,7 @@ The page also reads `PIN.json` (the islandId, the pinned commits, the engine fil
 
 ## The page
 
-`licenses.html` is plain HTML with an inline style sheet: no script, nothing loaded, and relative links only (`LICENSE.txt`, `NOTICE`). Every outside address is written as text. It holds:
+`licenses.html` is plain HTML with an inline style sheet: no script, nothing loaded, and relative links only (`LICENSE.txt`, `NOTICE.txt`). Every outside address is written as text. It holds:
 
 1. the Appropriate Legal Notices of GPLv3 section 0: our copyright, no warranty, conveyed under GPLv3, the licence beside the page;
 2. the section 6(d) directions: the release tag of this repository, the `cc/<islandId>` tags of the pcbjam, kicad-source-mirror and wxWidgets mirrors, the dependency source archives attached to the release, the build instructions, and the served engine files with their sha256;
@@ -24,7 +24,7 @@ The page also reads `PIN.json` (the islandId, the pinned commits, the engine fil
 4. every dependency `versions.sh` names, with its licence, from the `DEPS` table in the script;
 5. Phosphor's notice, PCBJam's page and KiCad's `LICENSE.README`, each reproduced as its authors wrote it.
 
-`NOTICE` is the same content as plain text.
+`NOTICE.txt` is the same content as plain text.
 
 ## The census
 

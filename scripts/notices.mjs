@@ -242,7 +242,7 @@ export function render({ versions, modified }, pin, texts) {
 <ul>
 <li>The island, our loader, responder, theme and these notices: the release <code>${esc(id)}</code> of the repository <code>${esc(GH)}/cc-editor-island</code>, at <code>${esc(release)}</code>. Its git tag is <code>${esc(id)}</code>.</li>
 ${mirrors.map((m) => `<li>${esc(m.what)}: the tag <code>cc/${esc(id)}</code> in <code>${esc(GH)}/${esc(m.repo)}</code>, commit <code>${esc(m.commit)}</code>.</li>`).join('\n')}
-<li>The source archives of the libraries the recipe builds from are attached to the same release. Those of ${esc(andList(pinnedBySha))} are each pinned by the sha256 in their row of the dependency table below; KiCad and wxWidgets are pinned by the mirror commits above.</li>
+<li>The source archives of the libraries the recipe builds from are attached to the same release.${pinnedBySha.length ? ` Those of ${esc(andList(pinnedBySha))} are each pinned by the sha256 in their row of the dependency table below;` : ''} KiCad and wxWidgets are pinned by the mirror commits above.</li>
 </ul>
 <p>We also mirror pcbjam-shared (MIT) for completeness, at <code>${esc(GH)}/pcbjam-shared</code>; it is not part of the served build.</p>
 <p>The build instructions for this release are PCBJam's own recipe at commit <code>${esc(pin.pcbjam.root)}</code>, in the pcbjam mirror at the tag <code>cc/${esc(id)}</code>: <code>.github/workflows/wasm-build.yml</code>, <code>docker/</code> and <code>scripts/</code>, with the versions in <code>scripts/common/versions.sh</code>.</p>
