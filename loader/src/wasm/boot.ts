@@ -11,6 +11,8 @@
 // Modified by Circuit Center on 2026-09-30: eeschema.json and pcbnew.json
 // are seeded with appearance.custom_toolbars true beside color_theme, so the
 // toolbar layouts the island writes under toolbars/ are read.
+// Modified by Circuit Center on 2026-09-30: the wasm fetch status label reads
+// "Loading the editor…".
 import type { Tool } from "../../../src/types";
 import {
   KICAD_CONFIG_DIR,
@@ -395,7 +397,7 @@ async function doBoot(opts: BootOptions): Promise<void> {
     libsSource,
     readOnly,
   } = opts;
-  const fetchLabel = "Downloading the editor…";
+  const fetchLabel = "Loading the editor…";
   // The deployed bundle backing this tool. footprint_editor/symbol_editor share
   // the pcbnew/eeschema engine, so their `.wasm`/`.js`/pthread-worker files are the
   // parent's; `tool` still drives identity (thisProgram), config-seed and lib-kind.

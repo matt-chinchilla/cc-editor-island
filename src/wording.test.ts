@@ -26,6 +26,20 @@ describe('the island wording', () => {
     expect(Object.keys(sources).filter((f) => /download/i.test(sources[f]))).toEqual([]);
   });
 
+  it('ships no download wording from the loader either: no string literal in loader/src names one', () => {
+    const loader = raw(import.meta.glob(['../loader/src/**/*.ts'], { query: '?raw', import: 'default', eager: true }));
+    expect(Object.keys(loader).length).toBeGreaterThan(0);
+    const hits: string[] = [];
+    for (const [f, text] of Object.entries(loader)) {
+      for (const line of text.split('\n')) {
+        const code = line.trim();
+        if (code.startsWith('//') || code.startsWith('*') || code.startsWith('/*')) continue;
+        for (const m of code.matchAll(/(["'`])((?:\\.|(?!\1).)*)\1/g)) if (/download/i.test(m[2])) hits.push(`${f}: ${m[0]}`);
+      }
+    }
+    expect(hits).toEqual([]);
+  });
+
   it('never forwards the loader status line to the host', () => {
     const onStatus = sources['./main.ts'].split('\n').filter((l) => /\bonStatus\s*:/.test(l));
     expect(onStatus).toHaveLength(1);
