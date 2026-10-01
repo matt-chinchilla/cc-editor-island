@@ -25,6 +25,7 @@ import { statusFatal } from './status';
 import { FRAME_TOKEN, frameToTool, type Frame } from './types';
 import { installQuitHandler } from './quit';
 import { installEngineTeardown, isShutdownError, teardownOnPagehide } from './teardown';
+import { bootHeartbeat } from './boot-heartbeat';
 import { installUnloadQuiet } from './unload-quiet';
 import { installWindowOpenWrapper } from './window-open';
 
@@ -136,6 +137,9 @@ async function main(): Promise<void> {
 
   showScreen('loading');
   responder.emit({ type: 'ev.state', phase: 'booting' });
+  // While the engine loads, booting repeats with the whole percent as its
+  // detail (one event every 2 s at most): the host's ready bound restarts on each.
+  const heartbeat = bootHeartbeat();
   // KiCad's own Switch items ask for the other frame; the page decides, the frame never navigates.
   window.kicadWebOpenTool = (toolName: string) => {
     const f = frameForTool(toolName);
@@ -158,12 +162,17 @@ async function main(): Promise<void> {
       seeds: seedsFor(theme),
       libsSource: staticLibsSource(),
       log: (m) => console.debug('[editor]', m),
-      // The booting phase is already out; loader and engine status lines stay in
-      // the console, and the loading animation is fed by onProgress alone. The one
-      // line that means the editor is gone (WebGL context lost) becomes the closed
-      // fatal code; its text is still only logged.
+      // Loader and engine status lines stay in the console; the loading animation
+      // and the booting heartbeat are fed by onProgress alone. The one line that
+      // means the editor is gone (WebGL context lost) becomes the closed fatal
+      // code; its text is still only logged.
       onStatus: (text) => loaderStatus(text),
-      onProgress: (loaded, total) => { if (!fatal && total > 0) showScreen('loading', undefined, loaded / total); },
+      onProgress: (loaded, total) => {
+        if (fatal || teardown.started() || !(total > 0)) return;
+        showScreen('loading', undefined, loaded / total);
+        const detail = heartbeat(loaded, total, performance.now());
+        if (detail != null) responder.emit({ type: 'ev.state', phase: 'booting', detail });
+      },
       onAbort: (what) => die(looksLikeOom(what) ? 'memory' : 'boot_failed', what),
     });
     if (!(await engineUp(window as ToolWindow, ENGINE_UP_TIMEOUT_MS, () => teardown.started()))) die('engine_timeout');

@@ -25,7 +25,9 @@ function serveFile(root, urlPath, res, headers) {
   if (!existsSync(file) || statSync(file).isDirectory()) { res.writeHead(404, headers); return res.end(); }
   const ext = extname(encoding ? file.slice(0, -3) : file);
   const type = TYPES[ext] ?? 'application/octet-stream';
-  res.writeHead(200, { ...headers, 'Content-Type': type, ...(encoding ? { 'Content-Encoding': encoding } : {}), 'Cache-Control': p.startsWith('/current/') ? 'no-cache' : 'public, max-age=31536000, immutable' });
+  // Content-Length as nginx sends it for a static file (the stored, compressed size for a .gz):
+  // the loader's progress, and so the booting heartbeat, needs a known total.
+  res.writeHead(200, { ...headers, 'Content-Type': type, 'Content-Length': statSync(file).size, ...(encoding ? { 'Content-Encoding': encoding } : {}), 'Cache-Control': p.startsWith('/current/') ? 'no-cache' : 'public, max-age=31536000, immutable' });
   createReadStream(file).pipe(res);
 }
 

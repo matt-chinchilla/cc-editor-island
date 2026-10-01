@@ -155,6 +155,10 @@ test('boots inside the sandboxed iframe, opens Glasgow, saves both ways, never l
   expect(await frame.evaluate(() => crossOriginIsolated)).toBe(true);
   const ready = (await events(page)).find((e) => e.type === 'ev.ready');
   expect(ready?.caps).toEqual(expect.arrayContaining(['kicadOpenFile', 'kicadSaveBoard', 'kicadSetChrome', 'kicadSetReadOnly']));
+  // The loading heartbeat: on this cold load, booting carried the whole percent loaded at least once.
+  const beats = (await events(page)).filter((e) => e.type === 'ev.state' && e.phase === 'booting' && /^\d{1,3}$/.test(e.detail ?? ''));
+  expect(beats.length).toBeGreaterThan(0);
+  measure('booting heartbeat', beats.map((e) => e.detail).join(' '));
   expect(await page.evaluate(() => (window as unknown as Harness).__hellos)).toBe(1);
 
   // Ctrl+S in the editor reaches the host as ev.saved, with the board's bytes.
