@@ -38,6 +38,8 @@ function fakeFs() {
   const busy = new Set<string>();
   /** Directories whose removal fails some other way: errno per path. */
   const broken = new Map<string, number>();
+  /** Files whose unlink leaves them in place, so their folder stays non-empty. */
+  const pinned = new Set<string>();
   const files = new Map<string, Uint8Array>();
   const parentOf = (p: string) => p.slice(0, p.lastIndexOf('/')) || '/';
   const FS = {
@@ -48,7 +50,7 @@ function fakeFs() {
     },
     readFile(p: string) { const f = files.get(p); if (!f) throw new Error(`ENOENT ${p}`); return f.slice(); },
     analyzePath(p: string) { return { exists: files.has(p) || dirs.has(p) }; },
-    unlink(p: string) { files.delete(p); },
+    unlink(p: string) { if (!pinned.has(p)) files.delete(p); },
     readdir(p: string) {
       const names = new Set<string>(['.', '..']);
       for (const k of [...files.keys(), ...dirs]) if (k !== p && parentOf(k) === p) names.add(k.slice(p.length + 1));
@@ -59,16 +61,16 @@ function fakeFs() {
     rmdir(p: string) {
       if (busy.has(p)) throw { errno: 10 };   // MEMFS throws an ErrnoError, not an Error
       if (broken.has(p)) throw { name: 'ErrnoError', errno: broken.get(p) };
-      if (this.readdir(p).length > 2) throw new Error('ENOTEMPTY');
+      if (this.readdir(p).length > 2) throw { name: 'ErrnoError', errno: 55 };   // ENOTEMPTY
       dirs.delete(p);
     },
   };
-  return { FS, files, dirs, busy, broken };
+  return { FS, files, dirs, busy, broken, pinned };
 }
 
 /** A booted engine: a visible frame, the programmatic open and the save exports. */
 function fakeEngine() {
-  const { FS, files, dirs, busy, broken } = fakeFs();
+  const { FS, files, dirs, busy, broken, pinned } = fakeFs();
   const opened: string[] = [];
   const Module = {
     kicadOpenFile: vi.fn((p: string) => { opened.push(p); }),
@@ -84,7 +86,7 @@ function fakeEngine() {
     Module,
     wxElementRegistry: { findAll: () => [{ typeName: 'SCH_EDIT_FRAME', name: 'SchematicFrame', visible: true }], findByLabel: () => [] },
   } as unknown as ToolWindow & { kicadCollab?: { onSave?: (p: string) => void } };
-  return { win, files, dirs, busy, broken, opened, Module };
+  return { win, files, dirs, busy, broken, pinned, opened, Module };
 }
 
 const b = (s: string) => new TextEncoder().encode(s);
@@ -374,11 +376,63 @@ describe('startResponder', () => {
     port.postMessage({ id: 2, op: 'project.forget' });
     await settle();
     expect(got).toEqual([{ id: 2, ok: false, error: { code: 'island_error', message: 'ErrnoError errno 63' } }]);
+    // The bridge forgot the project even though the wipe failed.
+    got.length = 0;
+    port.postMessage({ id: 3, op: 'project.save' });
+    await settle();
+    expect(got).toEqual([{ id: 3, ok: false, error: { code: 'not_ready', message: 'project.save' } }]);
+    expect(eng.Module.kicadSaveSchematic).not.toHaveBeenCalled();
     eng.broken.clear();
     got.length = 0;
-    port.postMessage({ id: 3, op: 'project.forget' });
+    port.postMessage({ id: 4, op: 'project.forget' });
     await settle();
-    expect(got).toEqual([{ id: 3, ok: true, result: {} }]);
+    expect(got).toEqual([{ id: 4, ok: true, result: {} }]);
+  });
+
+  it('keeps a busy subfolder and its parents when the opened file sits in a subfolder, then forgets and opens again', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    port.postMessage({ id: 1, op: 'project.open', args: { name: 'a', open: 'proj/a.kicad_sch', files: [
+      { path: 'proj/a.kicad_sch', bytes: b('(kicad_sch a)') }, { path: 'proj/lib/a.kicad_sym', bytes: b('(kicad_symbol_lib)') },
+    ] } });
+    await settle(100);
+    expect(got.at(-1)).toEqual({ id: 1, ok: true, result: { opened: 'proj/a.kicad_sch', dropped: [] } });
+    // KiCad changed into the opened file's own folder, below the project root.
+    eng.busy.add(`${ROOT}/proj`);
+    got.length = 0;
+    port.postMessage({ id: 2, op: 'project.forget' });
+    await settle();
+    expect(got).toEqual([{ id: 2, ok: true, result: {} }]);
+    expect([...eng.files.keys()]).toEqual([]);
+    expect(eng.dirs.has(`${ROOT}/proj`)).toBe(true);
+    expect(eng.dirs.has(`${ROOT}/proj/lib`)).toBe(false);
+    got.length = 0;
+    port.postMessage({ id: 3, op: 'project.open', args: { name: 'b', files: [{ path: 'b.kicad_sch', bytes: b('(kicad_sch b)') }] } });
+    await settle(100);
+    expect(got.at(-1)).toEqual({ id: 3, ok: true, result: { opened: 'b.kicad_sch', dropped: [] } });
+    expect([...eng.files.keys()]).toEqual([`${ROOT}/b.kicad_sch`]);
+    got.length = 0;
+    port.postMessage({ id: 4, op: 'project.forget' });
+    await settle();
+    expect(got).toEqual([{ id: 4, ok: true, result: {} }]);
+  });
+
+  it('still answers island_error when a folder is not empty and nothing below it is busy', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] } });
+    await settle(100);
+    eng.pinned.add(`${ROOT}/blink.kicad_sch`);
+    got.length = 0;
+    port.postMessage({ id: 2, op: 'project.forget' });
+    await settle();
+    expect(got).toEqual([{ id: 2, ok: false, error: { code: 'island_error', message: 'ErrnoError errno 55' } }]);
   });
 
   it('describes MEMFS ErrnoErrors by code or name and errno, never as [object Object]', () => {

@@ -32,6 +32,8 @@ type Answer = { ok: true; result: Record<string, unknown> } | { ok: false; code:
 
 /** MEMFS's errno for a busy directory (the engine's working directory). */
 const EBUSY = 10;
+/** MEMFS's errno for removing a directory that still holds an entry. */
+const ENOTEMPTY = 55;
 /** How long after a host-driven save the engine's leave prompt stays quiet (the host reloads the frame next). */
 const SAVE_QUIET_MS = 10_000;
 /** The one project slug: the save hook reports paths relative to memfsProjectDir(SLUG). */
@@ -63,23 +65,30 @@ function withTimeout<T>(value: T | Promise<T>, ms: number): Promise<T | 'timeout
 
 /**
  * Removes everything under a MEMFS directory, then the directory itself when
- * MEMFS allows it. KiCad changes into the opened project's folder, and MEMFS
- * refuses to remove its working directory (EBUSY); that folder stays, empty.
+ * MEMFS allows it. KiCad changes into the opened project's folder (or the
+ * subfolder of it the opened file sits in), and MEMFS refuses to remove its
+ * working directory (EBUSY); that folder stays, empty, and so does each folder
+ * above it, which then refuses with ENOTEMPTY. Answers whether such a busy
+ * folder was kept at or below `dir`; any other MEMFS failure is thrown.
  */
-function removeTree(FS: EmscriptenFS, dir: string): void {
-  if (!FS.analyzePath(dir).exists) return;
+function removeTree(FS: EmscriptenFS, dir: string): boolean {
+  if (!FS.analyzePath(dir).exists) return false;
+  let keptBusy = false;
   for (const name of FS.readdir(dir)) {
     if (name === '.' || name === '..') continue;
     const p = `${dir}/${name}`;
-    if (FS.isDir(FS.stat(p).mode)) removeTree(FS, p); else FS.unlink(p);
+    if (FS.isDir(FS.stat(p).mode)) keptBusy = removeTree(FS, p) || keptBusy; else FS.unlink(p);
   }
   try {
     FS.rmdir(dir);
   } catch (err) {
-    // Only the engine's working directory is left in place (empty); any other
-    // MEMFS failure reaches the request's answer.
-    if (!(isObj(err) && err.errno === EBUSY)) throw err;
+    const errno = isObj(err) ? err.errno : undefined;
+    if (errno === EBUSY) return true;
+    // Not empty only because a busy folder below it was kept: that is expected.
+    if (errno === ENOTEMPTY && keptBusy) return true;
+    throw err;
   }
+  return keptBusy;
 }
 
 /**
@@ -217,10 +226,12 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
       case 'project.save': return noArgs(args) ? projectSave() : fail('bad_args', op);
       case 'project.forget': {
         if (!noArgs(args)) return fail('bad_args', op);
-        if (win?.FS != null) removeTree(win.FS, root);
+        // The host dropped the document whatever the wipe below answers: the
+        // bridge forgets it first, and no leave prompt is raised for it again.
         staged = null;
         opened = null;
-        quietForever();   // the host dropped the document: no leave prompt for it, ever
+        quietForever();
+        if (win?.FS != null) removeTree(win.FS, root);
         return ok();
       }
       case 'chrome.show': return toggle(op, args, 'kicadSetChrome');
@@ -243,8 +254,10 @@ export function startResponder(opts: { parentOrigin: string; page: Window }): Re
     }
     if (win?.FS == null) return fail('not_ready', op);
     emit({ type: 'ev.state', phase: 'staging' });
-    removeTree(win.FS, root);   // every open starts from an empty project folder
+    // The previous project is gone from here on, even if the wipe below fails.
+    staged = null;
     opened = null;
+    removeTree(win.FS, root);   // every open starts from an empty project folder
     staged = stageProject(win, SLUG, files);
     const target = typeof a.open === 'string' ? a.open : defaultOpen(staged.written, frame);
     if (target == null) return fail('nothing_to_open', `no ${EXT[frame]} file`);
