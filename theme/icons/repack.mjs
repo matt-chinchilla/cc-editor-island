@@ -4,7 +4,8 @@
 // entry whose basename matches one of our PNGs gets our bytes (size field and
 // header checksum rewritten), every other byte of the archive is kept as it is,
 // nothing is appended and nothing is deleted. Writes theme/icons/out/images.tar.gz
-// and records the stock and repacked sha256 in PIN.json.icons.
+// and records the stock and repacked sha256 in PIN.json.icons (the repacked one is
+// informational: scripts/build.mjs enforces the stock archive and the SVG inputs).
 import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
@@ -90,7 +91,8 @@ const outPath = join('theme', 'icons', 'out', 'images.tar.gz');
 writeFileSync(outPath, repacked);
 const repackedSha = sha256(repacked);
 const ids = [...new Set(replaced.map((r) => basename(r.name).replace(/(_dark)?_(16|24|32|48|64)\.png$/, '')))].sort();
-pin.icons = { stockArchiveSha256: stockSha, repackedSha256: repackedSha, inputs: 'theme/icons/src', ids, replacedEntries: replaced.length, entries };
+// The inputs map (theme/icons/inputs.mjs) is kept as recorded; the repacked sha256 is informational.
+pin.icons = { stockArchiveSha256: stockSha, repackedSha256: repackedSha, inputs: pin.icons?.inputs ?? {}, ids, replacedEntries: replaced.length, entries };
 writeFileSync('PIN.json', `${JSON.stringify(pin, null, 2)}\n`);
 console.log(`${entries} entries walked, ${replaced.length} replaced (${ids.join(', ')}), ${stock.length} -> ${repacked.length} bytes`);
 console.log(`stock ${stockSha}\nrepacked ${repackedSha}\nwrote ${outPath}`);

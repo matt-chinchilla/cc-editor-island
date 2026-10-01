@@ -7,7 +7,7 @@
 // `--hole` for the via) from the visual record's canvas palette. At 16 the stroke
 // follows the record's optical ladder (1.25 px) and `.fine` details are dropped.
 import { chromium } from '@playwright/test';
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const SIZES = [16, 24, 32, 48, 64];
@@ -28,6 +28,8 @@ const ACCENTS = {
 // The 16 px rung of the optical ladder: 1.25 px strokes on a 24 unit grid.
 const STROKE_16 = `${(1.25 * 24) / 16}px`;
 const out = 'theme/icons/png';
+// Start empty: a PNG left from a glyph since removed must never reach the repack.
+rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 const browser = await chromium.launch();
 const page = await browser.newPage();

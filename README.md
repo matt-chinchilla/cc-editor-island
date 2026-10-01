@@ -11,15 +11,20 @@ This repository is GPL-3.0-or-later (see `LICENSE`). KiCad and PCBJam are GPL-3.
 
 ## Build
 
+A fresh clone builds with Node (22 is what the island is built with) and network access to cdn.pcbjam.com, where `fetch-engine` reads the pinned engine files:
+
 ```bash
-npm install
-npm run sync-upstream   # check out PCBJam at the pin in PIN.json into upstream/
-npm run fetch-engine    # download the engine files and verify each sha256
-npm run build           # build dist/r/<islandId>/
-npm run build:local     # the same build for the local pair
-npm test                # unit tests (vitest)
-npm run e2e             # browser tests (Playwright)
+npm ci                              # the pinned dependencies from package-lock.json
+npx playwright install chromium     # the browser the icon rasteriser uses (add firefox for the full e2e)
+npm run fetch-engine                # fetch PCBJam's engine files for the pin and verify each sha256 against PIN.json
+npm run build                       # build dist/r/<islandId>/, dist/island.json and dist/current
 ```
+
+Then `npm test` runs the unit tests (vitest), `npm run typecheck` the type check, and `npm run e2e` the browser tests over the local pair (Playwright, Chromium and Firefox).
+
+`npm run build` refuses unless every engine file hashes to its row in `PIN.json`, the stock icon archive hashes to `PIN.json` `icons.stockArchiveSha256`, and every glyph source in `theme/icons/src` hashes to its row in `icons.inputs`. It then rasterises the glyphs through Playwright's Chromium (`theme/icons/rasterise.mjs`) and repacks the icon archive (`theme/icons/repack.mjs`) on every build. The repacked archive's sha256 is an output, not a pin: PNG bytes differ between Chromium builds, so the build records it in `icons.repackedSha256` (a clone on another machine may see `PIN.json` change there) and never refuses on it. The release's `SHA256SUMS` pins the bytes that ship. After a reviewed glyph change, `node theme/icons/inputs.mjs --pin` records the new sources.
+
+`loader/` (our copy of PCBJam's loader, `loader/pristine` beside it) and `notices/` are committed, so a build needs neither `upstream/` nor the GitHub CLI. `npm run sync-upstream` checks PCBJam out at the pin into `upstream/`; it is a step for bumping the pin only, and it needs `gh` signed in.
 
 ## Source offer
 
@@ -27,7 +32,7 @@ For every build we serve, the complete corresponding source is this repository a
 
 ## Publishing
 
-Nothing here runs on its own; the owner runs each step, and each script takes `--dry-run` to read GitHub and print every write as `DRY: ...` instead.
+Publishing is the owner's: nothing here runs on its own, the owner runs each step below, and each script takes `--dry-run` to read GitHub and print every write as `DRY: ...` instead.
 
 1. Create this repository on GitHub (the owner's step, once): `gh repo create matt-chinchilla/cc-editor-island --public --source=. --push`.
 2. `bash scripts/mirrors.sh`: forks pcbjam, kicad-source-mirror, wxWidgets and pcbjam-shared under matt-chinchilla once, then tags `cc/<islandId>` on each at the commits in `PIN.json`. A tag that exists at another commit is never moved.

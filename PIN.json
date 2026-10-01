@@ -47,7 +47,14 @@
   "icons": {
     "stockArchiveSha256": "bc24c8db9b9050af2093305e0e42694812297ff4f465f45b0d30b0303dde6477",
     "repackedSha256": "b012d6915c22cf9d224ea6b5b95390c975d8289a4005a53144577dd2bc746234",
-    "inputs": "theme/icons/src",
+    "inputs": {
+      "theme/icons/src/add_component.svg": "d8d2dfa56f179658a3b2bd458090683161f188ad13d84d89fdb82f1a0f2a12e6",
+      "theme/icons/src/add_line.svg": "64db6c023211cd897ea1f3613fcc4d338bf86fbca3086cf832bf3bf25dd516f0",
+      "theme/icons/src/add_tracks.svg": "8ef39bdff7e8e1aba178986dd18e11ab09e8e99db7f32024ee5edc5872d73605",
+      "theme/icons/src/add_via.svg": "cb7541dc9a2f2c3571dfa1dc0b0ca2f8f417f6cbfb0ef68ac176f120f72060e0",
+      "theme/icons/src/erc.svg": "647bb14a81318c68f8fb8b7a4b18d2fb7dac0cf276da1ff649af086b11a5df08",
+      "theme/icons/src/zoom_fit_in_page.svg": "282ef8351ceb7235f6e273d7a4943f7f880c0d1d31a0496472855e868e26d60f"
+    },
     "ids": [
       "add_component",
       "add_line",

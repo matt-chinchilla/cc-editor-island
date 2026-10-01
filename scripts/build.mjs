@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
+import { inputDrift } from '../theme/icons/inputs.mjs';
 
 const local = process.argv.includes('--local');
 const pin = JSON.parse(readFileSync('PIN.json', 'utf8'));
@@ -30,33 +31,41 @@ for (const name of FILES) {
   engine[name] = bytes;
 }
 
+// The icon inputs, checked before anything in dist is touched (see step 1).
+const stockIcons = engine['images.tar.gz'];
+const icons = pin.icons ?? {};
+const stockSha = createHash('sha256').update(stockIcons).digest('hex');
+if (stockSha !== icons.stockArchiveSha256) throw new Error(`images.tar.gz: stock sha256 ${stockSha} differs from PIN.json icons.stockArchiveSha256 ${icons.stockArchiveSha256}`);
+const drift = inputDrift(icons.inputs);
+if (drift.length > 0) throw new Error(`the icon sources differ from PIN.json icons.inputs:\n  ${drift.join('\n  ')}\nreview the glyph change, then record it with node theme/icons/inputs.mjs --pin`);
+
 rmSync(rel, { recursive: true, force: true });
 mkdirSync(join(rel, 'wasm', tool, toolTag), { recursive: true });
 
 // 1. The engine: gz only, level 9; the icon archive raw (the boot requires it).
-// The icon archive always ships repacked (theme/icons/repack.mjs). The repack is
-// git-ignored, so a fresh clone makes it here (rasterise, then repack) rather than
-// ship the stock archive. The stock file must be the one PIN.json.icons was built
-// from, and the repack must hash to what the committed PIN.json.icons recorded
-// (read above, before repack.mjs rewrites the file), or the build stops naming it.
+// The icon archive always ships repacked (theme/icons/repack.mjs), rebuilt on every
+// build. The trust anchors are the inputs, checked before anything is rasterised:
+// the stock archive must hash to PIN.json.icons.stockArchiveSha256 and every
+// theme/icons/src/*.svg to its row in PIN.json.icons.inputs (theme/icons/inputs.mjs).
+// The PNGs come from Playwright's Chromium, whose bytes differ between Chromium
+// builds, so the repacked archive's sha256 is an output: repack.mjs records it in
+// PIN.json.icons.repackedSha256 and the build reports whether it moved, never
+// refuses on it. The release's SHA256SUMS pins the bytes that ship.
 const repacked = join('theme', 'icons', 'out', 'images.tar.gz');
-if (!existsSync(repacked)) {
-  console.log(`${repacked} missing: rasterising the glyphs and repacking the icon archive`);
-  execSync('node theme/icons/rasterise.mjs', { stdio: 'inherit' });
-  execSync('node theme/icons/repack.mjs', { stdio: 'inherit' });
-}
+console.log('icons: inputs verified; rasterising the glyphs and repacking the icon archive');
+execSync('node theme/icons/rasterise.mjs', { stdio: 'inherit' });
+execSync('node theme/icons/repack.mjs', { stdio: 'inherit' });
+const repackedIcons = readFileSync(repacked);
+const repackedSha = createHash('sha256').update(repackedIcons).digest('hex');
+const after = JSON.parse(readFileSync('PIN.json', 'utf8')).icons ?? {};
+console.log(repackedSha === icons.repackedSha256
+  ? `icons: the repack reproduced PIN.json icons.repackedSha256 ${repackedSha}`
+  : `icons: the repack hashes to ${repackedSha} (PIN.json had ${icons.repackedSha256}); recorded in PIN.json, informational only`);
 for (const name of FILES) {
-  let bytes = engine[name];
   if (name === 'images.tar.gz') {
-    const stockSha = createHash('sha256').update(bytes).digest('hex');
-    const icons = pin.icons ?? {};
-    if (stockSha !== icons.stockArchiveSha256) throw new Error(`${name}: stock sha256 ${stockSha} differs from PIN.json icons.stockArchiveSha256 ${icons.stockArchiveSha256}; run node theme/icons/repack.mjs`);
-    bytes = readFileSync(repacked);
-    const repackedSha = createHash('sha256').update(bytes).digest('hex');
-    if (repackedSha !== icons.repackedSha256) throw new Error(`${repacked}: sha256 ${repackedSha} differs from PIN.json icons.repackedSha256 ${icons.repackedSha256} as committed; if repack.mjs just rewrote PIN.json.icons, review that diff and commit it only when the new glyph rendering is intended`);
-    console.log(`${name}: shipping the repack ${repacked} (sha256 ${repackedSha}, ${icons.replacedEntries ?? '?'} entries replaced)`);
-    writeFileSync(join(rel, 'wasm', tool, toolTag, name), bytes);
-  } else writeFileSync(join(rel, 'wasm', tool, toolTag, `${name}.gz`), gzipSync(bytes, { level: 9 }));
+    console.log(`${name}: shipping the repack ${repacked} (sha256 ${repackedSha}, ${after.replacedEntries ?? '?'} entries replaced)`);
+    writeFileSync(join(rel, 'wasm', tool, toolTag, name), repackedIcons);
+  } else writeFileSync(join(rel, 'wasm', tool, toolTag, `${name}.gz`), gzipSync(engine[name], { level: 9 }));
 }
 
 // 2. The page and its module.
