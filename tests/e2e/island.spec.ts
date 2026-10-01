@@ -469,11 +469,12 @@ test('the board frame boots canvas only too, with the cheap cursor seeds', async
   const frame = await boot(page, 'fixture=glasgow&frame=pcb', 'glasgow.kicad_pcb');
   const types = new Set((await visibleWx(frame, {})).map((e) => e.typeName));
   expect([...types].sort()).toEqual(['wxFrame', 'wxGLCanvas']);
-  // No anti-aliasing and the small crosshair, so the full-frame canvas keeps up with the
-  // pointer (task F1: SMAA dropped the GL canvas, supersampling doubled every repaint).
+  // No anti-aliasing, so the full-frame canvas keeps up with the pointer (task F1: SMAA
+  // dropped the GL canvas, supersampling doubled every repaint).
   expect((await seededConfig(frame, 'kicad_common.json')).graphics).toEqual({ antialiasing_mode: 0 });
+  // The crosshair shows only inside a drawing tool, so the system pointer leads (task F1b).
   for (const file of ['pcbnew.json', 'eeschema.json']) {
-    expect((await seededConfig(frame, file)).window?.cursor).toEqual({ cross_hair_mode: 0, always_show_cursor: true });
+    expect((await seededConfig(frame, file)).window?.cursor).toEqual({ cross_hair_mode: 0, always_show_cursor: false });
   }
 });
 

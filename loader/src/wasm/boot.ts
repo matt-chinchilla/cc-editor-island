@@ -601,9 +601,12 @@ async function doBoot(opts: BootOptions): Promise<void> {
           color_theme: opts.seeds.colorTheme,
           custom_toolbars: true,
         },
-        // The small crosshair (KiCad's CROSS_HAIR_MODE::SMALL_CROSS, 0): the
-        // full-window modes redraw a line across the whole canvas per move.
-        window: { cursor: { cross_hair_mode: 0, always_show_cursor: true } },
+        // The cursor seed pins KiCad's defaults except one key: the small
+        // crosshair (CROSS_HAIR_MODE::SMALL_CROSS, 0) stays, but
+        // always_show_cursor is false, so KiCad draws its crosshair only
+        // inside a drawing tool and the system pointer leads the rest of the
+        // time (the viewer's feel). It is not what makes the canvas keep up.
+        window: { cursor: { cross_hair_mode: 0, always_show_cursor: false } },
       },
       null,
       2,
