@@ -55,7 +55,7 @@ export const DEPS = [
   { key: 'curl', name: 'curl', prefixes: ['CURL'], recipe: 'headers only; curl calls are stubbed in the WebAssembly build', licence: 'curl (an MIT style licence)', added: true },
   { key: 'libgit2', name: 'libgit2', prefixes: ['LIBGIT2'], recipe: 'headers only; git functions do not run in the browser', licence: 'GPL-2.0 with the libgit2 linking exception', added: true },
   { key: 'python', name: 'Python', prefixes: ['PYTHON'], recipe: 'a build time interpreter only; Python scripting is disabled in the WebAssembly build and nothing of Python is linked', licence: 'PSF-2.0 (Python Software Foundation License)', added: true },
-  { key: 'swig', name: 'SWIG', prefixes: ['SWIG'], recipe: 'named as a minimum version for native builds; the WebAssembly recipe does not run it', licence: 'GPL-3.0-or-later for SWIG itself; nothing of SWIG is linked', added: true },
+  { key: 'swig', name: 'SWIG', prefixes: ['SWIG'], recipe: 'named only as the minimum version KiCad\'s CMakeLists.txt asks for; the WebAssembly recipe does not run it', licence: 'GPL-3.0-or-later for SWIG itself; nothing of SWIG is linked', added: true },
 ];
 
 // ---------------------------------------------------------------- inputs
