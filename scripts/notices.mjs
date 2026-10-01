@@ -211,6 +211,9 @@ function versionOf(dep, versions) {
   return { text: parts.join(', ') || 'named without a version', sha, vars: own.map(([k]) => k) };
 }
 
+/** "A", "A and B", "A, B and C". */
+const andList = (names) => (names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names.join(''));
+
 export function render({ versions, modified }, pin, texts) {
   const id = pin.islandId;
   const release = `${GH}/cc-editor-island/releases/tag/${id}`;
@@ -222,6 +225,7 @@ export function render({ versions, modified }, pin, texts) {
   const engineFiles = Object.entries(pin.engine.files);
   const deps = DEPS.map((d) => ({ ...d, v: versionOf(d, versions) })).filter((d) => d.v.vars.length > 0);
   const added = deps.filter((d) => d.added).map((d) => d.name);
+  const pinnedBySha = deps.filter((d) => d.v.sha).map((d) => d.name);
 
   // Our own prose, section by section, as [heading, html] pairs. The dash and
   // wording checks run over these; the reproduced texts are kept apart.
@@ -238,8 +242,9 @@ export function render({ versions, modified }, pin, texts) {
 <ul>
 <li>The island, our loader, responder, theme and these notices: the release <code>${esc(id)}</code> of the repository <code>${esc(GH)}/cc-editor-island</code>, at <code>${esc(release)}</code>. Its git tag is <code>${esc(id)}</code>.</li>
 ${mirrors.map((m) => `<li>${esc(m.what)}: the tag <code>cc/${esc(id)}</code> in <code>${esc(GH)}/${esc(m.repo)}</code>, commit <code>${esc(m.commit)}</code>.</li>`).join('\n')}
-<li>The source archives of the libraries the recipe builds from, each pinned by the sha256 listed in the dependency table below, are attached to the same release.</li>
+<li>The source archives of the libraries the recipe builds from are attached to the same release. Those of ${esc(andList(pinnedBySha))} are each pinned by the sha256 in their row of the dependency table below; KiCad and wxWidgets are pinned by the mirror commits above.</li>
 </ul>
+<p>We also mirror pcbjam-shared (MIT) for completeness, at <code>${esc(GH)}/pcbjam-shared</code>; it is not part of the served build.</p>
 <p>The build instructions for this release are PCBJam's own recipe at commit <code>${esc(pin.pcbjam.root)}</code>, in the pcbjam mirror at the tag <code>cc/${esc(id)}</code>: <code>.github/workflows/wasm-build.yml</code>, <code>docker/</code> and <code>scripts/</code>, with the versions in <code>scripts/common/versions.sh</code>.</p>
 <p>The engine files served here, each checked against the sha256 PCBJam published for tag <code>${esc(pin.engine.toolTag)}</code>:</p>
 <table><thead><tr><th>File</th><th>sha256</th><th>Built from</th></tr></thead><tbody>
@@ -254,7 +259,7 @@ ${modified.map((f) => `<li><code>${esc(f.path)}</code><ul class="notes">${f.noti
 </ul>`]);
 
   own.push(['Libraries and their licences', `
-<p>Every dependency named by <code>scripts/common/versions.sh</code> in the pinned recipe, with the licence it comes under. ${added.length ? `The recipe names ${esc(added.length > 1 ? `${added.slice(0, -1).join(', ')} and ${added.at(-1)}` : added.join(''))} beyond the list our design names; they are here with their own licences.` : ''}</p>
+<p>Every dependency named by <code>scripts/common/versions.sh</code> in the pinned recipe, with the licence it comes under. ${added.length ? `The recipe names ${esc(andList(added))} beyond the list our design names; they are here with their own licences.` : ''}</p>
 <table><thead><tr><th>Dependency</th><th>Version</th><th>In the recipe</th><th>Licence</th></tr></thead><tbody>
 ${deps.map((d) => `<tr><td data-label="Dependency">${esc(d.name)}</td><td data-label="Version">${esc(d.v.text)}${d.v.sha ? `<br><span class="small">sha256 <code class="hash">${esc(d.v.sha)}</code></span>` : ''}</td><td data-label="In the recipe">${esc(d.recipe)}</td><td data-label="Licence">${esc(d.licence)}</td></tr>`).join('\n')}
 </tbody></table>
