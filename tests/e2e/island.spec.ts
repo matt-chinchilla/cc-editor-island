@@ -476,6 +476,19 @@ test('the board frame boots canvas only too, with the cheap cursor seeds', async
   for (const file of ['pcbnew.json', 'eeschema.json']) {
     expect((await seededConfig(frame, file)).window?.cursor).toEqual({ cross_hair_mode: 0, always_show_cursor: false });
   }
+  // A Ctrl+Alt+Shift chord reaches the engine too: theme/user.hotkeys binds pcbnew.DRCTool.runDRC,
+  // a topbar tool KiCad gives no key, to Ctrl+Alt+Shift+K (theme/pencil-tools.json), and it opens the checker.
+  expect(await visibleWx(frame, { type: 'wxDialog' })).toEqual([]);
+  expect(await request(page, 'key.press', { key: 'K', code: 'KeyK', ctrl: true, shift: true, alt: true })).toEqual({});
+  await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length, { timeout: 15_000 }).toBe(1);
+});
+
+test('a seeded topbar chord opens the schematic checker: Ctrl+Alt+7 runs ERC', async ({ page }) => {
+  const frame = await boot(page, 'fixture=glasgow&frame=sch', 'glasgow.kicad_sch');
+  expect(await visibleWx(frame, { type: 'wxDialog' })).toEqual([]);
+  // theme/user.hotkeys binds eeschema.InspectionTool.runERC to Ctrl+Alt+7 (theme/pencil-tools.json, strip top).
+  expect(await request(page, 'key.press', { key: '7', code: 'Digit7', ctrl: true, alt: true })).toEqual({});
+  await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length, { timeout: 15_000 }).toBe(1);
 });
 
 test('a seeded chord starts a tool KiCad gives no key: Ctrl+Alt+R draws a schematic rectangle', async ({ page }) => {
