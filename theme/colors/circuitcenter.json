@@ -117,7 +117,7 @@
     "f_silks": "rgb(220, 200, 255)",
     "grid": "rgb(113, 103, 153)",
     "grid_axes": "rgb(255, 129, 173)",
-    "locked_shadow": "rgba(255, 138, 216, 0.5)",
+    "locked_shadow": "rgba(0, 0, 0, 0)",
     "margin": "rgb(78, 137, 107)",
     "outline_area": "rgba(0, 0, 0, 0)",
     "pad_net_names": "rgba(255, 255, 255, 0.8)",
