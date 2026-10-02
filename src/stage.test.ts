@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
 import { describe, expect, it } from 'vitest';
-import { normalizePath, PROJECT_ROOT, stageProject } from './stage';
+import { DISPLAY_OPACITY, localSettingsPath, normalizePath, PROJECT_ROOT, stageLocalSettings, stageProject } from './stage';
 
 describe('normalizePath', () => {
   it('accepts plain relative paths', () => {
@@ -70,5 +70,47 @@ describe('stageProject', () => {
     const win = { FS } as unknown as ToolWindow;
     expect(() => stageProject(win, '../x', [])).toThrow();
     expect(() => stageProject(win, '', [])).toThrow();
+  });
+});
+
+describe('stageLocalSettings', () => {
+  const b = (s: string) => new TextEncoder().encode(s);
+  const root = `${PROJECT_ROOT}/cc`;
+
+  it('names KiCad\'s local settings after the file it opens, beside it', () => {
+    expect(localSettingsPath('glasgow.kicad_pcb')).toBe('glasgow.kicad_prl');
+    expect(localSettingsPath('boards/aht20.brd')).toBe('boards/aht20.kicad_prl');
+    expect(localSettingsPath('v1.2/main.kicad_sch')).toBe('v1.2/main.kicad_prl');
+    expect(localSettingsPath('../x.kicad_pcb')).toBeNull();
+    expect(localSettingsPath('noext')).toBeNull();
+  });
+
+  it('writes every display opacity at 1 with the schema\'s meta block, when the host sent none', () => {
+    const { FS, files } = fakeFs();
+    const win = { FS } as unknown as ToolWindow;
+    const staged = stageProject(win, 'cc', [{ path: 'sub/board.kicad_pcb', bytes: b('(kicad_pcb)') }, { path: 'sub/board.kicad_pro', bytes: b('{}') }]);
+    expect(stageLocalSettings(win, staged, 'sub/board.kicad_pcb')).toBe('sub/board.kicad_prl');
+    const prl = JSON.parse(new TextDecoder().decode(files.get(`${root}/sub/board.kicad_prl`)));
+    // KiCad 10 at the pin (project_local_settings.cpp): zones and images default to 0.6, the rest to 1.
+    expect(DISPLAY_OPACITY).toEqual({ images: 1, pads: 1, shapes: 1, tracks: 1, vias: 1, zones: 1 });
+    expect(prl).toEqual({ board: { opacity: DISPLAY_OPACITY }, meta: { filename: 'board.kicad_prl', version: 5 } });
+    // Not one of the host's files: never listed as written, so nothing reports it.
+    expect(staged.written).toEqual(['sub/board.kicad_pcb', 'sub/board.kicad_pro']);
+  });
+
+  it('keeps the host\'s own settings: nothing is written over them', () => {
+    const { FS, files } = fakeFs();
+    const win = { FS } as unknown as ToolWindow;
+    const staged = stageProject(win, 'cc', [{ path: 'board.kicad_pcb', bytes: b('(kicad_pcb)') }, { path: 'board.kicad_prl', bytes: b('{"host":true}') }]);
+    expect(stageLocalSettings(win, staged, 'board.kicad_pcb')).toBeNull();
+    expect(new TextDecoder().decode(files.get(`${root}/board.kicad_prl`))).toBe('{"host":true}');
+  });
+
+  it('writes nothing when the file system refuses the path (a folder of that name)', () => {
+    const { FS, dirs } = fakeFs();
+    const win = { FS } as unknown as ToolWindow;
+    const staged = stageProject(win, 'cc', [{ path: 'board.kicad_pcb', bytes: b('(kicad_pcb)') }]);
+    dirs.add(`${root}/board.kicad_prl`);
+    expect(stageLocalSettings(win, staged, 'board.kicad_pcb')).toBeNull();
   });
 });

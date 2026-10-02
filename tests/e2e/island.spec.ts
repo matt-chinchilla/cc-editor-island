@@ -662,6 +662,17 @@ test('sheets and layers answer from the engine, and fit refits the view', async 
   await expect.poll(() => viewScale(pcb), { timeout: 5_000 }).toBeLessThan(zoomed / 1.5);
 });
 
+// Pours (2026-10-02): KiCad's own display settings draw zones at 0.6 opacity,
+// which over the palette's black board turns the viewer's green pour olive;
+// the island stages <stem>.kicad_prl with every opacity at 1 when the host
+// sent none.
+test('pours: an opened board paints its pours opaque, in the palette colour the viewer draws', async ({ page }) => {
+  const frame = await boot(page, 'fixture=glasgow&frame=pcb', 'glasgow.kicad_pcb');
+  expect(await request(page, 'view.fit')).toEqual({});
+  // Glasgow's GND pour on In1.Cu covers the board under the front copper.
+  await expectPour(frame, pourOverBlack('in1'), 'glasgow.kicad_pcb after the open');
+});
+
 // project.import (spike 2026-10-02): a foreign board through KiCad's own
 // importers in the board frame, its dialogs answered by the island, saved as
 // <stem>.kicad_pcb. The boards are KiCad's qa samples at the engine's pin (and
@@ -849,6 +860,44 @@ const drawing = (frame: Frame) => frame.evaluate((tells) => {
 /** The circuitcenter palette's board background (theme/colors/circuitcenter.json), opaque. */
 const BOARD_BG = [...rgbOf(PALETTE.board.background), 255].join(',');
 
+/** `top` drawn at `alpha` over `under`, as the drawing shows it: [r, g, b]. */
+const over = (top: number[], alpha: number, under: number[]): number[] => top.map((c, i) => Math.round(c * alpha + under[i] * (1 - alpha)));
+/** A palette copper colour drawn opaque over the board background, as the viewer draws a pour. */
+const pourOverBlack = (layer: string): number[] => over(rgbOf(PALETTE.board.copper[layer]), 1, rgbOf(PALETTE.board.background));
+
+/**
+ * The colour most of the drawing shows besides the board background, read
+ * back whole from the surface the engine draws into: on a board under a pour,
+ * the top pour (its tracks, pads and text are a small share of the pixels).
+ */
+const pourColour = (frame: Frame): Promise<number[]> => frame.evaluate((bg) => {
+  const gls = [...document.querySelectorAll('canvas.gl-canvas')] as HTMLCanvasElement[];
+  const src = gls.filter((c) => c.style.display !== 'none' && c.width > 0).sort((a, b) => b.width * b.height - a.width * a.height)[0] ?? (document.getElementById('canvas') as HTMLCanvasElement);
+  const c = document.createElement('canvas');
+  c.width = src.width;
+  c.height = src.height;
+  const ctx = c.getContext('2d', { willReadFrequently: true })!;
+  ctx.drawImage(src, 0, 0);
+  const px = ctx.getImageData(0, 0, c.width, c.height).data;
+  const counts = new Map<number, number>();
+  for (let i = 0; i < px.length; i += 4) {
+    if (px[i] === bg[0] && px[i + 1] === bg[1] && px[i + 2] === bg[2]) continue;
+    const k = (px[i] << 16) | (px[i + 1] << 8) | px[i + 2];
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  const [top] = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  return top == null ? [] : [top[0] >> 16, (top[0] >> 8) & 255, top[0] & 255];
+}, rgbOf(PALETTE.board.background));
+
+/** The largest per-channel difference between two colours (Infinity when one is missing). */
+const channelDelta = (a: number[], b: number[]): number => (a.length === 3 && b.length === 3 ? Math.max(...a.map((v, i) => Math.abs(v - b[i]))) : Infinity);
+
+/** Waits until the drawing's top pour is within 12 per channel of `want`, and quotes it. */
+async function expectPour(frame: Frame, want: number[], label: string): Promise<void> {
+  await expect.poll(async () => channelDelta(await pourColour(frame), want), { timeout: 30_000, intervals: [500, 1_000] }).toBeLessThanOrEqual(12);
+  measure('pour', `${label}: ${(await pourColour(frame)).join(',')} (palette ${want.join(',')})`);
+}
+
 /**
  * What the reader sees the moment an import answers: the converted board,
  * drawn and fitted (its whole outline on screen, spanning at least `fill` of
@@ -976,4 +1025,31 @@ test('import: a file no importer reads is import_failed with KiCad\'s message bo
   expect(await request(page, 'view.fit')).toEqual({});
   await boot(page, 'frame=sch');
   await expect(importBoard(page, 'test_eagle.brd')).rejects.toThrow('unsupported: project.import needs a pcb frame');
+});
+
+test('import: a converted board paints its pours opaque once filled, and the host\'s own display settings stand', async ({ page }) => {
+  // KiCad's importers leave pours unfilled; the reader fills them with B (Fill All Zones).
+  const fill = async (frame: Frame): Promise<void> => {
+    expect(await request(page, 'key.press', { key: 'b', code: 'KeyB' })).toEqual({});
+    await expect.poll(() => dialogsUp(frame), { timeout: 30_000 }).toEqual([]);
+  };
+  // test_eagle.brd's GND polygons cover the whole board on both sides: the front one is on top.
+  let frame = await boot(page, 'frame=pcb');
+  expect((await importBoard(page, 'test_eagle.brd')).result.opened).toBe('test_eagle.kicad_pcb');
+  await fill(frame);
+  await expectPour(frame, pourOverBlack('f'), 'test_eagle.brd imported and filled');
+
+  // A host that sends its own settings keeps them: KiCad's 0.6 shows the front pour
+  // over the back one, both at 0.6, so the sample above tells the two apart.
+  frame = await boot(page, 'frame=pcb');
+  const own = JSON.stringify({ board: { opacity: { zones: 0.6 } }, meta: { filename: 'test_eagle.kicad_prl', version: 5 } });
+  const answer = await page.evaluate(async (prl) => {
+    const bytes = new Uint8Array(await (await fetch('/e2e-fixtures/import/test_eagle.brd')).arrayBuffer());
+    const files = [{ path: 'test_eagle.brd', bytes }, { path: 'test_eagle.kicad_prl', bytes: new TextEncoder().encode(prl) }];
+    return (window as unknown as Harness).__bridge.request('project.import', { name: 'test_eagle.brd', files, open: 'test_eagle.brd' });
+  }, own);
+  expect(answer).toMatchObject({ opened: 'test_eagle.kicad_pcb', dropped: [] });
+  await fill(frame);
+  const black = rgbOf(PALETTE.board.background);
+  await expectPour(frame, over(rgbOf(PALETTE.board.copper.f), 0.6, over(rgbOf(PALETTE.board.copper.b), 0.6, black)), 'test_eagle.brd with the host\'s zones at 0.6');
 });

@@ -146,8 +146,9 @@ function fakeEngine() {
       return true;
     }),
   };
-  /** The files Ctrl+S writes; by default every sheet and project file in the folder, in staging order. */
-  const ctrlSFiles = (): string[] => [...files.keys()].filter((p) => /\.kicad_(sch|pro)$/.test(p));
+  /** The files Ctrl+S writes and reports; by default every sheet and project file in the folder, in staging order. */
+  const ctrlSaves = { re: /\.kicad_(sch|pro)$/ };
+  const ctrlSFiles = (): string[] => [...files.keys()].filter((p) => ctrlSaves.re.test(p));
   const ctrlS = vi.fn(() => {
     setTimeout(() => {
       for (const p of ctrlSFiles()) {
@@ -196,7 +197,7 @@ function fakeEngine() {
       return true;
     },
   } as unknown as ToolWindow & { kicadCollab?: { onSave?: (p: string) => void } };
-  return { win, files, dirs, busy, broken, pinned, opened, Module, dialogs, chrome, ui, popupEl, ctrlS, modals, clicks, showModal, hideModal, consoleOut, engineConsole };
+  return { win, files, dirs, busy, broken, pinned, opened, Module, dialogs, chrome, ui, popupEl, ctrlS, ctrlSaves, modals, clicks, showModal, hideModal, consoleOut, engineConsole };
 }
 
 /** A dialog the fake engine shows: its box, its title, its buttons (in order), its static texts. */
@@ -404,6 +405,52 @@ describe('startResponder', () => {
     expect(eng.dirs.has(ROOT)).toBe(false);
   });
 
+  it('stages KiCad\'s display settings beside the opened file before the load, never over the host\'s own, and never reports them as saved', async () => {
+    const { page, parent } = fakePage('?frame=sch&theme=day');
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    const prl = `${ROOT}/blink.kicad_prl`;
+    /** The settings file as KiCad's load finds it, per open. */
+    const atLoad: Array<string | null> = [];
+    eng.Module.kicadOpenFile.mockImplementation((p: string) => {
+      eng.opened.push(p);
+      const f = eng.files.get(prl);
+      atLoad.push(f == null ? null : new TextDecoder().decode(f));
+    });
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    await settle();
+    const files = [{ path: 'blink.kicad_pro', bytes: b('{}') }, { path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }];
+    port.postMessage({ id: 1, op: 'project.open', args: { name: 'Blink', files } });
+    await settle(100);
+    expect(got.at(-1)).toEqual({ id: 1, ok: true, result: { opened: 'blink.kicad_sch', dropped: [], chrome: false } });
+    // Written before the load, named after the opened file: every display opacity at 1.
+    expect(JSON.parse(atLoad[0]!)).toEqual({ board: { opacity: { images: 1, pads: 1, shapes: 1, tracks: 1, vias: 1, zones: 1 } }, meta: { filename: 'blink.kicad_prl', version: 5 } });
+    got.length = 0;
+
+    // KiCad rewrites its local settings on every save. Were a save of them reported,
+    // it would reach neither an ev.saved nor the answer's saved.
+    eng.ctrlSaves.re = /\.kicad_(sch|pro|prl)$/;
+    port.postMessage({ id: 2, op: 'project.save' });
+    await settle(100);
+    expect(got).toEqual([
+      { type: 'ev.saved', path: 'blink.kicad_pro', bytes: b('(saved blink.kicad_pro)') },
+      { type: 'ev.saved', path: 'blink.kicad_sch', bytes: b('(saved blink.kicad_sch)') },
+      { id: 2, ok: true, result: { path: 'blink.kicad_sch', saved: ['blink.kicad_pro', 'blink.kicad_sch'] } },
+    ]);
+    got.length = 0;
+    eng.win.kicadCollab?.onSave?.(prl);
+    await settle();
+    expect(got).toEqual([]);
+
+    // The host's own settings stand: nothing is written over them, and the next open starts clean.
+    eng.ctrlSaves.re = /\.kicad_(sch|pro)$/;
+    port.postMessage({ id: 3, op: 'project.open', args: { name: 'Blink', files: [...files, { path: 'blink.kicad_prl', bytes: b('{"host":true}') }] } });
+    await settle(100);
+    expect(got.at(-1)).toEqual({ id: 3, ok: true, result: { opened: 'blink.kicad_sch', dropped: [], chrome: false } });
+    expect(atLoad[1]).toBe('{"host":true}');
+  });
+
   it('opens over an opened project and forgets it while the engine holds the folder as its working directory', async () => {
     const { page, parent } = fakePage();
     const r = startResponder({ parentOrigin: PARENT, page });
@@ -421,7 +468,8 @@ describe('startResponder', () => {
     port.postMessage({ id: 2, op: 'project.open', args: { name: 'b', files: [{ path: 'b.kicad_sch', bytes: b('(kicad_sch b)') }] } });
     await settle(100);
     expect(got.at(-1)).toEqual({ id: 2, ok: true, result: { opened: 'b.kicad_sch', dropped: [], chrome: false } });
-    expect([...eng.files.keys()]).toEqual([`${ROOT}/b.kicad_sch`]);
+    // Only the second project's file, and the display settings staged for it.
+    expect([...eng.files.keys()]).toEqual([`${ROOT}/b.kicad_sch`, `${ROOT}/b.kicad_prl`]);
     expect(eng.dirs.has(`${ROOT}/lib`)).toBe(false);
     got.length = 0;
     port.postMessage({ id: 3, op: 'project.forget' });
@@ -611,7 +659,8 @@ describe('startResponder', () => {
     port.postMessage({ id: 3, op: 'project.open', args: { name: 'b', files: [{ path: 'b.kicad_sch', bytes: b('(kicad_sch b)') }] } });
     await settle(100);
     expect(got.at(-1)).toEqual({ id: 3, ok: true, result: { opened: 'b.kicad_sch', dropped: [], chrome: false } });
-    expect([...eng.files.keys()]).toEqual([`${ROOT}/b.kicad_sch`]);
+    // Only the second project's file, and the display settings staged for it.
+    expect([...eng.files.keys()]).toEqual([`${ROOT}/b.kicad_sch`, `${ROOT}/b.kicad_prl`]);
     got.length = 0;
     port.postMessage({ id: 4, op: 'project.forget' });
     await settle();
@@ -1404,6 +1453,30 @@ describe('project.import', () => {
     expect([...listeners.values()].every((set) => set.size === 0)).toBe(true);
     await resize(700);
     expect(homes.map((h) => h.w)).toEqual([1211, 1103, 1000, 1100, 900, 800]);
+  });
+
+  it('stages KiCad\'s display settings beside the foreign board before the engine opens it, and never reports them', async () => {
+    const eng = fakeEngine();
+    kicadImport(eng);
+    const prl = `${ROOT}/boards/aht20.kicad_prl`;
+    const load = eng.Module.kicadOpenFile.getMockImplementation()!;
+    let atLoad: string | null = null;
+    eng.Module.kicadOpenFile.mockImplementation((p: string) => {
+      const f = eng.files.get(prl);
+      atLoad = f == null ? null : new TextDecoder().decode(f);
+      return load(p);
+    });
+    const { send, got } = importer(undefined, eng);
+    expect(await send('project.import', { name: 'AHT20', files: [brd], open: brd.path })).toMatchObject({ ok: true, result: { opened: 'boards/aht20.kicad_pcb', dropped: [] } });
+    // Named after the source, the project KiCad's open loads for it.
+    expect(JSON.parse(atLoad!)).toEqual({ board: { opacity: { images: 1, pads: 1, shapes: 1, tracks: 1, vias: 1, zones: 1 } }, meta: { filename: 'aht20.kicad_prl', version: 5 } });
+    expect(got.filter((m) => m.type === 'ev.saved').map((m) => m.path)).toEqual(['boards/aht20.kicad_pcb']);
+    got.length = 0;
+    eng.win.kicadCollab?.onSave?.(prl);
+    eng.files.set(`${ROOT}/boards/aht20.kicad_pcb`, b('(kicad_pcb edited)'));
+    eng.win.kicadCollab?.onSave?.(`${ROOT}/boards/aht20.kicad_pcb`);
+    await settle();
+    expect(got).toEqual([{ type: 'ev.saved', path: 'boards/aht20.kicad_pcb', bytes: b('(kicad_pcb edited)') }]);
   });
 
   it('a board with no dialog imports straight through, an upper case extension included', async () => {

@@ -8,7 +8,7 @@
 import { registerSaveHook, SAVE_COMMITTED, type SaveHookHandle } from '../loader/src/wasm/save-flow';
 import { parseBoot } from '../src/cc-config';
 import { focusCanvas, parseKeyPress, pressKey, type KeyPress } from '../src/keys';
-import { normalizePath, openStaged, PROJECT_ROOT, stageProject, type StagedProject } from '../src/stage';
+import { normalizePath, openStaged, PROJECT_ROOT, stageLocalSettings, stageProject, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
 import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
 import { driveImport, importable, importTarget } from './import';
@@ -219,6 +219,12 @@ export function startResponder(opts: {
   const frame: Frame = parseBoot(page.location.search).frame;
   let staged: StagedProject | null = null;
   let opened: string | null = null;
+  /**
+   * The display settings the island staged beside the document (src/stage.ts
+   * stageLocalSettings): engine state, not the design, so a save of it is never
+   * reported. Null when the host sent its own.
+   */
+  let displaySettings: string | null = null;
   /** The Ctrl+S hook: live only between a successful project.open and the next open or forget. */
   let saveHook: { handle: SaveHookHandle; filter: (absPath: string) => void } | null = null;
   /**
@@ -335,6 +341,7 @@ export function startResponder(opts: {
     fitWatch = null;
     staged = null;
     opened = null;
+    displaySettings = null;
     stopSaveHook();
     quietForever();
   }
@@ -375,6 +382,7 @@ export function startResponder(opts: {
         // until the next successful project.open.
         staged = null;
         opened = null;
+        displaySettings = null;
         fitWatch?.disarm();
         stopSaveHook();   // a Ctrl+S in the still-shown document emits nothing from here on
         quietForever();
@@ -419,12 +427,15 @@ export function startResponder(opts: {
     // The previous project is gone from here on, even if the wipe below fails.
     staged = null;
     opened = null;
+    displaySettings = null;
     fitWatch?.disarm();
     stopSaveHook();
     removeTree(win.FS, root);   // every open starts from an empty project folder
     staged = stageProject(win, SLUG, files);
     const target = typeof a.open === 'string' ? a.open : defaultOpen(staged.written, frame);
     if (target == null) return fail('nothing_to_open', `no ${EXT[frame]} file`);
+    // Before the load, which reads them: KiCad draws the board as the viewer does.
+    displaySettings = stageLocalSettings(win, staged, target);
     emit({ type: 'ev.state', phase: 'opening' });
     const w = win;
     const how = await openStaged(w, staged, target, (m) => console.debug('[open]', m));
@@ -498,6 +509,7 @@ export function startResponder(opts: {
     // The previous project is gone from here on, as for project.open.
     staged = null;
     opened = null;
+    displaySettings = null;
     fitWatch?.disarm();
     stopSaveHook();
     removeTree(FS, root);
@@ -505,6 +517,8 @@ export function startResponder(opts: {
     staged = project;
     const source = normalizePath(a.open);
     if (source == null || !project.written.includes(source)) return fail('open_failed', a.open);
+    // KiCad's open loads the project named after the source, its settings included.
+    displaySettings = stageLocalSettings(w, project, source);
     const target = importTarget(source);
     if (target == null) return fail('open_failed', `no path for the converted board of ${source}`);
     emit({ type: 'ev.state', phase: 'opening' });
@@ -600,6 +614,10 @@ export function startResponder(opts: {
     const filter = (absPath: string): void => {
       if (typeof absPath !== 'string' || !absPath.startsWith(`${root}/`) || staged == null) {
         console.debug('[save] ignoring a save outside the project folder', absPath);
+        return;
+      }
+      if (displaySettings != null && absPath === `${root}/${displaySettings}`) {
+        console.debug('[save] ignoring the display settings the island staged', absPath);
         return;
       }
       inner?.(absPath);
