@@ -13,6 +13,7 @@ import type { Frame } from '../src/types';
 import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
 import { driveImport, importable, importTarget } from './import';
 import { dialogUp, dismissPopups, keysBlocked, watchMenus } from './modal';
+import { FitWatch, sampleDrawing, settleView, surfaceKey } from './view';
 
 declare const __ISLAND_ID__: string;   // define'd by vite.config.ts from PIN.json
 
@@ -94,7 +95,21 @@ export const timing = {
   importStepMs: 250,
   importRefusedMs: 2_000,
   importCloseMs: 5_000,
+  /**
+   * The view (bridge/view.ts): how often the drawing is read; how long its
+   * size must hold before a fit (the host lays its page out again after an
+   * import answers); how long an import waits for its fitted board to be
+   * painted before it answers all the same (a large board's repaint took 4 s
+   * of the main thread on the site, SwiftShader, 2026-10-02).
+   */
+  viewPollMs: 200,
+  viewStableMs: 300,
+  viewSettleMs: 10_000,
 };
+/** KiCad's Zoom to Fit. */
+const HOME_KEY: KeyPress = { key: 'Home', code: 'Home', ctrl: false, shift: false, alt: false };
+/** A real one of these in the frame is the reader steering the view: a fit no longer holds. */
+const STEER_EVENTS = ['wheel', 'pointerdown', 'keydown'] as const;
 /** KiCad's own Save (eeschema's Ctrl+S): every sheet of the schematic and the project file. */
 const SAVE_KEY: KeyPress = { key: 's', code: 'KeyS', ctrl: true, shift: false, alt: false };
 /** KiCad's window chrome as the element registry names it (measured with chrome.show on, 2026-10-01). */
@@ -216,6 +231,10 @@ export function startResponder(opts: {
   let collecting: Array<{ path: string; at: number }> | null = null;
   /** Stops the popup menu and dialog watch (ev.menu); set by engineReady. */
   let stopMenus: (() => void) | null = null;
+  /** Keeps a fitted view fitted until the reader steers (bridge/view.ts); set by engineReady. */
+  let fitWatch: FitWatch | null = null;
+  /** Stops the fit watch's reads and its steering listeners; set by engineReady. */
+  let stopFitWatch: (() => void) | null = null;
 
   /** Set by the shutdown op or close(): from then on nothing is answered or emitted. */
   let closed = false;
@@ -311,6 +330,9 @@ export function startResponder(opts: {
   function stopBridge(): void {
     stopMenus?.();
     stopMenus = null;
+    stopFitWatch?.();
+    stopFitWatch = null;
+    fitWatch = null;
     staged = null;
     opened = null;
     stopSaveHook();
@@ -353,6 +375,7 @@ export function startResponder(opts: {
         // until the next successful project.open.
         staged = null;
         opened = null;
+        fitWatch?.disarm();
         stopSaveHook();   // a Ctrl+S in the still-shown document emits nothing from here on
         quietForever();
         if (win?.FS != null) removeTree(win.FS, root);
@@ -396,6 +419,7 @@ export function startResponder(opts: {
     // The previous project is gone from here on, even if the wipe below fails.
     staged = null;
     opened = null;
+    fitWatch?.disarm();
     stopSaveHook();
     removeTree(win.FS, root);   // every open starts from an empty project folder
     staged = stageProject(win, SLUG, files);
@@ -474,6 +498,7 @@ export function startResponder(opts: {
     // The previous project is gone from here on, as for project.open.
     staged = null;
     opened = null;
+    fitWatch?.disarm();
     stopSaveHook();
     removeTree(FS, root);
     const project = stageProject(w, SLUG, a.files);
@@ -508,6 +533,21 @@ export function startResponder(opts: {
     if (!closed && !keysBlocked(w)) {
       try { focusCanvas(w.document); } catch { /* the user's next press in the drawing focuses it */ }
     }
+    // The answer waits for the converted board fitted at the drawing's settled
+    // size and painted, so a fit the host sends with it changes nothing; the
+    // watch keeps it fitted through the host's own layout after the answer.
+    const t0 = Date.now();
+    const view = await settleView(w, {
+      timing,
+      ready: () => !engineBusy() && !keysBlocked(w),
+      fit: () => pressKey(w, HOME_KEY),
+      closed: () => closed,
+      sample: () => sampleDrawing(w.document),
+      surface: () => surfaceKey(w.document),
+    });
+    if (closed) return fail('import_failed', 'the frame closed');
+    console.debug('[import] view', view, `${Date.now() - t0} ms`);
+    if (view !== 'unsupported') fitWatch?.arm(view === 'painted' || view === 'fitted');
     return ok({ opened: target, dropped: project.dropped, warnings: drove.warnings, chrome });
   }
 
@@ -747,7 +787,16 @@ export function startResponder(opts: {
     const w = win;
     if (w == null) return fail('not_ready', op);
     if (keysBlocked(w)) return fail('busy', op);
-    pressKey(w, k);
+    if (op !== 'view.fit') {
+      // A host's key may zoom, pan or start a tool: the reader is steering.
+      fitWatch?.disarm();
+      pressKey(w, k);
+      return ok();
+    }
+    // Fitted already at this size (the island's own fit after an import, or a
+    // fit the watch kept): pressing again would only repaint the same view.
+    if (fitWatch?.holds() !== true) pressKey(w, k);
+    fitWatch?.arm();
     return ok();
   }
 
@@ -840,6 +889,19 @@ export function startResponder(opts: {
       win = w;
       // Popup menus and dialogs over the canvas: the host hides what it draws there.
       stopMenus = watchMenus(w, (open) => emit({ type: 'ev.menu', open }));
+      // A fitted view stays fitted through resizes and a replaced drawing
+      // surface until the reader steers (bridge/view.ts). The fit watch reads
+      // nothing while an import or a save runs (the import fits for itself).
+      const watch = new FitWatch(w, { timing, ready: () => !engineBusy() && !keysBlocked(w), fit: () => pressKey(w, HOME_KEY), surface: () => surfaceKey(w.document) });
+      fitWatch = watch;
+      const timer = setInterval(() => { if (!closed && !importing && collecting == null) watch.tick(); }, timing.viewPollMs);
+      const steer = (e: Event): void => { if (e.isTrusted) watch.disarm(); };
+      const listens = typeof w.addEventListener === 'function';
+      if (listens) for (const t of STEER_EVENTS) w.addEventListener(t, steer, true);
+      stopFitWatch = () => {
+        clearInterval(timer);
+        if (listens) for (const t of STEER_EVENTS) w.removeEventListener(t, steer, true);
+      };
       // The Ctrl+S hook is registered by each successful project.open (startSaveHook).
       const mod: Record<string, unknown> = w.Module ?? {};
       const caps = Object.keys(mod).filter((k) => /^kicad[A-Za-z0-9]*$/.test(k) && typeof mod[k] === 'function').sort();

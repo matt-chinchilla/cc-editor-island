@@ -17,6 +17,8 @@ beforeAll(() => {
   Object.assign(timing, { chromeSettleMs: 30, chromePollMs: 5, firstSaveMs: 60, saveSettleMs: 10, saveQuietMs: 40, saveAllMs: 300, savePollMs: 2, dismissMs: 5 });
   // An import's dialogs are read every 5 ms, pressed 10 ms apart, and it ends 20 ms after the last one went.
   Object.assign(timing, { importPollMs: 5, importQuietMs: 20, importStepMs: 10, importRefusedMs: 60, importCloseMs: 200 });
+  // The view is read every 2 ms and fitted once its size has held 15 ms.
+  Object.assign(timing, { viewPollMs: 2, viewStableMs: 15, viewSettleMs: 300 });
 });
 // No DOM in this suite: a KeyboardEvent stand-in that keeps every init field (key, code, ctrlKey, ...).
 beforeEach(() => {
@@ -1345,6 +1347,63 @@ describe('project.import', () => {
     eng.Module.kicadOpenFile.mockImplementation(() => Promise.resolve(false));
     expect(await send('project.import', { name: 'a', files: [brd], open: brd.path })).toMatchObject({ ok: false, error: { code: 'import_failed' } });
     expect(seen).toEqual([]);
+  });
+
+  it('answers once the converted board is fitted at the drawing\'s settled size; the fit then holds through the host\'s resizes until the reader steers', async () => {
+    const eng = fakeEngine();
+    kicadImport(eng);
+    // The engine's view: KiCad keeps its scale on a resize, and Home fits the board to the drawing.
+    const vp = { cx: 0, cy: 0, scale: 1e-5, w: 1211, h: 878 };
+    (eng.Module as Record<string, unknown>).kicadCollabGetViewport = () => JSON.stringify(vp);
+    const homes: Array<{ w: number; answered: boolean }> = [];
+    let got: Array<Record<string, unknown>> = [];
+    const listeners = new Map<string, Set<(e: Event) => void>>();
+    const engineKeys = eng.win.dispatchEvent.bind(eng.win);
+    Object.assign(eng.win, {
+      dispatchEvent: (e: Event) => {
+        if (e.type === 'keydown' && (e as KeyboardEvent).code === 'Home') { vp.scale = vp.w / 1e8; homes.push({ w: vp.w, answered: got.some((m) => m.id === 1) }); }
+        return engineKeys(e);
+      },
+      addEventListener: (t: string, h: (e: Event) => void) => { const set = listeners.get(t) ?? new Set(); set.add(h); listeners.set(t, set); },
+      removeEventListener: (t: string, h: (e: Event) => void) => listeners.get(t)?.delete(h),
+    });
+    const real = (type: string): void => { for (const h of listeners.get(type) ?? []) h({ type, isTrusted: true } as Event); };
+    const r = importer(undefined, eng);
+    got = r.got;
+    const resize = async (w: number): Promise<void> => { vp.w = w; await settle(80); };
+
+    expect(await r.send('project.import', { name: 'a', files: [brd], open: brd.path })).toMatchObject({ ok: true });
+    // The import fitted the board itself, at the size it settled at, before it answered.
+    expect(homes).toEqual([{ w: 1211, answered: false }]);
+    // A host's fit right after the answer changes nothing: the view is fitted at this size.
+    expect(await r.send('view.fit')).toEqual({ id: 2, ok: true, result: {} });
+    expect(homes).toHaveLength(1);
+    // The host lays its page out again: the frame narrows, and the board is fitted again once the size holds.
+    await resize(1103);
+    expect(homes.map((h) => h.w)).toEqual([1211, 1103]);
+    // The reader zooms (a host key): from then on a resize leaves the view alone.
+    expect(await r.send('key.press', { key: 'F1', code: 'F1' })).toEqual({ id: 3, ok: true, result: {} });
+    await resize(1000);
+    expect(homes.map((h) => h.w)).toEqual([1211, 1103]);
+    // A host fit presses Home again and holds again, until a real wheel in the frame.
+    expect(await r.send('view.fit')).toEqual({ id: 4, ok: true, result: {} });
+    expect(homes.map((h) => h.w)).toEqual([1211, 1103, 1000]);
+    await resize(1100);
+    expect(homes.map((h) => h.w)).toEqual([1211, 1103, 1000, 1100]);
+    real('wheel');
+    await resize(900);
+    expect(homes.map((h) => h.w)).toEqual([1211, 1103, 1000, 1100]);
+    // A new document starts unfitted: the watch stays off until the next fit.
+    expect(await r.send('view.fit')).toMatchObject({ ok: true });
+    expect(await r.send('project.forget')).toMatchObject({ ok: true });
+    await resize(800);
+    expect(homes.map((h) => h.w)).toEqual([1211, 1103, 1000, 1100, 900]);
+    // shutdown stops the watch and its listeners.
+    expect(await r.send('view.fit')).toMatchObject({ ok: true });
+    expect(await r.send('shutdown')).toMatchObject({ ok: true });
+    expect([...listeners.values()].every((set) => set.size === 0)).toBe(true);
+    await resize(700);
+    expect(homes.map((h) => h.w)).toEqual([1211, 1103, 1000, 1100, 900, 800]);
   });
 
   it('a board with no dialog imports straight through, an upper case extension included', async () => {
