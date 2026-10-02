@@ -5,6 +5,8 @@
 // element wx-dom.js appends to the body (.wx-menu-popup) and never a wxWindow
 // in the element registry; a dialog is a wxWindow whose type names a Dialog
 // (wxDialog, wxGenericMessageDialog, wxFileDialog, wxTextEntryDialog, ...).
+// A progress dialog takes no keys: a type that names Progress, or a plain
+// wxDialog with a gauge and only a Cancel button (isProgressDialog).
 // key.press refuses while either is up (a key would land in it), a schematic
 // project.save closes a popup menu first and refuses only under a dialog, and
 // ev.menu tells the host, so it can hide what it draws over the frame.
@@ -14,11 +16,64 @@ export const POPUP_SELECTOR = '.wx-menu-popup';
 /** How often the watch re-reads the element registry for a dialog. */
 export const WATCH_MS = 100;
 
-type ModalWindow = Pick<ToolWindow, 'wxElementRegistry'> & { document?: { querySelector(selectors: string): unknown; body?: Node | null } };
+export type ModalWindow = Pick<ToolWindow, 'wxElementRegistry'> & { document?: { querySelector(selectors: string): unknown; body?: Node | null } };
+
+/** A registry element with the parent link wx.js records for it (the loader's global type leaves it out). */
+export type WxElement = WxElementInfo & { parentId?: unknown };
+
+/** A visible dialog and its visible descendants (each element whose parent chain reaches it first). */
+export interface DialogView { dialog: WxElement; parts: WxElement[] }
+
+/** A label as wx shows it: "&OK" reads OK, "&&" reads &. */
+export function plainLabel(label: string): string {
+  return label.replace(/&(.)/g, '$1');
+}
 
 /** A popup menu is in the frame's document. */
 export function popupUp(w: ModalWindow): boolean {
   try { return w.document?.querySelector(POPUP_SELECTOR) != null; } catch { return false; }
+}
+
+/**
+ * The visible dialogs in the registry, each with its visible descendants. A
+ * descendant is found through the parentId chain wx.js records (a list inside
+ * a static box is two links down); an element whose chain reaches no dialog
+ * belongs to none. A registry that throws, or that has no dialog up, gives none.
+ */
+export function visibleDialogs(w: ModalWindow): DialogView[] {
+  let all: WxElement[];
+  try { all = (w.wxElementRegistry?.findAll({ visible: false }) ?? []) as WxElement[]; } catch { return []; }
+  const views = all.filter((e) => e.visible && /Dialog/.test(e.typeName)).map((dialog): DialogView => ({ dialog, parts: [] }));
+  if (views.length === 0) return views;
+  const key = (id: unknown): string | null => (typeof id === 'string' || typeof id === 'number' ? String(id) : null);
+  const byId = new Map<string, WxElement>();
+  for (const e of all) { const k = key(e.id); if (k != null) byId.set(k, e); }
+  const byDialog = new Map<string, DialogView>();
+  for (const v of views) { const k = key(v.dialog.id); if (k != null) byDialog.set(k, v); }
+  for (const e of all) {
+    if (!e.visible || /Dialog/.test(e.typeName)) continue;
+    let p = key(e.parentId);
+    // The bound only stops a cycle; wx nests a dialog's controls a few levels deep.
+    for (let hops = 0; p != null && hops < 32; hops++) {
+      const owner = byDialog.get(p);
+      if (owner != null) { owner.parts.push(e); break; }
+      p = key(byId.get(p)?.parentId);
+    }
+  }
+  return views;
+}
+
+/**
+ * A progress dialog: a wx type that names one, or a plain wxDialog showing a
+ * gauge and no button but Cancel (or Skip). KiCad's own progress reporter, the
+ * "Load PCB" window an import shows, registers as a plain wxDialog (spike
+ * 2026-10-02), so the type alone misses it. It takes no keys; ev.menu still
+ * counts it, since it is drawn over the canvas.
+ */
+export function isProgressDialog(v: DialogView): boolean {
+  if (/Progress/i.test(v.dialog.typeName)) return true;
+  if (!v.parts.some((e) => e.typeName === 'wxGauge')) return false;
+  return v.parts.filter((e) => e.typeName === 'wxButton').every((b) => /^(Cancel|Skip)$/i.test(plainLabel(b.label ?? '').trim()));
 }
 
 /**
@@ -28,9 +83,10 @@ export function popupUp(w: ModalWindow): boolean {
  * registry that throws counts as none.
  */
 export function dialogUp(w: ModalWindow, progress: boolean): boolean {
-  try {
-    return (w.wxElementRegistry?.findAll({ visible: true }) ?? []).some((e) => /Dialog/.test(e.typeName) && (progress || !/Progress/i.test(e.typeName)));
-  } catch { return false; }
+  if (progress) {
+    try { return (w.wxElementRegistry?.findAll({ visible: true }) ?? []).some((e) => /Dialog/.test(e.typeName)); } catch { return false; }
+  }
+  return visibleDialogs(w).some((v) => !isProgressDialog(v));
 }
 
 /** A key would land in a popup menu or a dialog: key.press, view.fit and project.save answer busy. */

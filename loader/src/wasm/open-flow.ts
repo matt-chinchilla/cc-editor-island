@@ -1,3 +1,9 @@
+// Modified by Circuit Center on 2026-10-02: inputDialogVisible reads the
+// bridge's dialog test (bridge/modal.ts dialogUp), so KiCad's own progress
+// reporter, a plain wxDialog with a gauge and a Cancel button, no longer counts
+// as a dialog waiting for input.
+import { dialogUp } from "../../../bridge/modal";
+
 /**
  * Drive the tool (running in `win` — the top-level window) to open a file
  * already written into its MEMFS.
@@ -136,9 +142,7 @@ const OPEN_SETTLE_TIMEOUT_MS = 300_000;
  * dialog, unanswerable), so the settle wait treats this as "proceed".
  */
 function inputDialogVisible(win: ToolWindow): boolean {
-  return visible(win, {}).some(
-    (e) => /Dialog/.test(e.typeName) && !/Progress/i.test(e.typeName),
-  );
+  return dialogUp(win, false);
 }
 
 /**
