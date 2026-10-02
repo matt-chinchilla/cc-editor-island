@@ -743,6 +743,118 @@ function boardFacts(text: string) {
   };
 }
 
+/**
+ * The board's outline from a converted board file: the bounding box (nm) of
+ * every top-level graphic on Edge.Cuts, or null when it has none.
+ */
+function outlineBox(text: string): { x0: number; y0: number; x1: number; y1: number } | null {
+  const root = readSexpr(text);
+  if (!Array.isArray(root)) return null;
+  const xs: number[] = [];
+  const ys: number[] = [];
+  const at = (k: Sx[], head: string): [number, number] | null => {
+    const p = k.find((c): c is Sx[] => Array.isArray(c) && c[0] === head);
+    return p == null ? null : [Number(p[1]) * 1e6, Number(p[2]) * 1e6];
+  };
+  for (const k of root.filter((c): c is Sx[] => Array.isArray(c) && /^gr_(line|rect|arc|circle|poly|curve)$/.test(String(c[0])))) {
+    const layer = k.find((c): c is Sx[] => Array.isArray(c) && c[0] === 'layer');
+    if (layer?.[1] !== 'Edge.Cuts') continue;
+    if (k[0] === 'gr_circle') {
+      const c = at(k, 'center');
+      const e = at(k, 'end');
+      if (c == null || e == null) continue;
+      const r = Math.hypot(e[0] - c[0], e[1] - c[1]);
+      xs.push(c[0] - r, c[0] + r);
+      ys.push(c[1] - r, c[1] + r);
+      continue;
+    }
+    for (const head of ['start', 'mid', 'end']) { const p = at(k, head); if (p != null) { xs.push(p[0]); ys.push(p[1]); } }
+    const pts = k.find((c): c is Sx[] => Array.isArray(c) && c[0] === 'pts');
+    for (const xy of (pts ?? []).filter((c): c is Sx[] => Array.isArray(c) && c[0] === 'xy')) { xs.push(Number(xy[1]) * 1e6); ys.push(Number(xy[2]) * 1e6); }
+  }
+  return xs.length === 0 ? null : { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+}
+
+/** The engine's viewport: its centre (nm), its scale (px per nm) and the drawing's size (px). */
+const viewport = async (frame: Frame): Promise<{ cx: number; cy: number; scale: number; w: number; h: number }> =>
+  JSON.parse(await frame.evaluate(() => (window as unknown as { Module: { kicadCollabGetViewport(): string } }).Module.kicadCollabGetViewport()));
+
+/**
+ * Where the board's outline sits in the view: `inside` when the whole outline
+ * is on screen (1 px of slack), and `fill`, the share of the view's width or
+ * height (the larger) the outline spans.
+ */
+async function outlineInView(frame: Frame, text: string): Promise<{ inside: boolean; fill: number }> {
+  const box = outlineBox(text);
+  if (box == null) throw new Error('the converted board has no outline');
+  const v = await viewport(frame);
+  const halfW = v.w / 2 / v.scale;
+  const halfH = v.h / 2 / v.scale;
+  const slack = 1 / v.scale;
+  const inside = box.x0 >= v.cx - halfW - slack && box.x1 <= v.cx + halfW + slack && box.y0 >= v.cy - halfH - slack && box.y1 <= v.cy + halfH + slack;
+  return { inside, fill: Math.max((box.x1 - box.x0) / (2 * halfW), (box.y1 - box.y0) / (2 * halfH)) };
+}
+
+/**
+ * The colours the circuitcenter palette and KiCad's default draw differently
+ * (they share their background, copper and silkscreen colours), as they show
+ * over the board background: the board outline area, the ratsnest, a
+ * non-plated hole, a via's hole wall. The page limits are circuitcenter's only
+ * (KiCad's default draws them in its grid colour).
+ */
+const PALETTE_TELLS = {
+  circuitcenter: [[54, 64, 77], [172, 184, 160], [58, 68, 64], [185, 191, 198], [52, 64, 58]],
+  kicadDefault: [[35, 45, 58], [0, 97, 112], [26, 196, 210], [236, 236, 236]],
+};
+
+/**
+ * The drawing as the frame shows it, read back whole from the surface the
+ * engine draws into (its GL contexts keep their drawing buffer): the colour
+ * at the four corners, how many distinct colours, and how many pixels show
+ * a colour only the circuitcenter palette draws, or only KiCad's default.
+ */
+const drawing = (frame: Frame) => frame.evaluate((tells) => {
+  const gls = [...document.querySelectorAll('canvas.gl-canvas')] as HTMLCanvasElement[];
+  const src = gls.filter((c) => c.style.display !== 'none' && c.width > 0).sort((a, b) => b.width * b.height - a.width * a.height)[0] ?? (document.getElementById('canvas') as HTMLCanvasElement);
+  const c = document.createElement('canvas');
+  c.width = src.width;
+  c.height = src.height;
+  const ctx = c.getContext('2d', { willReadFrequently: true })!;
+  ctx.drawImage(src, 0, 0);
+  const px = ctx.getImageData(0, 0, c.width, c.height).data;
+  const at = (x: number, y: number): string => { const i = (y * c.width + x) * 4; return `${px[i]},${px[i + 1]},${px[i + 2]},${px[i + 3]}`; };
+  const near = (i: number, [r, g, b]: number[]): boolean => Math.abs(px[i] - r) <= 1 && Math.abs(px[i + 1] - g) <= 1 && Math.abs(px[i + 2] - b) <= 1;
+  const colours = new Set<number>();
+  let circuitcenter = 0;
+  let kicadDefault = 0;
+  for (let i = 0; i < px.length; i += 4) {
+    colours.add((px[i] << 16) | (px[i + 1] << 8) | px[i + 2]);
+    if (tells.circuitcenter.some((t) => near(i, t))) circuitcenter++;
+    if (tells.kicadDefault.some((t) => near(i, t))) kicadDefault++;
+  }
+  return { surface: src.id, w: c.width, h: c.height, corners: [at(3, 3), at(c.width - 4, 3), at(3, c.height - 4), at(c.width - 4, c.height - 4)], colours: colours.size, circuitcenter, kicadDefault };
+}, PALETTE_TELLS);
+
+/** The circuitcenter palette's board background (theme/colors/circuitcenter.json), opaque. */
+const BOARD_BG = '0,16,35,255';
+
+/**
+ * What the reader sees the moment an import answers: the converted board,
+ * drawn and fitted (its whole outline on screen, spanning at least `fill` of
+ * the view), on the circuitcenter palette's board background.
+ */
+async function expectFittedBoard(frame: Frame, text: string, fill = 0.5): Promise<void> {
+  const d = await drawing(frame);
+  expect(d.colours).toBeGreaterThan(8);
+  expect(d.corners).toEqual([BOARD_BG, BOARD_BG, BOARD_BG, BOARD_BG]);
+  expect(d.circuitcenter).toBeGreaterThan(0);
+  expect(d.kicadDefault).toBe(0);
+  const v = await outlineInView(frame, text);
+  expect(v.inside).toBe(true);
+  expect(v.fill).toBeGreaterThan(fill);
+  measure('fitted', `${d.surface} ${d.w}x${d.h}, ${d.colours} colours, outline ${(v.fill * 100).toFixed(0)}% of the view`);
+}
+
 const dialogsUp = async (frame: Frame): Promise<string[]> => (await visibleWx(frame, {})).filter((e) => /Dialog/.test(e.typeName)).map((e) => e.typeName);
 
 /** KiCad reads the converted board back: a fresh board frame opens it as a project, and its layers answer. */
@@ -768,6 +880,26 @@ test('import: an Eagle board converts through its layer mapping, is the document
   // The converted board reached the host before the answer, and it parses: KiCad 10's format, every part.
   const text = await savedText(page, 'test_eagle.kicad_pcb');
   expect(boardFacts(text)).toEqual({ head: 'kicad_pcb', version: 20260206, footprints: 13, segments: 51, vias: 33, copper: 2 });
+  // The answer came with the board drawn, fitted and in the circuitcenter palette.
+  await expectFittedBoard(frame, text);
+  // The host lays its page out again after the answer (the site narrowed the frame from 1211 to
+  // 1103 px), and KiCad keeps its scale on a resize: the frame fits the board again.
+  const wide = await viewport(frame);
+  await page.evaluate(() => { (document.querySelector('iframe') as HTMLIFrameElement).style.width = '1100px'; });
+  await expect.poll(async () => { const v = await viewport(frame); return v.w < wide.w && v.scale < wide.scale; }, { timeout: 10_000 }).toBe(true);
+  await expect.poll(async () => (await outlineInView(frame, text)).inside, { timeout: 10_000 }).toBe(true);
+  await expectFittedBoard(frame, text);
+  // Once the reader steers (F1 zooms in), a resize leaves the view as the reader left it.
+  const refitted = await viewport(frame);
+  expect(await request(page, 'key.press', { key: 'F1', code: 'F1' })).toEqual({});
+  await expect.poll(async () => (await viewport(frame)).scale, { timeout: 5_000 }).toBeGreaterThan(refitted.scale);
+  const steered = await viewport(frame);
+  await page.evaluate(() => { (document.querySelector('iframe') as HTMLIFrameElement).style.width = '1000px'; });
+  await expect.poll(async () => (await viewport(frame)).w, { timeout: 10_000 }).toBeLessThan(steered.w);
+  await page.waitForTimeout(1_500);
+  expect((await viewport(frame)).scale).toBe(steered.scale);
+  await page.evaluate(() => { (document.querySelector('iframe') as HTMLIFrameElement).style.width = ''; });
+  await expect.poll(async () => (await viewport(frame)).w, { timeout: 10_000 }).toBe(wide.w);
 
   // It is the frame's document, as after project.open.
   expect(await request(page, 'project.save')).toEqual({ path: 'test_eagle.kicad_pcb', saved: ['test_eagle.kicad_pcb'] });
@@ -803,6 +935,7 @@ test('import: a CADSTAR board answers its log report as warnings', async ({ page
   expect(await dialogsUp(frame)).toEqual([]);
   const text = await savedText(page, 'minimal_route_offset_curved_track.kicad_pcb');
   expect(boardFacts(text)).toMatchObject({ head: 'kicad_pcb', version: 20260206, footprints: 2, copper: 2 });
+  await expectFittedBoard(frame, text);
   await reopens(page, 'minimal_route_offset_curved_track.kicad_pcb', text);
 });
 
@@ -818,6 +951,7 @@ test('import: an EasyEDA Pro project (.zip) and an EasyEDA Standard board (.json
     expect(await dialogsUp(frame)).toEqual([]);
     const text = await savedText(page, board);
     expect(boardFacts(text)).toMatchObject({ head: 'kicad_pcb', version: 20260206, ...facts });
+    await expectFittedBoard(frame, text);
     await reopens(page, board, text);
   }
 });
