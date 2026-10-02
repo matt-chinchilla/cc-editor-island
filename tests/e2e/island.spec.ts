@@ -6,6 +6,7 @@
 // never opens a popup, and lets go of its engine on shutdown. The harness (tests/harness/parent.html) speaks
 // cc-editor/1 and keeps every event on window.__events.
 import { expect, test, type BrowserContext, type Frame, type Page } from '@playwright/test';
+import palette from '../../theme/colors/circuitcenter.json' with { type: 'json' };
 
 const PAGE = 'http://circuitcenter.localhost:4173';
 const ISLAND = 'http://editor.circuitcenter.localhost:4174';
@@ -795,15 +796,25 @@ async function outlineInView(frame: Frame, text: string): Promise<{ inside: bool
   return { inside, fill: Math.max((box.x1 - box.x0) / (2 * halfW), (box.y1 - box.y0) / (2 * halfH)) };
 }
 
+/** The island's canvas theme (the viewer's palette), as the engine loads it. */
+const PALETTE = palette as unknown as { board: Record<string, string> & { copper: Record<string, string> } };
+/** An opaque `rgb(r, g, b)` palette value as [r, g, b]. */
+const rgbOf = (css: string): number[] => {
+  const m = /^rgb\((\d+), (\d+), (\d+)\)$/.exec(css);
+  if (m == null) throw new Error(`not an opaque rgb() palette value: ${css}`);
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+};
+
 /**
- * The colours the circuitcenter palette and KiCad's default draw differently
- * (they share their background, copper and silkscreen colours), as they show
- * over the board background: the board outline area, the ratsnest, a
- * non-plated hole, a via's hole wall. The page limits are circuitcenter's only
- * (KiCad's default draws them in its grid colour).
+ * Colours only one of the two palettes draws on a board: the circuitcenter
+ * palette's front and back copper, via hole wall, board edge and front
+ * silkscreen, read from the theme file; and KiCad's built-in default as it
+ * shows over its own background (the board outline area, the ratsnest, a
+ * non-plated hole, a via's hole wall), which a theme that failed to load
+ * would draw.
  */
 const PALETTE_TELLS = {
-  circuitcenter: [[54, 64, 77], [172, 184, 160], [58, 68, 64], [185, 191, 198], [52, 64, 58]],
+  circuitcenter: [PALETTE.board.copper.f, PALETTE.board.copper.b, PALETTE.board.via_hole_walls, PALETTE.board.edge_cuts, PALETTE.board.f_silks].map(rgbOf),
   kicadDefault: [[35, 45, 58], [0, 97, 112], [26, 196, 210], [236, 236, 236]],
 };
 
@@ -836,7 +847,7 @@ const drawing = (frame: Frame) => frame.evaluate((tells) => {
 }, PALETTE_TELLS);
 
 /** The circuitcenter palette's board background (theme/colors/circuitcenter.json), opaque. */
-const BOARD_BG = '0,16,35,255';
+const BOARD_BG = [...rgbOf(PALETTE.board.background), 255].join(',');
 
 /**
  * What the reader sees the moment an import answers: the converted board,

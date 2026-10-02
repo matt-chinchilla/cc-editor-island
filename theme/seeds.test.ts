@@ -11,9 +11,11 @@ describe('the seeds', () => {
     expect(names).toEqual(['circuitcenter.json', 'circuitcenter-light.json', 'circuitcenter-dark.json']);
     const t = JSON.parse(s.colors[0].json);
     expect(t.meta).toEqual({ name: 'Circuit Center', version: 5 });
-    expect(t.schematic.background).toBe('rgb(245, 244, 239)');
-    expect(t.board.background).toBe('rgb(0, 16, 35)');
-    expect(t.board.copper.f).toBe('rgb(200, 52, 52)');
+    // The viewer's Witch Hazel: its schematic paper, the black its board canvas
+    // clears to, its front copper.
+    expect(t.schematic.background).toBe('rgb(19, 18, 24)');
+    expect(t.board.background).toBe('rgb(0, 0, 0)');
+    expect(t.board.copper.f).toBe('rgb(226, 114, 153)');
   });
 
   it('turn the anti-aliasing off, so the full-frame canvas keeps up with the cursor', () => {
