@@ -5,7 +5,8 @@
 // frame-src) and the island on editor.circuitcenter.localhost:4174 (the
 // snippet the site's nginx includes). *.localhost resolves to 127.0.0.1.
 // The page origin also serves tests/fixtures under /fixtures/, so the harness
-// loads its fixture projects same-origin.
+// loads its fixture projects same-origin, and tests/e2e/fixtures under
+// /e2e-fixtures/ (the boards the import tests hand over).
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
@@ -37,6 +38,7 @@ createServer((req, res) => {
   const path = req.url.split('?')[0];
   const headers = { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'credentialless', 'Content-Security-Policy': `frame-src ${ISLAND}` };
   if (path.startsWith('/fixtures/')) return serveFile('tests/fixtures', path.slice('/fixtures'.length), res, headers);
+  if (path.startsWith('/e2e-fixtures/')) return serveFile('tests/e2e/fixtures', path.slice('/e2e-fixtures'.length), res, headers);
   return serveFile('tests/harness', path, res, headers);
 }).listen(4173, '127.0.0.1');
 console.log(`page ${PAGE}  island ${ISLAND}`);

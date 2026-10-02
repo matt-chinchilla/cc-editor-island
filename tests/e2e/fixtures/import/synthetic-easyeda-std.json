@@ -1,0 +1,50 @@
+{
+ "head": {
+  "docType": "3",
+  "editorVersion": "6.5.34",
+  "newgId": true,
+  "c_para": {},
+  "x": "4000",
+  "y": "3000",
+  "hasIdFlag": true,
+  "importFlag": 0,
+  "transformList": ""
+ },
+ "canvas": "CA~1000~1000~#000000~yes~#FFFFFF~10~1000~1000~line~0.5~mil~1~45~visible~0.5~4000~3000~0~yes",
+ "shape": [
+  "TRACK~1~10~~3950 2960 4050 2960 4050 3040 3950 3040 3950 2960~gge1~0",
+  "LIB~4000~3000~package`R0603`~0~~gge10~1~5f0c0ffee0000000000000000000a001~1696204800~0~~yes~~~~~#@$PAD~RECT~3994~3000~3.5~4~1~N1~1~0~3992.25 2998 3995.75 2998 3995.75 3002 3992.25 3002~0~gge11~0~~Y~0~0~0.4~3994,3000#@$PAD~RECT~4006~3000~3.5~4~1~N2~2~0~4004.25 2998 4007.75 2998 4007.75 3002 4004.25 3002~0~gge12~0~~Y~0~0~0.4~4006,3000",
+  "TRACK~1~1~N1~3994 3000 3980 3000 3980 3020~gge2~0",
+  "TRACK~1~2~N1~3980 3020 4020 3020~gge3~0",
+  "VIA~3980~3020~2.4~N1~0.6~gge4~0",
+  "VIA~4020~3020~2.4~N1~0.6~gge5~0",
+  "TRACK~1~1~N1~4020 3020 4020 3010~gge6~0"
+ ],
+ "layers": [
+  "1~TopLayer~#FF0000~true~true~true~",
+  "2~BottomLayer~#0000FF~true~false~true~",
+  "3~TopSilkLayer~#FFCC00~true~false~true~",
+  "10~BoardOutLine~#FF00FF~true~false~true~",
+  "11~Multi-Layer~#C0C0C0~true~false~true~"
+ ],
+ "objects": [],
+ "BBox": {
+  "x": 3950,
+  "y": 2960,
+  "width": 100,
+  "height": 80
+ },
+ "preference": {
+  "hideFootprints": "",
+  "hideNets": ""
+ },
+ "DRCRULE": {
+  "Default": {
+   "trackWidth": 1,
+   "clearance": 0.6,
+   "viaHoleDiameter": 2.4,
+   "viaHoleD": 1.2
+  }
+ },
+ "netColors": []
+}

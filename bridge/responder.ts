@@ -7,7 +7,7 @@
 // the exports the loader's global.d.ts declares (Module) and MEMFS.
 import { registerSaveHook, SAVE_COMMITTED, type SaveHookHandle } from '../loader/src/wasm/save-flow';
 import { parseBoot } from '../src/cc-config';
-import { parseKeyPress, pressKey, type KeyPress } from '../src/keys';
+import { focusCanvas, parseKeyPress, pressKey, type KeyPress } from '../src/keys';
 import { normalizePath, openStaged, PROJECT_ROOT, stageProject, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
 import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
@@ -502,6 +502,12 @@ export function startResponder(opts: {
     opened = target;
     startSaveHook(w);   // from here on the converted board is the document, as after project.open
     const chrome = await settleChrome(w);
+    // The importer's dialogs took wx's keyboard focus and left it off the
+    // drawing (e2e 2026-10-02: key.press F1 no longer zoomed): the boot's own
+    // synthetic focus click puts it back. It never takes the browser's focus.
+    if (!closed && !keysBlocked(w)) {
+      try { focusCanvas(w.document); } catch { /* the user's next press in the drawing focuses it */ }
+    }
     return ok({ opened: target, dropped: project.dropped, warnings: drove.warnings, chrome });
   }
 

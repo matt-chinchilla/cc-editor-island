@@ -14,6 +14,8 @@ const PAIR = new Set([PAGE, ISLAND]);
 interface Ev { type: string; phase?: string; detail?: string; path?: string; bytes?: number; text?: string; topic?: string; caps?: string[]; open?: boolean; at: number }
 interface Harness {
   __events: Ev[];
+  /** The latest bytes ev.saved brought for each path, whole. */
+  __saved: Record<string, Uint8Array>;
   __hellos: number;
   __bridge: { request(op: string, args?: unknown): Promise<Record<string, unknown>> };
   __openFixture(): Promise<{ opened: string; dropped: string[] }>;
@@ -657,4 +659,176 @@ test('sheets and layers answer from the engine, and fit refits the view', async 
   const zoomed = await viewScale(pcb);
   expect(await request(page, 'view.fit')).toEqual({});
   await expect.poll(() => viewScale(pcb), { timeout: 5_000 }).toBeLessThan(zoomed / 1.5);
+});
+
+// project.import (spike 2026-10-02): a foreign board through KiCad's own
+// importers in the board frame, its dialogs answered by the island, saved as
+// <stem>.kicad_pcb. The boards are KiCad's qa samples at the engine's pin (and
+// one EasyEDA Standard board of ours), in tests/e2e/fixtures/import with a
+// .license note each.
+
+interface ImportResult { opened: string; dropped: string[]; warnings: string[]; chrome: boolean }
+
+/**
+ * project.import of one file, named as itself and opened by itself: a board of
+ * tests/e2e/fixtures/import (serve.mjs serves it at /e2e-fixtures/), or `text`
+ * when given. Rejects with "code: message". The seconds run from the request
+ * to the answer, the board's fetch excluded.
+ */
+async function importBoard(page: Page, name: string, text?: string): Promise<{ result: ImportResult; seconds: number }> {
+  const [result, ms] = await page.evaluate(async ([n, t]) => {
+    const bytes = t != null ? new TextEncoder().encode(t) : new Uint8Array(await (await fetch(`/e2e-fixtures/import/${encodeURIComponent(n)}`)).arrayBuffer());
+    const t0 = performance.now();
+    const r = await (window as unknown as Harness).__bridge.request('project.import', { name: n, files: [{ path: n, bytes }], open: n });
+    return [r, performance.now() - t0] as const;
+  }, [name, text] as const);
+  return { result: result as unknown as ImportResult, seconds: ms / 1000 };
+}
+
+/** The whole file the last ev.saved brought for `path`, as text. */
+const savedText = (page: Page, path: string): Promise<string> =>
+  page.evaluate((p) => new TextDecoder().decode((window as unknown as Harness).__saved[p]), path);
+
+type Sx = string | Sx[];
+/** KiCad's s-expression format read whole: throws on an unbalanced list, an unterminated string or anything after the top form. */
+function readSexpr(text: string): Sx {
+  let i = 0;
+  const space = (): void => { while (i < text.length && /\s/.test(text[i])) i++; };
+  const node = (): Sx => {
+    space();
+    if (text[i] === '(') {
+      i++;
+      const list: Sx[] = [];
+      for (;;) {
+        space();
+        if (i >= text.length) throw new Error('an unterminated list');
+        if (text[i] === ')') { i++; return list; }
+        list.push(node());
+      }
+    }
+    if (text[i] === '"') {
+      let s = '';
+      for (i++; ; i++) {
+        if (i >= text.length) throw new Error('an unterminated string');
+        if (text[i] === '\\') { s += text[++i]; continue; }
+        if (text[i] === '"') { i++; return s; }
+        s += text[i];
+      }
+    }
+    const start = i;
+    while (i < text.length && !/[\s()"]/.test(text[i])) i++;
+    if (i === start) throw new Error(`unexpected ${JSON.stringify(text[i])} at ${i}`);
+    return text.slice(start, i);
+  };
+  const root = node();
+  space();
+  if (i !== text.length) throw new Error(`text after the top form at ${i}`);
+  return root;
+}
+
+/** What a converted board file holds: its top form, its format version and its counts. */
+function boardFacts(text: string) {
+  const root = readSexpr(text);
+  if (!Array.isArray(root)) throw new Error('the board is not a list');
+  const kids = root.filter((k): k is Sx[] => Array.isArray(k));
+  const count = (head: string): number => kids.filter((k) => k[0] === head).length;
+  const layers = kids.find((k) => k[0] === 'layers') ?? [];
+  return {
+    head: root[0],
+    version: Number(kids.find((k) => k[0] === 'version')?.[1]),
+    footprints: count('footprint'),
+    segments: count('segment'),
+    vias: count('via'),
+    copper: layers.filter((l) => Array.isArray(l) && /\.Cu$/.test(String(l[1]))).length,
+  };
+}
+
+const dialogsUp = async (frame: Frame): Promise<string[]> => (await visibleWx(frame, {})).filter((e) => /Dialog/.test(e.typeName)).map((e) => e.typeName);
+
+/** KiCad reads the converted board back: a fresh board frame opens it as a project, and its layers answer. */
+async function reopens(page: Page, path: string, text: string): Promise<void> {
+  await boot(page, 'frame=pcb');
+  const opened = await page.evaluate(([p, t]) => (window as unknown as Harness).__bridge.request('project.open', { name: 'reopen', files: [{ path: p, bytes: new TextEncoder().encode(t) }] }), [path, text] as const);
+  expect(opened).toMatchObject({ opened: path, dropped: [] });
+  // Imported boards keep their own layer names ("Top Elec"); the canonical names are KiCad's.
+  const state = await request(page, 'layers.get') as { layers: Array<{ canonical: string; copper: boolean }> };
+  expect(state.layers.filter((l) => l.copper).map((l) => l.canonical)).toEqual(expect.arrayContaining(['F.Cu', 'B.Cu']));
+}
+
+test('import: an Eagle board converts through its layer mapping, is the document after, and a second import meets Save Changes? and is cancelled', async ({ page }) => {
+  const frame = await boot(page, 'frame=pcb');
+  // While the import runs, the frame refuses the host's keys rather than queueing them.
+  const pending = importBoard(page, 'test_eagle.brd');
+  await page.waitForFunction(() => (window as unknown as Harness).__events.some((e) => e.type === 'ev.state' && e.phase === 'opening'));
+  await expect(request(page, 'key.press', { key: 'a', code: 'KeyA' })).rejects.toThrow('busy: key.press');
+  const { result, seconds } = await pending;
+  measure('import eagle', `${seconds.toFixed(1)} s (test_eagle.brd, 39 KB, layer mapping answered)`);
+  expect(result).toEqual({ opened: 'test_eagle.kicad_pcb', dropped: [], warnings: [], chrome: false });
+  expect(await dialogsUp(frame)).toEqual([]);
+  // The converted board reached the host before the answer, and it parses: KiCad 10's format, every part.
+  const text = await savedText(page, 'test_eagle.kicad_pcb');
+  expect(boardFacts(text)).toEqual({ head: 'kicad_pcb', version: 20260206, footprints: 13, segments: 51, vias: 33, copper: 2 });
+
+  // It is the frame's document, as after project.open.
+  expect(await request(page, 'project.save')).toEqual({ path: 'test_eagle.kicad_pcb', saved: ['test_eagle.kicad_pcb'] });
+  const state = await request(page, 'layers.get') as { layers: Array<{ canonical: string; copper: boolean }> };
+  expect(state.layers.filter((l) => l.copper).map((l) => l.canonical)).toEqual(['F.Cu', 'B.Cu']);
+  // Keys reach the board after the importer's dialogs: F1 zooms in, view.fit zooms back out.
+  expect(await request(page, 'view.fit')).toEqual({});
+  const fitted = await viewScale(frame);
+  expect(await request(page, 'key.press', { key: 'F1', code: 'F1' })).toEqual({});
+  await expect.poll(() => viewScale(frame), { timeout: 5_000 }).toBeGreaterThan(fitted * 1.5);
+
+  // The engine counts the converted board as modified: a second import meets KiCad's
+  // "Save Changes?", which the island cancels (never Save, never Discard) and names.
+  const t0 = Date.now();
+  await expect(importBoard(page, 'test_eagle.brd')).rejects.toThrow(/import_failed: dialog "Save Changes\?"/);
+  measure('import over a modified board', `${((Date.now() - t0) / 1000).toFixed(1)} s to import_failed, Save Changes? cancelled`);
+  expect(await dialogsUp(frame)).toEqual([]);
+
+  await reopens(page, 'test_eagle.kicad_pcb', text);
+});
+
+test('import: a CADSTAR board answers its log report as warnings', async ({ page }) => {
+  const frame = await boot(page, 'frame=pcb');
+  const { result, seconds } = await importBoard(page, 'minimal_route_offset_curved_track.cpa');
+  measure('import cadstar', `${seconds.toFixed(1)} s (minimal_route_offset_curved_track.cpa, 74 KB, layer mapping and log report answered)`);
+  expect(result.opened).toBe('minimal_route_offset_curved_track.kicad_pcb');
+  expect(result.warnings).toEqual([
+    'KiCad design rules are different from CADSTAR ones. Only the compatible design rules were imported. It is recommended that you review the design rules that have been applied.',
+    expect.stringMatching(/^CADSTAR fonts are different to the ones in KiCad\./),
+    'The CADSTAR design has been imported successfully. Please review the import errors and warnings (if any).',
+  ]);
+  expect(result.warnings.every((l) => l.length <= 200)).toBe(true);
+  expect(await dialogsUp(frame)).toEqual([]);
+  const text = await savedText(page, 'minimal_route_offset_curved_track.kicad_pcb');
+  expect(boardFacts(text)).toMatchObject({ head: 'kicad_pcb', version: 20260206, footprints: 2, copper: 2 });
+  await reopens(page, 'minimal_route_offset_curved_track.kicad_pcb', text);
+});
+
+test('import: an EasyEDA Pro project (.zip) and an EasyEDA Standard board (.json) convert with no dialog', async ({ page }) => {
+  for (const [file, board, facts] of [
+    ['OpenSTM-ControlBoard.zip', 'OpenSTM-ControlBoard.kicad_pcb', { footprints: 152, copper: 2 }],
+    ['synthetic-easyeda-std.json', 'synthetic-easyeda-std.kicad_pcb', { footprints: 1, segments: 4, vias: 2, copper: 2 }],
+  ] as const) {
+    const frame = await boot(page, 'frame=pcb');
+    const { result, seconds } = await importBoard(page, file);
+    measure(`import ${file.endsWith('.zip') ? 'easyeda pro' : 'easyeda std'}`, `${seconds.toFixed(1)} s (${file}, no dialog)`);
+    expect(result).toEqual({ opened: board, dropped: [], warnings: [], chrome: false });
+    expect(await dialogsUp(frame)).toEqual([]);
+    const text = await savedText(page, board);
+    expect(boardFacts(text)).toMatchObject({ head: 'kicad_pcb', version: 20260206, ...facts });
+    await reopens(page, board, text);
+  }
+});
+
+test('import: a file no importer reads is import_failed with KiCad\'s message box closed, and a schematic frame refuses the op', async ({ page }) => {
+  const frame = await boot(page, 'frame=pcb');
+  await expect(importBoard(page, 'notes.brd', 'this is not a board\n')).rejects.toThrow(/import_failed: .*File format is not supported/);
+  expect(await dialogsUp(frame)).toEqual([]);
+  await expect(request(page, 'project.save')).rejects.toThrow('not_ready: project.save');
+  // The host's keys work again at once.
+  expect(await request(page, 'view.fit')).toEqual({});
+  await boot(page, 'frame=sch');
+  await expect(importBoard(page, 'test_eagle.brd')).rejects.toThrow('unsupported: project.import needs a pcb frame');
 });

@@ -1329,6 +1329,24 @@ describe('project.import', () => {
     expect(got).toEqual([{ type: 'ev.saved', path: 'boards/aht20.kicad_pcb', bytes: b('(kicad_pcb edited)') }]);
   });
 
+  it('gives the drawing wx\'s keyboard focus back after an import, with the boot\'s one synthetic click, and not after a failed one', async () => {
+    // No DOM in this suite: stand-ins that keep the type and the point.
+    vi.stubGlobal('MouseEvent', class extends Event { constructor(type: string, init: Record<string, unknown> = {}) { super(type, init as EventInit); Object.assign(this, { clientX: init.clientX, clientY: init.clientY }); } });
+    vi.stubGlobal('PointerEvent', class extends Event { constructor(type: string, init: Record<string, unknown> = {}) { super(type, init as EventInit); Object.assign(this, { clientX: init.clientX, clientY: init.clientY }); } });
+    const eng = fakeEngine();
+    kicadImport(eng, { mapping: true });
+    const seen: string[] = [];
+    const canvas = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 1280, height: 800 }), dispatchEvent: (e: Event) => { seen.push(`${e.type}@${(e as MouseEvent).clientX},${(e as MouseEvent).clientY}`); return true; } };
+    (eng.win.document as unknown as { getElementById: (id: string) => unknown }).getElementById = (id: string) => (id === 'canvas' ? canvas : null);
+    const { send } = importer(undefined, eng);
+    expect(await send('project.import', { name: 'a', files: [brd], open: brd.path })).toMatchObject({ ok: true });
+    expect(seen).toEqual(['pointerdown@1272,792', 'mousedown@1272,792', 'pointerup@1272,792', 'mouseup@1272,792', 'click@1272,792']);
+    seen.length = 0;
+    eng.Module.kicadOpenFile.mockImplementation(() => Promise.resolve(false));
+    expect(await send('project.import', { name: 'a', files: [brd], open: brd.path })).toMatchObject({ ok: false, error: { code: 'import_failed' } });
+    expect(seen).toEqual([]);
+  });
+
   it('a board with no dialog imports straight through, an upper case extension included', async () => {
     const eng = fakeEngine();
     kicadImport(eng);

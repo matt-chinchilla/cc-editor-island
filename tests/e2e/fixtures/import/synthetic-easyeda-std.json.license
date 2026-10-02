@@ -1,0 +1,8 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileCopyrightText: 2026 Chirichella Inc.
+
+A small EasyEDA Standard board written for this test by Circuit Center (2026-10-02),
+in the format KiCad's EasyEDA importer reads at commit 48f1e865216623283579984110a80210e7ccc789: a board outline,
+one footprint of two pads, three tracks on two layers and two vias. KiCad's own
+EasyEDA Standard samples (qa/data/pcbnew/plugins/easyeda) are CC-BY-NC-SA 3.0,
+so none of them is copied here.

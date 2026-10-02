@@ -27,6 +27,7 @@ const stateEl = document.getElementById('state');
 const note = (line) => { stateEl.textContent += `${line}\n`; };   // island strings only ever reach textContent
 
 window.__events = [];      // every event, bytes replaced by their length and text
+window.__saved = {};       // the latest bytes ev.saved brought for each path, whole
 window.__hellos = 0;
 let port = null;
 let nextId = 1;
@@ -79,6 +80,7 @@ window.__openFixture = async function openFixture() {
 function onEvent(ev) {
   const rec = { ...ev };
   if (ev.bytes instanceof Uint8Array) { rec.bytes = ev.bytes.byteLength; rec.text = new TextDecoder().decode(ev.bytes.subarray(0, 4096)); }
+  if (ev.type === 'ev.saved') window.__saved[ev.path] = ev.bytes;
   rec.at = performance.now();
   window.__events.push(rec);
   if (ev.type === 'ev.state') note(`state ${ev.phase}${ev.detail ? ` ${ev.detail}` : ''}`);

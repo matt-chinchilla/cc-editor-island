@@ -1,0 +1,8 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileCopyrightText: The KiCad developers
+
+Source: KiCad's qa data, qa/data/pcbnew/plugins/eagle/test_eagle_23016/test_eagle.brd,
+at KiCad commit 48f1e865216623283579984110a80210e7ccc789 (the engine's pin, PIN.json pcbjam.kicad),
+read from github.com/KiCad/kicad-source-mirror on 2026-10-02. Unmodified.
+KiCad's qa data carries KiCad's licence, GPL-3.0-or-later (its LICENSE.README,
+notices/kicad-LICENSE.README here, lists no other terms for this file).
