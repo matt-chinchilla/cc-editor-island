@@ -11,6 +11,7 @@ import { parseKeyPress, pressKey, type KeyPress } from '../src/keys';
 import { normalizePath, openStaged, PROJECT_ROOT, stageProject, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
 import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
+import { driveImport, importable, importTarget } from './import';
 import { dialogUp, dismissPopups, keysBlocked, watchMenus } from './modal';
 
 declare const __ISLAND_ID__: string;   // define'd by vite.config.ts from PIN.json
@@ -53,6 +54,8 @@ const SLUG = 'cc';
 const MAX_QUEUED = 256;
 const MAX_FILES = 4096;
 const MAX_NAME = 255;
+/** project.import's format hint: a short string the island may ignore. */
+const MAX_FORMAT = 64;
 /**
  * The bridge's waits, in ms: the bound on each engine call (so no call can
  * hold the serial request chain, shutdown included), project.open's chrome
@@ -77,12 +80,26 @@ export const timing = {
   savePollMs: 25,
   /** After a save closed a popup menu, the pause before its key (the menu's opener resumes first). Unmeasured. */
   dismissMs: 100,
+  /**
+   * project.import (bridge/import.ts): the whole import's bound, from the open
+   * call to the converted board's save; how often its dialogs are read; how long
+   * nothing may show once the open resolved (the log report followed within
+   * about 10 ms, spike 2026-10-02); the pause between two presses in one dialog;
+   * how long the layer mapping may stay up after OK before it counts as refused;
+   * and, on expiry, how long dialogs are closed before the answer.
+   */
+  importMs: 60_000,
+  importPollMs: 100,
+  importQuietMs: 500,
+  importStepMs: 250,
+  importRefusedMs: 2_000,
+  importCloseMs: 5_000,
 };
 /** KiCad's own Save (eeschema's Ctrl+S): every sheet of the schematic and the project file. */
 const SAVE_KEY: KeyPress = { key: 's', code: 'KeyS', ctrl: true, shift: false, alt: false };
 /** KiCad's window chrome as the element registry names it (measured with chrome.show on, 2026-10-01). */
 const CHROME_RE = /^wx(MenuBar|AuiToolBar|ToolBar|StatusBar)$|InfoBar/i;
-const OPS = new Set(['project.open', 'project.save', 'project.forget', 'chrome.show', 'readonly', 'shutdown', 'key.press', 'view.fit', 'sheet.tree', 'sheet.enter', 'layers.get', 'layers.visible', 'layers.active']);
+const OPS = new Set(['project.open', 'project.import', 'project.save', 'project.forget', 'chrome.show', 'readonly', 'shutdown', 'key.press', 'view.fit', 'sheet.tree', 'sheet.enter', 'layers.get', 'layers.visible', 'layers.active']);
 /** A sheet path as the engine reports it: "/" then one UUID and a slash per level. */
 const SHEET_PATH_RE = /^\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/)*$/;
 const EXT: Record<Frame, string> = { sch: '.kicad_sch', pcb: '.kicad_pcb' };
@@ -202,6 +219,8 @@ export function startResponder(opts: {
 
   /** Set by the shutdown op or close(): from then on nothing is answered or emitted. */
   let closed = false;
+  /** A project.import is running: every request but shutdown answers busy until it answers. */
+  let importing = false;
   /** A shutdown request passed its checks: the port closes once it is answered. */
   let shutdownStarted = false;
 
@@ -275,6 +294,10 @@ export function startResponder(opts: {
     const { id, op } = data;
     if (!OPS.has(op)) return reply(id, fail('unknown_op', op));
     if (!onlyKeys(data, ['id', 'op', 'args'])) return reply(id, fail('bad_args', op));
+    // An import runs off the request chain (it may take a minute): what arrives
+    // meanwhile is answered at once, busy, except a shutdown, which ends it.
+    if (importing && op !== 'shutdown') return reply(id, fail('busy', op));
+    if (op === 'project.import') return startImport(id, data.args);
     try {
       reply(id, await run(op, data.args));
     } catch (err) {
@@ -398,6 +421,90 @@ export function startResponder(opts: {
     return ok({ opened, dropped: staged.dropped, chrome });
   }
 
+  /**
+   * project.import's checks, in order: the args (bad_args), the frame's kind
+   * (a sch frame answers unsupported), the engine (not_ready, unsupported
+   * without the open or the board save), then busy while a load is parked or a
+   * dialog or a popup menu is up (nothing is changed). Answers the checked
+   * request, or the refusal.
+   */
+  function importCheck(a: unknown): Answer | { w: ToolWindow; FS: EmscriptenFS; open: string; files: Array<{ path: string; bytes: Uint8Array }> } {
+    const op = 'project.import';
+    if (!isObj(a) || !onlyKeys(a, ['name', 'files', 'open', 'format'])) return fail('bad_args', op);
+    if (typeof a.name !== 'string' || a.name.length > MAX_NAME || !Array.isArray(a.files) || a.files.length > MAX_FILES) return fail('bad_args', op);
+    if (typeof a.open !== 'string' || !importable(a.open)) return fail('bad_args', op);
+    if (a.format !== undefined && (typeof a.format !== 'string' || a.format.length > MAX_FORMAT)) return fail('bad_args', op);
+    const files: Array<{ path: string; bytes: Uint8Array }> = [];
+    for (const f of a.files as unknown[]) {
+      if (!isObj(f) || !onlyKeys(f, ['path', 'bytes']) || typeof f.path !== 'string' || !(f.bytes instanceof Uint8Array)) return fail('bad_args', op);
+      files.push({ path: f.path, bytes: f.bytes });
+    }
+    if (frame !== 'pcb') return fail('unsupported', 'project.import needs a pcb frame');
+    const w = win;
+    if (w?.FS == null) return fail('not_ready', op);
+    if (typeof w.Module?.kicadOpenFile !== 'function') return fail('unsupported', 'kicadOpenFile');
+    if (typeof w.Module?.kicadSaveBoard !== 'function') return fail('unsupported', 'kicadSaveBoard');
+    if (engineBusy() || keysBlocked(w)) return fail('busy', op);
+    return { w, FS: w.FS, open: a.open, files };
+  }
+
+  /** Starts a checked import off the request chain; its answer is sent when it ends. */
+  function startImport(id: number, args: unknown): void {
+    const checked = importCheck(args);
+    if ('ok' in checked) return reply(id, checked);
+    importing = true;
+    void projectImport(checked)
+      .catch((err: unknown) => fail('island_error', describeError(err)))
+      .then((a) => {
+        importing = false;
+        reply(id, a);
+      });
+  }
+
+  /**
+   * A foreign board, converted (PROTOCOL.md project.import): staged as
+   * project.open stages, opened through the engine's own open with its dialogs
+   * answered (bridge/import.ts), then saved through the engine as
+   * <stem>.kicad_pcb beside the source, which becomes the frame's document.
+   */
+  async function projectImport(a: { w: ToolWindow; FS: EmscriptenFS; open: string; files: Array<{ path: string; bytes: Uint8Array }> }): Promise<Answer> {
+    const { w, FS } = a;
+    const deadline = Date.now() + timing.importMs;
+    emit({ type: 'ev.state', phase: 'staging' });
+    // The previous project is gone from here on, as for project.open.
+    staged = null;
+    opened = null;
+    stopSaveHook();
+    removeTree(FS, root);
+    const project = stageProject(w, SLUG, a.files);
+    staged = project;
+    const source = normalizePath(a.open);
+    if (source == null || !project.written.includes(source)) return fail('open_failed', a.open);
+    const target = importTarget(source);
+    if (target == null) return fail('open_failed', `no path for the converted board of ${source}`);
+    emit({ type: 'ev.state', phase: 'opening' });
+    const drove = await driveImport(w, `${root}/${source}`, { deadline, timing, closed: () => closed, engineBusy });
+    if (closed) return fail('import_failed', 'the frame closed');
+    if (!drove.ok) {
+      await settleChrome(w);   // a load that ran may have shown the menu bar
+      return fail('import_failed', drove.message);
+    }
+    // A new document: the leave prompt guards it again, until the save below
+    // hands the host its bytes (saveBoard quiets it for SAVE_QUIET_MS).
+    quietClear();
+    const left = deadline - Date.now();
+    const saved = left > 0 ? await saveBoard(w, FS, target, Math.min(timing.applyMs, left)) : fail('save_failed', target);
+    if (closed) return fail('import_failed', 'the frame closed');
+    if (!saved.ok) {
+      await settleChrome(w);
+      return fail('import_failed', `the converted board was not saved (${target})`);
+    }
+    opened = target;
+    startSaveHook(w);   // from here on the converted board is the document, as after project.open
+    const chrome = await settleChrome(w);
+    return ok({ opened: target, dropped: project.dropped, warnings: drove.warnings, chrome });
+  }
+
   /** Any of KiCad's window chrome is on screen. */
   function chromeVisible(w: ToolWindow): boolean {
     try { return (w.wxElementRegistry?.findAll({ visible: true }) ?? []).some((e) => CHROME_RE.test(e.typeName)); } catch { return false; }
@@ -507,8 +614,8 @@ export function startResponder(opts: {
     return frame === 'pcb' ? saveBoard(w, w.FS, opened) : saveSchematic(w, opened);
   }
 
-  /** The board through kicadSaveBoard: the one file the frame shows. */
-  async function saveBoard(w: ToolWindow, FS: EmscriptenFS, target: string): Promise<Answer> {
+  /** The board through kicadSaveBoard: the one file the frame shows. `ms` bounds the engine call. */
+  async function saveBoard(w: ToolWindow, FS: EmscriptenFS, target: string, ms = timing.applyMs): Promise<Answer> {
     const save = w.Module?.kicadSaveBoard;
     if (typeof save !== 'function') return fail('unsupported', 'kicadSaveBoard');
     const abs = `${root}/${target}`;
@@ -520,7 +627,7 @@ export function startResponder(opts: {
     // request chain moves on.
     const before = readBytes(FS, abs);
     try { if (before != null) FS.unlink(abs); } catch { return fail('save_failed', target); }
-    try { await withTimeout<unknown>(save(abs), timing.applyMs); } catch { /* judged by the file below */ }
+    try { await withTimeout<unknown>(save(abs), ms); } catch { /* judged by the file below */ }
     const bytes = readBytes(FS, abs);
     if (bytes == null || bytes.byteLength === 0) {
       try { if (before != null) FS.writeFile(abs, before); } catch { /* the answer is save_failed either way */ }

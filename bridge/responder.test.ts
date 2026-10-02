@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Chirichella Inc.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memfsProjectDir } from '../loader/src/wasm/constants';
+import { reportLines, tapEngineLog } from './import';
 import { describeError, startResponder, timing } from './responder';
 import { isQuiet, resetUnloadQuietForTest } from '../src/unload-quiet';
 
@@ -9,10 +10,13 @@ const PARENT = 'http://circuitcenter.localhost';
 const ROOT = memfsProjectDir('cc');
 const settle = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
-// The chrome watch after an open and the save-all's waits, shortened: an open
-// answers about 30 ms after its load, a save-all about 25 ms after its last file.
+// The chrome watch after an open, the save-all's and the import's waits,
+// shortened: an open answers about 30 ms after its load, a save-all about 25 ms
+// after its last file.
 beforeAll(() => {
   Object.assign(timing, { chromeSettleMs: 30, chromePollMs: 5, firstSaveMs: 60, saveSettleMs: 10, saveQuietMs: 40, saveAllMs: 300, savePollMs: 2, dismissMs: 5 });
+  // An import's dialogs are read every 5 ms, pressed 10 ms apart, and it ends 20 ms after the last one went.
+  Object.assign(timing, { importPollMs: 5, importQuietMs: 20, importStepMs: 10, importRefusedMs: 60, importCloseMs: 200 });
 });
 // No DOM in this suite: a KeyboardEvent stand-in that keeps every init field (key, code, ctrlKey, ...).
 beforeEach(() => {
@@ -104,6 +108,36 @@ function fakeEngine() {
    * on the document); a menu bar popup (escapeCloses false) does not.
    */
   const ui = { popup: false, escapeCloses: true };
+  /**
+   * Dialogs as wx.js shows them (an import's): a registry dialog with its parts
+   * linked by parentId, a window div with its title bar, and the DOM buttons
+   * wx-dom.js makes, whose click() runs the button's `on`. `clicks` records
+   * every press as "<title>:<label>" ("<title>:×" for the title bar's close box).
+   */
+  const modals: FakeModal[] = [];
+  const clicks: string[] = [];
+  const showModal = (m: FakeModal): FakeModal => { modals.push(m); return m; };
+  const hideModal = (m: FakeModal): void => { const i = modals.indexOf(m); if (i >= 0) modals.splice(i, 1); };
+  const btnCentre = (m: FakeModal, i: number) => ({ x: m.x + 30 + 60 * i, y: m.y + m.h - 15 });
+  const modalElements = () => modals.flatMap((m) => [
+    { id: m.id, parentId: 'frame', typeName: 'wxDialog', name: 'dialog', label: '', visible: true, screenX: m.x, screenY: m.y, width: m.w, height: m.h, centerX: m.x + Math.floor(m.w / 2), centerY: m.y + Math.floor(m.h / 2) },
+    ...m.buttons.map((b, i) => ({ id: `${m.id}.b${i}`, parentId: m.id, typeName: 'wxButton', name: 'button', label: b.label, visible: true, centerX: btnCentre(m, i).x, centerY: btnCentre(m, i).y })),
+    ...(m.texts ?? []).map((t, i) => ({ id: `${m.id}.t${i}`, parentId: m.id, typeName: 'wxStaticText', name: 'staticText', label: t, visible: true })),
+    ...(m.gauge ? [{ id: `${m.id}.g`, parentId: m.id, typeName: 'wxGauge', name: 'gauge', label: '', visible: true }] : []),
+    ...(m.pane ? [{ id: `${m.id}.p`, parentId: m.id, typeName: 'wxGenericCollapsiblePane', name: 'collapsiblePane', label: '', visible: true }] : []),
+  ]);
+  const domButtons = () => modals.flatMap((m) => m.buttons.map((b, i) => ({
+    textContent: b.label.replace(/&(.)/g, '$1'),
+    getBoundingClientRect: () => ({ left: btnCentre(m, i).x - 25, top: btnCentre(m, i).y - 9, width: 50, height: 18 }),
+    click: () => { clicks.push(`${m.title}:${b.label.replace(/&(.)/g, '$1')}`); b.on?.(); },
+  })));
+  const windowDivs = () => modals.map((m) => ({
+    getBoundingClientRect: () => ({ left: m.x, top: m.y, width: m.w, height: m.h }),
+    querySelector: (sel: string) => (sel === '.window-titlebar-text' ? { textContent: m.title } : sel === '.window-titlebar-close' ? { click: () => { clicks.push(`${m.title}:×`); (m.onClose ?? (() => hideModal(m)))(); } } : null),
+  }));
+  /** The frame's console: the engine's log target writes "[wxLog][LEVEL] text" lines to it. */
+  const consoleOut: string[] = [];
+  const engineConsole = Object.fromEntries((['log', 'info', 'warn', 'error', 'debug'] as const).map((k) => [k, (...a: unknown[]) => { consoleOut.push(`${k}: ${a.map(String).join(' ')}`); }])) as unknown as Console;
   const popupEl = {
     dispatchEvent: vi.fn((e: Event) => {
       if (e.type === 'keydown' && (e as KeyboardEvent).key === 'Escape' && (e as KeyboardEvent).code === 'Escape' && e.bubbles && ui.escapeCloses) ui.popup = false;
@@ -145,18 +179,37 @@ function fakeEngine() {
     FS,
     Module,
     wxElementRegistry: {
-      findAll: (f: { type?: string; visible?: boolean } = {}) => [{ typeName: 'SCH_EDIT_FRAME', name: 'SchematicFrame', visible: true }, ...dialogs, ...chrome]
+      findAll: (f: { type?: string; visible?: boolean } = {}) => [{ id: 'frame', typeName: 'SCH_EDIT_FRAME', name: 'SchematicFrame', visible: true }, ...dialogs, ...chrome, ...modalElements()]
         .filter((e) => (f.type == null || e.typeName === f.type) && (f.visible !== true || e.visible)),
       findByLabel: () => [],
     },
-    document: { querySelector: (sel: string) => (ui.popup && sel === '.wx-menu-popup' ? popupEl : null) },
+    document: {
+      querySelector: (sel: string) => (ui.popup && sel === '.wx-menu-popup' ? popupEl : null),
+      querySelectorAll: (sel: string) => (sel === 'button.wx-dom-control' ? domButtons() : sel === '[id^="window-"]' ? windowDivs() : []),
+    },
+    console: engineConsole,
     dispatchEvent: (e: Event) => {
       const k = e as KeyboardEvent;
       if (e.type === 'keydown' && k.ctrlKey && k.code === 'KeyS') ctrlS();
       return true;
     },
   } as unknown as ToolWindow & { kicadCollab?: { onSave?: (p: string) => void } };
-  return { win, files, dirs, busy, broken, pinned, opened, Module, dialogs, chrome, ui, popupEl, ctrlS };
+  return { win, files, dirs, busy, broken, pinned, opened, Module, dialogs, chrome, ui, popupEl, ctrlS, modals, clicks, showModal, hideModal, consoleOut, engineConsole };
+}
+
+/** A dialog the fake engine shows: its box, its title, its buttons (in order), its static texts. */
+interface FakeModal {
+  id: string;
+  title: string;
+  x: number; y: number; w: number; h: number;
+  buttons: Array<{ label: string; on?: () => void }>;
+  texts?: string[];
+  /** A gauge (KiCad's progress reporter shows one beside its Cancel). */
+  gauge?: boolean;
+  /** A collapsible details pane (a wxLog report of several lines). */
+  pane?: boolean;
+  /** What the title bar's close box does; by default the dialog goes. */
+  onClose?: () => void;
 }
 
 const b = (s: string) => new TextEncoder().encode(s);
@@ -1144,5 +1197,322 @@ describe('sheets, layers and fit', () => {
     const r = booted(eng);
     expect(await r.request('view.fit')).toEqual({ ok: true, result: {} });
     expect(seen).toEqual(['keydown:Home', 'keyup:Home']);
+  });
+});
+
+describe('project.import', () => {
+  /** A connected responder over a booted engine; `send` answers the request's own reply, `got` holds everything. */
+  function importer(search = '?frame=pcb&theme=day', eng = fakeEngine()) {
+    const { page, parent } = fakePage(search);
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    let id = 0;
+    const post = (op: string, args?: unknown): number => { const n = ++id; port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args }); return n; };
+    const answer = async (n: number, ms = 3_000): Promise<Record<string, unknown> | undefined> => {
+      const end = Date.now() + ms;
+      while (Date.now() < end) { const m = got.find((x) => x.id === n); if (m != null) return m; await settle(5); }
+      return undefined;
+    };
+    const send = async (op: string, args?: unknown, ms?: number) => answer(post(op, args), ms);
+    return { r, eng, port, got, post, answer, send };
+  }
+
+  /**
+   * KiCad's import as the spike measured it: kicadOpenFile shows the "Load PCB"
+   * progress reporter, then (for Eagle, CADSTAR, PADS) the layer mapping, whose
+   * OK is refused until Auto-Match Layers ran; the open resolves true, and the
+   * log report follows a little later (12 ms here, about 10 ms in the engine),
+   * its lines written to the console first.
+   */
+  function kicadImport(eng: ReturnType<typeof fakeEngine>, o: { mapping?: boolean; report?: string[]; result?: boolean } = {}) {
+    let busy = false;
+    (eng.Module as { kicadOpenFileBusy: () => boolean }).kicadOpenFileBusy = () => busy;
+    eng.Module.kicadOpenFile.mockImplementation((p: string) => {
+      eng.opened.push(p);
+      busy = true;
+      return new Promise<boolean>((resolve) => {
+        const finish = (v: boolean): void => {
+          eng.hideModal(progress);
+          busy = false;
+          resolve(v);
+          if (v && o.report != null) {
+            for (const line of o.report) eng.win.console.info(`[wxLog][INFO] ${line}`);
+            eng.win.console.debug('[wxLog][DEBUG] EndModal: 5100');
+            setTimeout(() => {
+              const rep: FakeModal = eng.showModal({ id: 'rep', title: 'KiCad PCB Editor Warning', x: 396, y: 353, w: 488, h: 94, texts: o.report!.slice(-1), pane: o.report!.length > 1, buttons: [{ label: '&OK', on: () => eng.hideModal(rep) }] });
+            }, 12);   // later than one poll (5 ms), within the quiet wait (20 ms)
+          }
+        };
+        const progress: FakeModal = eng.showModal({ id: 'load', title: 'Load PCB', x: 474, y: 334, w: 332, h: 131, gauge: true, texts: ['Elapsed time:'], buttons: [{ label: '&Cancel', on: () => finish(false) }] });
+        if (!o.mapping) { setTimeout(() => finish(o.result ?? true), 10); return; }
+        let matched = false;
+        const map: FakeModal = eng.showModal({ id: 'map', title: 'Edit Mapping of Imported Layers', x: 332, y: 222, w: 616, h: 356, texts: ['Imported Layers', 'KiCad Layers'], buttons: [
+          { label: '>' }, { label: '<' }, { label: '<<' },
+          { label: 'Auto-Match Layers', on: () => { matched = true; } },
+          { label: '&OK', on: () => { if (matched) { eng.hideModal(map); finish(o.result ?? true); } } },
+        ] });
+      });
+    });
+  }
+
+  const brd = { path: 'boards/aht20.brd', bytes: b('<?xml version="1.0"?><eagle/>') };
+
+  it('a sch frame answers unsupported; bad args and a foreign open answer bad_args; nothing is staged', async () => {
+    const sch = importer('?frame=sch');
+    expect(await sch.send('project.import', { name: 'x', files: [brd], open: brd.path })).toMatchObject({ ok: false, error: { code: 'unsupported' } });
+    expect(sch.eng.opened).toEqual([]);
+    expect([...sch.eng.files.keys()]).toEqual([]);
+    const { send, eng } = importer();
+    const bad = [
+      { name: 'x', files: [brd] },                                     // no open
+      { name: 'x', files: [brd], open: 'boards/aht20.kicad_pcb' },     // the frame's own kind is project.open's
+      { name: 'x', files: [brd], open: 'boards/aht20.sch' },           // a schematic
+      { name: 'x', files: [brd], open: 'copper.gbr' },                 // no importer reads Gerber
+      { name: 'x', files: [brd], open: 'boards/.brd' },                // no stem
+      { name: 'x', files: [brd], open: brd.path, format: 5 },
+      { name: 'x', files: [brd], open: brd.path, format: 'e'.repeat(65) },
+      { name: 'x', files: [brd], open: brd.path, extra: true },
+      { name: 'x', files: [{ path: brd.path, bytes: brd.bytes.buffer }], open: brd.path },
+      { name: 7, files: [brd], open: brd.path },
+    ];
+    for (const args of bad) expect(await send('project.import', args)).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'project.import' } });
+    expect(await send('project.import')).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    expect(eng.opened).toEqual([]);
+    expect([...eng.files.keys()]).toEqual([]);
+    // An open that names no staged file is open_failed, as for project.open.
+    expect(await send('project.import', { name: 'x', files: [brd], open: 'boards/other.brd' })).toMatchObject({ ok: false, error: { code: 'open_failed' } });
+    expect(eng.opened).toEqual([]);
+  });
+
+  it('drives the layer mapping and the log report, saves <stem>.kicad_pcb beside the source and answers its warnings', async () => {
+    const eng = fakeEngine();
+    kicadImport(eng, { mapping: true, report: ["Ignoring a wire since Eagle layer 'tRestrict' (41) was not mapped", "Ignoring a wire since Eagle layer 'tRestrict' (41) was not mapped", 'The design has been imported.\nPlease review the import errors.'] });
+    const consoleBefore = { ...eng.engineConsole };
+    const { send, got } = importer(undefined, eng);
+    const answer = await send('project.import', { name: 'AHT20', files: [brd, { path: '../evil.txt', bytes: b('x') }], open: brd.path, format: 'eagle' });
+    expect(answer).toEqual({ id: 1, ok: true, result: {
+      opened: 'boards/aht20.kicad_pcb',
+      dropped: ['../evil.txt'],
+      warnings: ["Ignoring a wire since Eagle layer 'tRestrict' (41) was not mapped", 'The design has been imported. Please review the import errors.'],
+      chrome: false,
+    } });
+    // KiCad's own open on the staged source; Auto-Match, then OK, then the report's OK; the progress reporter untouched.
+    expect(eng.opened).toEqual([`${ROOT}/boards/aht20.brd`]);
+    expect(eng.clicks).toEqual(['Edit Mapping of Imported Layers:Auto-Match Layers', 'Edit Mapping of Imported Layers:OK', 'KiCad PCB Editor Warning:OK']);
+    expect(eng.modals).toEqual([]);
+    // The converted board was saved through the engine and reached the host before the answer.
+    expect(eng.Module.kicadSaveBoard).toHaveBeenCalledWith(`${ROOT}/boards/aht20.kicad_pcb`);
+    const events = got.filter((m) => m.type != null && m.type !== 'ev.ready' && m.type !== 'ev.menu');
+    expect(events).toEqual([
+      { type: 'ev.state', phase: 'staging' },
+      { type: 'ev.state', phase: 'opening' },
+      { type: 'ev.saved', path: 'boards/aht20.kicad_pcb', bytes: b('(kicad_pcb saved)') },
+    ]);
+    expect(got.indexOf(events[2])).toBeLessThan(got.indexOf(answer!));
+    // The console tap is gone: every method is the engine's own again.
+    expect({ ...eng.engineConsole }).toEqual(consoleBefore);
+
+    // The converted board is the frame's document, as after project.open.
+    eng.Module.kicadSaveBoard.mockClear();
+    expect(await send('project.save')).toEqual({ id: 2, ok: true, result: { path: 'boards/aht20.kicad_pcb', saved: ['boards/aht20.kicad_pcb'] } });
+    expect(eng.Module.kicadSaveBoard).toHaveBeenCalledWith(`${ROOT}/boards/aht20.kicad_pcb`);
+    expect(await send('layers.get')).toMatchObject({ ok: true });
+    expect(await send('layers.visible', { id: 2, visible: false })).toEqual({ id: 4, ok: true, result: {} });
+    expect(await send('view.fit')).toEqual({ id: 5, ok: true, result: {} });
+    expect(await send('key.press', { key: 'a', code: 'KeyA' })).toEqual({ id: 6, ok: true, result: {} });
+    // Ctrl+S in the editor reaches the host too.
+    got.length = 0;
+    eng.files.set(`${ROOT}/boards/aht20.kicad_pcb`, b('(kicad_pcb edited)'));
+    eng.win.kicadCollab?.onSave?.(`${ROOT}/boards/aht20.kicad_pcb`);
+    await settle();
+    expect(got).toEqual([{ type: 'ev.saved', path: 'boards/aht20.kicad_pcb', bytes: b('(kicad_pcb edited)') }]);
+  });
+
+  it('a board with no dialog imports straight through, an upper case extension included', async () => {
+    const eng = fakeEngine();
+    kicadImport(eng);
+    const { send } = importer(undefined, eng);
+    expect(await send('project.import', { name: 'p', files: [{ path: 'Glyphs.PCB', bytes: b('ACCEL_ASCII') }], open: 'Glyphs.PCB' })).toEqual({ id: 1, ok: true, result: { opened: 'Glyphs.kicad_pcb', dropped: [], warnings: [], chrome: false } });
+    expect(eng.clicks).toEqual([]);
+  });
+
+  it('the engine\'s refusal is import_failed: its message box is closed, nothing is saved and there is no document', async () => {
+    const eng = fakeEngine();
+    let busy = false;
+    (eng.Module as { kicadOpenFileBusy: () => boolean }).kicadOpenFileBusy = () => busy;
+    eng.Module.kicadOpenFile.mockImplementation((p: string) => {
+      eng.opened.push(p);
+      busy = true;
+      return new Promise<boolean>((resolve) => {
+        const box: FakeModal = eng.showModal({ id: 'err', title: 'Error', x: 406, y: 334, w: 468, h: 132, texts: ['File format is not supported'], buttons: [{ label: '&OK', on: () => { eng.hideModal(box); busy = false; resolve(false); } }] });
+      });
+    });
+    const { send, got } = importer(undefined, eng);
+    const answer = await send('project.import', { name: 'a', files: [{ path: 'trs80.brd', bytes: b('allegro') }], open: 'trs80.brd' });
+    expect(answer).toMatchObject({ ok: false, error: { code: 'import_failed' } });
+    expect((answer as { error: { message: string } }).error.message).toContain('File format is not supported');
+    expect(eng.clicks).toEqual(['Error:OK']);
+    expect(eng.modals).toEqual([]);
+    expect(eng.Module.kicadSaveBoard).not.toHaveBeenCalled();
+    expect(got.filter((m) => m.type === 'ev.saved')).toEqual([]);
+    expect(await send('project.save')).toMatchObject({ ok: false, error: { code: 'not_ready' } });
+    // A refusal with no dialog at all answers a plain detail.
+    eng.Module.kicadOpenFile.mockImplementation(() => Promise.resolve(false));
+    expect(await send('project.import', { name: 'a', files: [{ path: 'trs80.brd', bytes: b('allegro') }], open: 'trs80.brd' })).toEqual({ id: 3, ok: false, error: { code: 'import_failed', message: 'the engine could not import the file' } });
+    // When the engine logged why, its first line follows.
+    eng.Module.kicadOpenFile.mockImplementation(() => { eng.win.console.error('[wxLog][ERROR] Unable to read the board.'); return Promise.resolve(false); });
+    expect(await send('project.import', { name: 'a', files: [{ path: 'trs80.brd', bytes: b('allegro') }], open: 'trs80.brd' })).toEqual({ id: 4, ok: false, error: { code: 'import_failed', message: 'the engine could not import the file: Unable to read the board.' } });
+  });
+
+  it('any other dialog fails the import, named, and is closed without accepting it: Save Changes? gets Cancel, never Save or Discard', async () => {
+    const eng = fakeEngine();
+    let busy = false;
+    (eng.Module as { kicadOpenFileBusy: () => boolean }).kicadOpenFileBusy = () => busy;
+    eng.Module.kicadOpenFile.mockImplementation(() => {
+      busy = true;
+      return new Promise<boolean>((resolve) => {
+        const done = (): void => { eng.hideModal(ask); busy = false; resolve(false); };
+        const ask: FakeModal = eng.showModal({ id: 'ask', title: 'Save Changes?', x: 406, y: 334, w: 468, h: 132, texts: ['The current PCB has been modified.  Save changes?'], buttons: [
+          { label: '&Save', on: () => { throw new Error('saved') } }, { label: 'Discard Changes', on: () => { throw new Error('discarded') } }, { label: '&Cancel', on: done },
+        ] });
+      });
+    });
+    const { send } = importer(undefined, eng);
+    const answer = await send('project.import', { name: 'a', files: [brd], open: brd.path });
+    expect(answer).toEqual({ id: 1, ok: false, error: { code: 'import_failed', message: 'dialog "Save Changes?": The current PCB has been modified. Save changes?' } });
+    expect(eng.clicks).toEqual(['Save Changes?:Cancel']);
+    expect(eng.modals).toEqual([]);
+  });
+
+  it('a layer mapping whose OK stays refused fails the import and is closed by its close box', async () => {
+    const eng = fakeEngine();
+    let busy = false;
+    (eng.Module as { kicadOpenFileBusy: () => boolean }).kicadOpenFileBusy = () => busy;
+    eng.Module.kicadOpenFile.mockImplementation(() => {
+      busy = true;
+      return new Promise<boolean>((resolve) => {
+        const map: FakeModal = eng.showModal({ id: 'map', title: 'Edit Mapping of Imported Layers', x: 332, y: 222, w: 616, h: 356, buttons: [{ label: 'Auto-Match Layers' }, { label: '&OK' }],
+          onClose: () => { eng.hideModal(map); busy = false; resolve(false); } });
+      });
+    });
+    const { send } = importer(undefined, eng);
+    expect(await send('project.import', { name: 'a', files: [brd], open: brd.path })).toMatchObject({ ok: false, error: { code: 'import_failed', message: 'the layer mapping was refused (Edit Mapping of Imported Layers)' } });
+    expect(eng.clicks).toEqual(['Edit Mapping of Imported Layers:Auto-Match Layers', 'Edit Mapping of Imported Layers:OK', 'Edit Mapping of Imported Layers:×']);
+    expect(eng.modals).toEqual([]);
+  });
+
+  it('an import past timing.importMs is import_failed, with the progress reporter cancelled and every dialog closed first', async () => {
+    const eng = fakeEngine();
+    let busy = false;
+    (eng.Module as { kicadOpenFileBusy: () => boolean }).kicadOpenFileBusy = () => busy;
+    eng.Module.kicadOpenFile.mockImplementation(() => {
+      busy = true;
+      return new Promise<boolean>((resolve) => {
+        // The load never ends by itself; its Cancel raises KiCad's "canceled" message box.
+        const progress: FakeModal = eng.showModal({ id: 'load', title: 'Load PCB', x: 474, y: 334, w: 332, h: 131, gauge: true, buttons: [{ label: '&Cancel', on: () => {
+          eng.hideModal(progress);
+          const box: FakeModal = eng.showModal({ id: 'err', title: 'Error', x: 406, y: 334, w: 468, h: 132, texts: ['File import canceled by user.'], buttons: [{ label: '&OK', on: () => { eng.hideModal(box); busy = false; resolve(false); } }] });
+        } }] });
+      });
+    });
+    const saved = timing.importMs;
+    timing.importMs = 150;
+    try {
+      const { send } = importer(undefined, eng);
+      const t0 = Date.now();
+      const answer = await send('project.import', { name: 'a', files: [brd], open: brd.path });
+      expect(Date.now() - t0).toBeGreaterThanOrEqual(150);
+      expect(answer).toEqual({ id: 1, ok: false, error: { code: 'import_failed', message: 'the import took longer than 0.15 s' } });
+      expect(eng.clicks).toEqual(['Load PCB:Cancel', 'Error:OK']);
+      expect(eng.modals).toEqual([]);
+      expect(eng.Module.kicadSaveBoard).not.toHaveBeenCalled();
+    } finally {
+      timing.importMs = saved;
+    }
+  });
+
+  it('while an import runs every request but shutdown answers busy at once; the import still answers after', async () => {
+    const eng = fakeEngine();
+    let finish: (v: boolean) => void = () => undefined;
+    let busy = false;
+    (eng.Module as { kicadOpenFileBusy: () => boolean }).kicadOpenFileBusy = () => busy;
+    eng.Module.kicadOpenFile.mockImplementation(() => {
+      busy = true;
+      const progress = eng.showModal({ id: 'load', title: 'Load PCB', x: 474, y: 334, w: 332, h: 131, gauge: true, buttons: [{ label: '&Cancel' }] });
+      return new Promise<boolean>((resolve) => { finish = (v) => { eng.hideModal(progress); busy = false; resolve(v); }; });
+    });
+    const { post, answer, got, eng: e } = importer(undefined, eng);
+    const imp = post('project.import', { name: 'a', files: [brd], open: brd.path });
+    await settle(30);
+    const during = [
+      post('key.press', { key: 'a', code: 'KeyA' }), post('view.fit'), post('project.save'), post('layers.get'),
+      post('layers.visible', { id: 0, visible: false }), post('chrome.show', { on: true }), post('readonly', { on: true }),
+      post('project.open', { name: 'b', files: [{ path: 'b.kicad_pcb', bytes: b('(kicad_pcb)') }] }),
+      post('project.import', { name: 'c', files: [brd], open: brd.path }), post('project.forget'),
+    ];
+    await settle(30);
+    for (const n of during) expect(got.find((m) => m.id === n)).toMatchObject({ ok: false, error: { code: 'busy' } });
+    expect(got.find((m) => m.id === imp)).toBeUndefined();
+    expect(e.win.dispatchEvent).toBeDefined();
+    expect(e.Module.kicadSetChrome).not.toHaveBeenCalledWith(true);
+    expect(e.Module.kicadLayersGetState).not.toHaveBeenCalled();
+    finish(true);
+    expect(await answer(imp)).toMatchObject({ ok: true, result: { opened: 'boards/aht20.kicad_pcb' } });
+    // And requests are served again.
+    expect(await answer(post('view.fit'))).toMatchObject({ ok: true });
+  });
+
+  it('a shutdown during an import ends it: the shutdown answers, the import never does, and the console is the engine\'s again', async () => {
+    const eng = fakeEngine();
+    const before = { ...eng.engineConsole };
+    eng.Module.kicadOpenFile.mockImplementation(() => new Promise<boolean>(() => undefined));
+    const { post, answer, got } = importer(undefined, eng);
+    const imp = post('project.import', { name: 'a', files: [brd], open: brd.path });
+    await settle(30);
+    expect(await answer(post('shutdown'))).toEqual({ id: 2, ok: true, result: {} });
+    await settle(60);
+    expect(got.find((m) => m.id === imp)).toBeUndefined();
+    expect({ ...eng.engineConsole }).toEqual(before);
+  });
+
+  it('answers busy, changing nothing, while a load is parked or a dialog or a popup menu is up', async () => {
+    const eng = fakeEngine();
+    const { send } = importer(undefined, eng);
+    eng.dialogs.push({ typeName: 'wxDialog', visible: true });
+    expect(await send('project.import', { name: 'a', files: [brd], open: brd.path })).toMatchObject({ ok: false, error: { code: 'busy' } });
+    eng.dialogs.length = 0;
+    eng.ui.popup = true;
+    expect(await send('project.import', { name: 'a', files: [brd], open: brd.path })).toMatchObject({ ok: false, error: { code: 'busy' } });
+    eng.ui.popup = false;
+    (eng.Module as { kicadOpenFileBusy: () => boolean }).kicadOpenFileBusy = () => true;
+    expect(await send('project.import', { name: 'a', files: [brd], open: brd.path })).toMatchObject({ ok: false, error: { code: 'busy' } });
+    expect(eng.opened).toEqual([]);
+    expect([...eng.files.keys()]).toEqual([]);
+  });
+});
+
+describe('the import\'s report lines', () => {
+  it('keeps each line once, folds its whitespace, cuts it at 200 characters and keeps at most 40', () => {
+    const long = 'x'.repeat(300);
+    expect(reportLines(['a  b\nc', 'a b c', '', '   ', long])).toEqual(['a b c', 'x'.repeat(200)]);
+    expect(reportLines(Array.from({ length: 45 }, (_, i) => `line ${i}`))).toHaveLength(40);
+  });
+
+  it('the console tap keeps what a report lists, never the engine\'s DEBUG chatter, and passes every call on', () => {
+    const seen: string[] = [];
+    const c = { log: (...a: unknown[]) => seen.push(`log ${a.join(' ')}`), info: (...a: unknown[]) => seen.push(`info ${a.join(' ')}`), warn: (...a: unknown[]) => seen.push(`warn ${a.join(' ')}`), error: (...a: unknown[]) => seen.push(`error ${a.join(' ')}`), debug: (...a: unknown[]) => seen.push(`debug ${a.join(' ')}`) };
+    const own = { ...c };
+    const tap = tapEngineLog({ console: c as unknown as Console });
+    c.warn('[wxLog][WARNING] fonts differ');
+    c.debug('[wxLog][DEBUG] EndModal: 5100');
+    c.info('[wxLog][INFO] imported.\nreview it');
+    c.error('[wxLog][ERROR] a pad was dropped');
+    c.log('[editor]', '[wxLog][WARNING] not first');
+    c.log('plain');
+    expect(tap.lines()).toEqual(['fonts differ', 'imported.\nreview it', 'a pad was dropped']);
+    expect(seen).toHaveLength(6);
+    tap.stop();
+    expect({ ...c }).toEqual(own);
   });
 });
