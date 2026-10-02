@@ -11,7 +11,7 @@ import { parseKeyPress, pressKey, type KeyPress } from '../src/keys';
 import { normalizePath, openStaged, PROJECT_ROOT, stageProject, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
 import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
-import { dismissPopups, keysBlocked, watchMenus } from './modal';
+import { dialogUp, dismissPopups, keysBlocked, watchMenus } from './modal';
 
 declare const __ISLAND_ID__: string;   // define'd by vite.config.ts from PIN.json
 
@@ -542,9 +542,12 @@ export function startResponder(opts: {
    */
   async function saveSchematic(w: ToolWindow, fallback: string): Promise<Answer> {
     const op = 'project.save';
-    // A popup menu holds no edits: it is closed as Escape closes it, and the
-    // parked chain that opened it is let go before the key. Only a dialog (or
-    // a menu bar popup, which takes no Escape) refuses: the key would land in it.
+    // A dialog refuses first, and nothing is pressed while one is up (the
+    // protocol's promise): a popup over a dialog stays as it is. Otherwise a
+    // popup menu holds no edits: it is closed as Escape closes it, and the
+    // parked chain that opened it is let go before the key. A menu bar popup
+    // takes no Escape and refuses like a dialog: the key would land in it.
+    if (dialogUp(w, false)) return fail('busy', op);
     if (dismissPopups(w)) await sleep(timing.dismissMs);
     if (keysBlocked(w)) return fail('busy', op);
     const tree = await readSheetTree(w);

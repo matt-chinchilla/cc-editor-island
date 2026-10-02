@@ -788,12 +788,14 @@ describe('startResponder', () => {
     expect(eng.ctrlS).toHaveBeenCalledTimes(1);
     expect(eng.popupEl.dispatchEvent.mock.invocationCallOrder[0]).toBeLessThan(eng.ctrlS.mock.invocationCallOrder[0]);
     expect(got.map((m) => m.type ?? 'answer')).toEqual(['ev.saved', 'ev.saved', 'answer']);
-    // Under a dialog as well as the popup, the popup still closes but the dialog refuses the key.
+    // Under a dialog as well as the popup, the dialog refuses first and NOTHING
+    // is pressed: the popup stays as it is (the protocol's promise).
     eng.ui.popup = true;
     eng.dialogs.push({ typeName: 'wxDialog', visible: true });
     eng.ctrlS.mockClear();
     expect(await request('project.save')).toMatchObject({ ok: false, error: { code: 'busy', message: 'project.save' } });
     expect(eng.ctrlS).not.toHaveBeenCalled();
+    expect(eng.ui.popup).toBe(true);
   });
 
   it('a sheet tree that never answers ends as island_error, and the next request is answered', async () => {
