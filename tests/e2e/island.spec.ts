@@ -514,6 +514,19 @@ test('a popup menu is reported as ev.menu while it is up, and holds the host\'s 
   expect(await request(page, 'view.fit')).toEqual({});
 });
 
+test('a schematic save closes an open popup menu first, as Escape does, and saves every sheet', async ({ page }) => {
+  await boot(page, 'fixture=glasgow&frame=sch', 'glasgow.kicad_sch');
+  const menus = async (): Promise<boolean[]> => (await events(page)).filter((e) => e.type === 'ev.menu').map((e) => e.open === true);
+  // A right press in the drawing opens KiCad's context menu (a wx-dom popup).
+  await clickIn(page, 1100, 730, 'right');
+  await expect.poll(menus, { timeout: 10_000 }).toEqual([true]);
+  // A menu holds no edits: the save closes it and goes on, rather than answering busy.
+  expect(await saveAll(page)).toEqual({ path: 'glasgow.kicad_sch', saved: GLASGOW_SAVE });
+  await expect.poll(menus, { timeout: 10_000 }).toEqual([true, false]);
+  // The editor takes keys again.
+  expect(await request(page, 'view.fit')).toEqual({});
+});
+
 /** A seeded config file of the frame's MEMFS, parsed. */
 const seededConfig = (frame: Frame, file: string): Promise<Record<string, any>> => frame.evaluate((name) => {
   const FS = (window as unknown as { FS: { readFile(p: string, o: { encoding: 'utf8' }): string } }).FS;

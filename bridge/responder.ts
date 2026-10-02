@@ -11,7 +11,7 @@ import { parseKeyPress, pressKey, type KeyPress } from '../src/keys';
 import { normalizePath, openStaged, PROJECT_ROOT, stageProject, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
 import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
-import { keysBlocked, watchMenus } from './modal';
+import { dismissPopups, keysBlocked, watchMenus } from './modal';
 
 declare const __ISLAND_ID__: string;   // define'd by vite.config.ts from PIN.json
 
@@ -75,6 +75,8 @@ export const timing = {
   /** The save-all's ceiling, whatever arrives. */
   saveAllMs: 20_000,
   savePollMs: 25,
+  /** After a save closed a popup menu, the pause before its key (the menu's opener resumes first). Unmeasured. */
+  dismissMs: 100,
 };
 /** KiCad's own Save (eeschema's Ctrl+S): every sheet of the schematic and the project file. */
 const SAVE_KEY: KeyPress = { key: 's', code: 'KeyS', ctrl: true, shift: false, alt: false };
@@ -469,21 +471,31 @@ export function startResponder(opts: {
   }
 
   /**
+   * The engine's sheet tree for a schematic save, read once: null without the
+   * export (an older build), when it never answers within timing.applyMs, or
+   * when it is not a tree.
+   */
+  async function readSheetTree(w: ToolWindow): Promise<{ current: unknown; sheets: unknown[] } | null> {
+    const tree = w.Module?.kicadSheetsGetTree;
+    if (typeof tree !== 'function') return null;
+    let state: unknown;
+    try {
+      const text = await withTimeout<unknown>(tree(), timing.applyMs);
+      if (text === 'timeout') return null;
+      state = JSON.parse(String(text || 'null'));
+    } catch { return null; }
+    if (!isObj(state) || !Array.isArray(state.sheets)) return null;
+    return { current: state.current, sheets: state.sheets as unknown[] };
+  }
+
+  /**
    * The file of the sheet the editor is SHOWING (the current sheet): the
    * project.save answer's `path`. Without the sheet tree (an older build) the
    * opened file; null when the shown sheet lies outside the project.
    */
-  async function schematicTarget(w: ToolWindow, fallback: string): Promise<string | null> {
-    const tree = w.Module?.kicadSheetsGetTree;
-    if (typeof tree !== 'function') return fallback;
-    let state: unknown;
-    try {
-      const text = await withTimeout<unknown>(tree(), timing.applyMs);
-      if (text === 'timeout') return fallback;
-      state = JSON.parse(String(text || 'null'));
-    } catch { return fallback; }
-    if (!isObj(state) || typeof state.current !== 'string' || !Array.isArray(state.sheets)) return fallback;
-    const row = (state.sheets as unknown[]).find((s) => isObj(s) && s.path === state.current);
+  function schematicTarget(state: { current: unknown; sheets: unknown[] } | null, fallback: string): string | null {
+    if (state == null || typeof state.current !== 'string') return fallback;
+    const row = state.sheets.find((s) => isObj(s) && s.path === state.current);
     if (!isObj(row) || typeof row.file !== 'string' || row.file === '') return fallback;
     return relInRoot(row.file);
   }
@@ -530,9 +542,14 @@ export function startResponder(opts: {
    */
   async function saveSchematic(w: ToolWindow, fallback: string): Promise<Answer> {
     const op = 'project.save';
-    if (keysBlocked(w)) return fail('busy', op);   // the key would land in the menu or dialog
-    const shown = (await schematicTarget(w, fallback)) ?? fallback;
-    const expected = await expectedSaves(w, fallback);
+    // A popup menu holds no edits: it is closed as Escape closes it, and the
+    // parked chain that opened it is let go before the key. Only a dialog (or
+    // a menu bar popup, which takes no Escape) refuses: the key would land in it.
+    if (dismissPopups(w)) await sleep(timing.dismissMs);
+    if (keysBlocked(w)) return fail('busy', op);
+    const tree = await readSheetTree(w);
+    const shown = schematicTarget(tree, fallback) ?? fallback;
+    const expected = expectedSaves(tree, fallback);
     const got: Array<{ path: string; at: number }> = [];
     collecting = got;
     const start = Date.now();
@@ -566,19 +583,11 @@ export function startResponder(opts: {
    * names (inside the project) and the root's .kicad_pro when it was staged.
    * Null without a usable sheet tree.
    */
-  async function expectedSaves(w: ToolWindow, fallback: string): Promise<Set<string> | null> {
-    const tree = w.Module?.kicadSheetsGetTree;
-    if (typeof tree !== 'function') return null;
-    let state: unknown;
-    try {
-      const text = await withTimeout<unknown>(tree(), timing.applyMs);
-      if (text === 'timeout') return null;
-      state = JSON.parse(String(text || 'null'));
-    } catch { return null; }
-    if (!isObj(state) || !Array.isArray(state.sheets)) return null;
+  function expectedSaves(state: { current: unknown; sheets: unknown[] } | null, fallback: string): Set<string> | null {
+    if (state == null) return null;
     const files = new Set<string>();
     let rootFile = fallback;
-    for (const row of state.sheets as unknown[]) {
+    for (const row of state.sheets) {
       if (!isObj(row) || typeof row.file !== 'string') continue;
       const rel = relInRoot(row.file);
       if (rel == null) continue;

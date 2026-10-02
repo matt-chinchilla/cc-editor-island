@@ -12,7 +12,7 @@ const settle = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 // The chrome watch after an open and the save-all's waits, shortened: an open
 // answers about 30 ms after its load, a save-all about 25 ms after its last file.
 beforeAll(() => {
-  Object.assign(timing, { chromeSettleMs: 30, chromePollMs: 5, firstSaveMs: 60, saveSettleMs: 10, saveQuietMs: 40, saveAllMs: 300, savePollMs: 2 });
+  Object.assign(timing, { chromeSettleMs: 30, chromePollMs: 5, firstSaveMs: 60, saveSettleMs: 10, saveQuietMs: 40, saveAllMs: 300, savePollMs: 2, dismissMs: 5 });
 });
 // No DOM in this suite: a KeyboardEvent stand-in that keeps every init field (key, code, ctrlKey, ...).
 beforeEach(() => {
@@ -98,8 +98,18 @@ function fakeEngine() {
   const dialogs: Array<{ typeName: string; visible: boolean }> = [];
   /** KiCad's window chrome in the registry: kicadSetChrome(false) removes it, (true) shows the menu bar. */
   const chrome: Array<{ typeName: string; visible: boolean }> = [];
-  /** Whether a wx popup menu (.wx-menu-popup) is in the document. */
-  const ui = { popup: false };
+  /**
+   * Whether a wx popup menu (.wx-menu-popup) is in the document. A context
+   * menu closes on an Escape keydown reaching it (wx-dom.js's capture listener
+   * on the document); a menu bar popup (escapeCloses false) does not.
+   */
+  const ui = { popup: false, escapeCloses: true };
+  const popupEl = {
+    dispatchEvent: vi.fn((e: Event) => {
+      if (e.type === 'keydown' && (e as KeyboardEvent).key === 'Escape' && (e as KeyboardEvent).code === 'Escape' && e.bubbles && ui.escapeCloses) ui.popup = false;
+      return true;
+    }),
+  };
   /** The files Ctrl+S writes; by default every sheet and project file in the folder, in staging order. */
   const ctrlSFiles = (): string[] => [...files.keys()].filter((p) => /\.kicad_(sch|pro)$/.test(p));
   const ctrlS = vi.fn(() => {
@@ -139,14 +149,14 @@ function fakeEngine() {
         .filter((e) => (f.type == null || e.typeName === f.type) && (f.visible !== true || e.visible)),
       findByLabel: () => [],
     },
-    document: { querySelector: (sel: string) => (ui.popup && sel === '.wx-menu-popup' ? {} : null) },
+    document: { querySelector: (sel: string) => (ui.popup && sel === '.wx-menu-popup' ? popupEl : null) },
     dispatchEvent: (e: Event) => {
       const k = e as KeyboardEvent;
       if (e.type === 'keydown' && k.ctrlKey && k.code === 'KeyS') ctrlS();
       return true;
     },
   } as unknown as ToolWindow & { kicadCollab?: { onSave?: (p: string) => void } };
-  return { win, files, dirs, busy, broken, pinned, opened, Module, dialogs, chrome, ui, ctrlS };
+  return { win, files, dirs, busy, broken, pinned, opened, Module, dialogs, chrome, ui, popupEl, ctrlS };
 }
 
 const b = (s: string) => new TextEncoder().encode(s);
@@ -750,17 +760,39 @@ describe('startResponder', () => {
     expect(Date.now() - t0).toBeGreaterThanOrEqual(timing.saveQuietMs);
   });
 
-  it('answers save_failed when KiCad saves nothing, and busy (pressing nothing) while a menu or a dialog is up', async () => {
+  it('answers save_failed when KiCad saves nothing, and busy (pressing nothing) while a dialog or a popup Escape cannot close is up', async () => {
     const { eng, got, request } = await twoSheets();
     eng.ctrlS.mockImplementationOnce(() => undefined);
     expect(await request('project.save', undefined, 150)).toEqual({ id: 2, ok: false, error: { code: 'save_failed', message: 'the editor saved nothing' } });
     expect(got.filter((m) => m.type === 'ev.saved')).toEqual([]);
     eng.ctrlS.mockClear();
-    eng.ui.popup = true;
-    expect(await request('project.save')).toMatchObject({ ok: false, error: { code: 'busy' } });
-    eng.ui.popup = false;
     eng.dialogs.push({ typeName: 'wxGenericMessageDialog', visible: true });
     expect(await request('project.save')).toMatchObject({ ok: false, error: { code: 'busy' } });
+    eng.dialogs.length = 0;
+    // A menu bar popup (KiCad's menus shown) takes no Escape: it stays, and the save is refused.
+    eng.ui.popup = true;
+    eng.ui.escapeCloses = false;
+    expect(await request('project.save')).toMatchObject({ ok: false, error: { code: 'busy' } });
+    expect(eng.ui.popup).toBe(true);
+    expect(eng.ctrlS).not.toHaveBeenCalled();
+  });
+
+  it('closes a popup menu with Escape before it presses Ctrl+S, and saves (a menu holds no edits)', async () => {
+    const { eng, got, request } = await twoSheets();
+    eng.ui.popup = true;   // a context menu or KiCad's clarify-selection menu
+    eng.Module.kicadSheetsGetTree.mockClear();
+    expect(await request('project.save', undefined, 150)).toEqual({ id: 2, ok: true, result: { path: 'sub/power.kicad_sch', saved: ['blink.kicad_sch', 'sub/power.kicad_sch'] } });
+    expect(eng.ui.popup).toBe(false);
+    expect(eng.Module.kicadSheetsGetTree).toHaveBeenCalledTimes(1);   // the shown sheet and the expected set come from one read
+    expect(eng.popupEl.dispatchEvent).toHaveBeenCalledTimes(1);
+    expect(eng.ctrlS).toHaveBeenCalledTimes(1);
+    expect(eng.popupEl.dispatchEvent.mock.invocationCallOrder[0]).toBeLessThan(eng.ctrlS.mock.invocationCallOrder[0]);
+    expect(got.map((m) => m.type ?? 'answer')).toEqual(['ev.saved', 'ev.saved', 'answer']);
+    // Under a dialog as well as the popup, the popup still closes but the dialog refuses the key.
+    eng.ui.popup = true;
+    eng.dialogs.push({ typeName: 'wxDialog', visible: true });
+    eng.ctrlS.mockClear();
+    expect(await request('project.save')).toMatchObject({ ok: false, error: { code: 'busy', message: 'project.save' } });
     expect(eng.ctrlS).not.toHaveBeenCalled();
   });
 
