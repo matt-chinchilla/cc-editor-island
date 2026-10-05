@@ -19,6 +19,8 @@ beforeAll(() => {
   Object.assign(timing, { importPollMs: 5, importQuietMs: 20, importStepMs: 10, importRefusedMs: 60, importCloseMs: 200 });
   // The view is read every 2 ms and fitted once its size has held 15 ms.
   Object.assign(timing, { viewPollMs: 2, viewStableMs: 15, viewSettleMs: 300 });
+  // ev.edited reads the undo depth every 5 ms.
+  Object.assign(timing, { editPollMs: 5 });
 });
 // No DOM in this suite: a KeyboardEvent stand-in that keeps every init field (key, code, ctrlKey, ...).
 beforeEach(() => {
@@ -1185,6 +1187,179 @@ describe('ev.menu', () => {
     (eng.win.wxElementRegistry as unknown as { version: number }).version = 5;
     await settle(150);
     expect(got.length).toBe(before);
+  });
+});
+
+describe('ev.edited', () => {
+  const OPEN = { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] };
+
+  /**
+   * A connected responder over a booted engine whose kicadCollabTestUndoDepth
+   * answers `undo.depth`. `exportAt` says when the engine has the export: at
+   * boot, or only after ev.ready (an older build, as far as the island can
+   * tell at boot). KiCad's load starts a document with an empty undo list, so
+   * the fake open sets the depth to 0.
+   */
+  function edits(search = '?frame=sch&theme=day', exportAt: 'boot' | 'late' = 'boot') {
+    const { page, parent } = fakePage(search);
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    const undo = { depth: 0 };
+    const depthFn = vi.fn((): unknown => undo.depth);
+    eng.Module.kicadOpenFile.mockImplementation((p: string) => { eng.opened.push(p); undo.depth = 0; });
+    const mod = eng.Module as Record<string, unknown>;
+    if (exportAt === 'boot') mod.kicadCollabTestUndoDepth = depthFn;
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    if (exportAt === 'late') mod.kicadCollabTestUndoDepth = depthFn;
+    let id = 0;
+    const request = async (op: string, args?: unknown) => {
+      const n = ++id;
+      port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+      await settle(100);
+      return got.find((m) => m.id === n);
+    };
+    const edited = () => got.filter((m) => m.type === 'ev.edited');
+    return { r, eng, port, got, undo, depthFn, request, edited };
+  }
+
+  it('reads nothing until a document is open, never sends the depth the open left, and sends each change once with exactly its keys', async () => {
+    const { undo, depthFn, request, edited } = edits();
+    undo.depth = 4;
+    await settle(40);
+    expect(depthFn).not.toHaveBeenCalled();   // no document: nothing is read
+    expect(await request('project.open', OPEN)).toMatchObject({ ok: true });
+    await settle(40);
+    expect(depthFn).toHaveBeenCalled();
+    expect(edited()).toEqual([]);   // the load left 0: the baseline, not an edit
+    undo.depth = 1;
+    await settle(40);
+    expect(edited()).toEqual([{ type: 'ev.edited', depth: 1 }]);
+    expect(Object.keys(edited()[0]).sort()).toEqual(['depth', 'type']);
+    await settle(40);
+    expect(edited()).toHaveLength(1);   // unchanged: nothing more is sent
+    undo.depth = 0;   // an undo is a change too
+    await settle(40);
+    expect(edited()).toEqual([{ type: 'ev.edited', depth: 1 }, { type: 'ev.edited', depth: 0 }]);
+  });
+
+  it('takes a re-opened or forgotten document\'s depth as a new baseline, never as an edit', async () => {
+    const { undo, depthFn, request, edited } = edits();
+    await request('project.open', OPEN);
+    undo.depth = 3;
+    await settle(40);
+    expect(edited()).toEqual([{ type: 'ev.edited', depth: 3 }]);
+    // A second open without a forget: the load leaves 0, which is no edit.
+    expect(await request('project.open', OPEN)).toMatchObject({ ok: true });
+    await settle(40);
+    expect(edited()).toEqual([{ type: 'ev.edited', depth: 3 }]);
+    // After a forget nothing is read, whatever the engine's list holds.
+    expect(await request('project.forget')).toMatchObject({ ok: true });
+    const calls = depthFn.mock.calls.length;
+    undo.depth = 9;
+    await settle(40);
+    expect(depthFn.mock.calls.length).toBe(calls);
+    expect(edited()).toHaveLength(1);
+    // The next open's 0 is its baseline; a later change is sent.
+    expect(await request('project.open', OPEN)).toMatchObject({ ok: true });
+    await settle(40);
+    expect(edited()).toHaveLength(1);
+    undo.depth = 2;
+    await settle(40);
+    expect(edited()).toEqual([{ type: 'ev.edited', depth: 3 }, { type: 'ev.edited', depth: 2 }]);
+  });
+
+  it('reads nothing while a dialog is up, a progress dialog included, and sends the change once the last one closes', async () => {
+    const { eng, undo, depthFn, request, edited } = edits();
+    await request('project.open', OPEN);
+    eng.dialogs.push({ typeName: 'wxDialog', visible: true });
+    const calls = depthFn.mock.calls.length;
+    undo.depth = 2;
+    await settle(40);
+    expect(depthFn.mock.calls.length).toBe(calls);
+    expect(edited()).toEqual([]);
+    eng.dialogs.splice(0, eng.dialogs.length, { typeName: 'wxGenericProgressDialog', visible: true });
+    await settle(40);
+    expect(depthFn.mock.calls.length).toBe(calls);
+    expect(edited()).toEqual([]);
+    eng.dialogs.length = 0;
+    await settle(40);
+    expect(edited()).toEqual([{ type: 'ev.edited', depth: 2 }]);
+  });
+
+  it('reads nothing while a request is in flight: a change during a slow board save is sent after its answer', async () => {
+    const { eng, undo, port, got, request, edited } = edits('?frame=pcb&theme=day');
+    expect(await request('project.open', { name: 'x', files: [{ path: 'b.kicad_pcb', bytes: b('(kicad_pcb)') }] })).toMatchObject({ ok: true });
+    eng.Module.kicadSaveBoard.mockImplementation(async (p: string) => {
+      undo.depth = 1;   // the depth moves while the save runs
+      await settle(60);
+      eng.files.set(p, b('(kicad_pcb saved)'));
+      return undefined;
+    });
+    port.postMessage({ id: 9, op: 'project.save' });
+    await settle(30);
+    expect(edited()).toEqual([]);   // the save is still running: nothing is read
+    await settle(100);
+    const answer = got.findIndex((m) => m.id === 9);
+    const sent = got.findIndex((m) => m.type === 'ev.edited');
+    expect(got[answer]).toMatchObject({ id: 9, ok: true, result: { path: 'b.kicad_pcb', saved: ['b.kicad_pcb'] } });
+    expect(sent).toBeGreaterThan(answer);
+    expect(got[sent]).toEqual({ type: 'ev.edited', depth: 1 });
+  });
+
+  it('ignores a read that throws or answers anything but a whole number of at least 0', async () => {
+    const { undo, depthFn, request, edited } = edits();
+    await request('project.open', OPEN);
+    for (const bad of [() => -1, () => { throw new Error('no frame'); }, () => 2.5, () => Promise.resolve(3), () => '4']) {
+      depthFn.mockImplementation(bad);
+      await settle(25);
+    }
+    expect(edited()).toEqual([]);
+    depthFn.mockImplementation(() => undo.depth);
+    undo.depth = 1;
+    await settle(40);
+    expect(edited()).toEqual([{ type: 'ev.edited', depth: 1 }]);
+  });
+
+  it('never polls an engine that lacks the export at boot, and answers every request as before', async () => {
+    const setSpy = vi.spyOn(globalThis, 'setInterval');
+    try {
+      const { undo, depthFn, request, edited } = edits('?frame=sch&theme=day', 'late');
+      expect(setSpy.mock.calls.some((c) => c[1] === timing.editPollMs)).toBe(false);
+      expect(await request('project.open', OPEN)).toMatchObject({ ok: true });
+      undo.depth = 5;
+      await settle(40);
+      expect(depthFn).not.toHaveBeenCalled();
+      expect(edited()).toEqual([]);
+      expect(await request('project.save')).toMatchObject({ ok: true });
+    } finally {
+      setSpy.mockRestore();
+    }
+  });
+
+  it('stops the poll on shutdown and on close', async () => {
+    for (const end of ['shutdown', 'close'] as const) {
+      const setSpy = vi.spyOn(globalThis, 'setInterval');
+      const clearSpy = vi.spyOn(globalThis, 'clearInterval');
+      try {
+        const { r, undo, depthFn, request, edited } = edits();
+        const at = setSpy.mock.calls.findIndex((c) => c[1] === timing.editPollMs);
+        expect(at).toBeGreaterThanOrEqual(0);
+        const pollTimer = setSpy.mock.results[at].value;
+        await request('project.open', OPEN);
+        if (end === 'shutdown') expect(await request('shutdown')).toMatchObject({ ok: true });
+        else r.close();
+        expect(clearSpy).toHaveBeenCalledWith(pollTimer);
+        const calls = depthFn.mock.calls.length;
+        undo.depth = 6;
+        await settle(40);
+        expect(depthFn.mock.calls.length).toBe(calls);
+        expect(edited()).toEqual([]);
+      } finally {
+        setSpy.mockRestore();
+        clearSpy.mockRestore();
+      }
+    }
   });
 });
 

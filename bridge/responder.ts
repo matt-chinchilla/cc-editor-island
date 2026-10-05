@@ -24,6 +24,7 @@ export type IslandEvent =
   | { type: 'ev.openTool'; frame: Frame }
   | { type: 'ev.help'; topic: string }
   | { type: 'ev.menu'; open: boolean }
+  | { type: 'ev.edited'; depth: number }
   | { type: 'ev.closing' };
 
 export interface Responder {
@@ -105,6 +106,11 @@ export const timing = {
   viewPollMs: 200,
   viewStableMs: 300,
   viewSettleMs: 10_000,
+  /**
+   * ev.edited (PROTOCOL.md): how often the open document's undo depth is read,
+   * while no dialog is up, no load is parked and no request is in flight.
+   */
+  editPollMs: 500,
 };
 /** KiCad's Zoom to Fit. */
 const HOME_KEY: KeyPress = { key: 'Home', code: 'Home', ctrl: false, shift: false, alt: false };
@@ -248,6 +254,16 @@ export function startResponder(opts: {
   let importing = false;
   /** A shutdown request passed its checks: the port closes once it is answered. */
   let shutdownStarted = false;
+  /** Requests received and not yet answered: the chain's queue and the one it runs (ev.edited reads nothing meanwhile). */
+  let inFlight = 0;
+  /**
+   * ev.edited's last value: the open document's undo depth as last read, or
+   * null until the first read after an open, an import or a forget. That first
+   * read is the baseline and is never sent: opening a document is no edit.
+   */
+  let editDepth: number | null = null;
+  /** Stops the undo depth poll (ev.edited); set by engineReady when the engine has the export. */
+  let stopEdits: (() => void) | null = null;
 
   /** Rebuilds each event with exactly its protocol keys; saved bytes travel as a transferred copy. */
   const emit = (ev: IslandEvent): void => {
@@ -278,6 +294,9 @@ export function startResponder(opts: {
       case 'ev.menu':
         port.postMessage({ type: ev.type, open: ev.open });
         return;
+      case 'ev.edited':
+        port.postMessage({ type: ev.type, depth: ev.depth });
+        return;
       case 'ev.closing':
         port.postMessage({ type: ev.type });
         return;
@@ -300,7 +319,11 @@ export function startResponder(opts: {
     port.onmessage = (m) => {
       // A handler that rejects answers island_error for its own request; the
       // chain itself never rejects, so every later request is still answered.
-      const next = (): Promise<void> => handle(m.data).catch((err: unknown) => answerIslandError(m.data, err));
+      // A request is in flight from its arrival to its answer (ev.edited waits).
+      inFlight += 1;
+      const next = (): Promise<void> => handle(m.data)
+        .catch((err: unknown) => answerIslandError(m.data, err))
+        .finally(() => { inFlight -= 1; });
       chain = chain.then(next, next);
     };
     for (const ev of queued.splice(0)) emit(ev);
@@ -334,6 +357,9 @@ export function startResponder(opts: {
 
   /** The document and the save hook are dropped and the engine's leave prompt is stopped for good. */
   function stopBridge(): void {
+    stopEdits?.();
+    stopEdits = null;
+    editDepth = null;
     stopMenus?.();
     stopMenus = null;
     stopFitWatch?.();
@@ -370,6 +396,44 @@ export function startResponder(opts: {
     try { return probe.call(mod) === true; } catch { return false; }
   }
 
+  /**
+   * The open document's undo depth (KiCad's undo command count, read through
+   * the engine's kicadCollabTestUndoDepth): null when the export is missing,
+   * throws, or answers anything but a whole number of at least 0 (it answers
+   * -1 while no editor frame is up).
+   */
+  function undoDepth(w: ToolWindow): number | null {
+    const mod = w.Module as { kicadCollabTestUndoDepth?: () => unknown } | undefined;
+    const read = mod?.kicadCollabTestUndoDepth;
+    if (typeof read !== 'function') return null;
+    try {
+      const depth = read.call(mod);
+      return typeof depth === 'number' && Number.isSafeInteger(depth) && depth >= 0 ? depth : null;
+    } catch { return null; }
+  }
+
+  /** ev.edited's baseline after a load: the depth it left, read only when the poll runs. */
+  function editBaseline(w: ToolWindow): number | null {
+    return stopEdits == null ? null : undoDepth(w);
+  }
+
+  /**
+   * One ev.edited read (PROTOCOL.md): only while a document is open, no
+   * request is in flight (an import included), no load is parked and no dialog
+   * is up, progress dialogs included. The first read after an open, an import
+   * or a forget is the baseline; a later read that differs is sent.
+   */
+  function pollEdits(w: ToolWindow): void {
+    if (closed || opened == null || staged == null || importing || inFlight > 0 || collecting != null) return;
+    if (engineBusy() || dialogUp(w, true)) return;
+    const depth = undoDepth(w);
+    if (depth == null) return;
+    if (editDepth == null) { editDepth = depth; return; }
+    if (depth === editDepth) return;
+    editDepth = depth;
+    emit({ type: 'ev.edited', depth });
+  }
+
   async function run(op: string, args: unknown): Promise<Answer> {
     if ((op === 'project.open' || op === 'project.save') && engineBusy()) return fail('busy', 'the engine is busy');
     switch (op) {
@@ -383,6 +447,7 @@ export function startResponder(opts: {
         staged = null;
         opened = null;
         displaySettings = null;
+        editDepth = null;   // the next document's first read is its baseline
         fitWatch?.disarm();
         stopSaveHook();   // a Ctrl+S in the still-shown document emits nothing from here on
         quietForever();
@@ -428,6 +493,7 @@ export function startResponder(opts: {
     staged = null;
     opened = null;
     displaySettings = null;
+    editDepth = null;
     fitWatch?.disarm();
     stopSaveHook();
     removeTree(win.FS, root);   // every open starts from an empty project folder
@@ -446,6 +512,7 @@ export function startResponder(opts: {
     }
     opened = normalizePath(target);
     startSaveHook(w);   // a fresh hook lifetime for this document
+    editDepth = editBaseline(w);   // the depth the load left: ev.edited's baseline, never sent
     quietClear();   // a new document: the engine's leave prompt guards it again
     // Loading a file shows the menu bar again, and an infobar when the file is
     // from an older KiCad (e2e 2026-10-01): the hidden chrome is put back and
@@ -510,6 +577,7 @@ export function startResponder(opts: {
     staged = null;
     opened = null;
     displaySettings = null;
+    editDepth = null;
     fitWatch?.disarm();
     stopSaveHook();
     removeTree(FS, root);
@@ -540,6 +608,7 @@ export function startResponder(opts: {
     }
     opened = target;
     startSaveHook(w);   // from here on the converted board is the document, as after project.open
+    editDepth = editBaseline(w);   // the converted board's depth: ev.edited's baseline, never sent
     const chrome = await settleChrome(w);
     // The importer's dialogs took wx's keyboard focus and left it off the
     // drawing (e2e 2026-10-02: key.press F1 no longer zoomed): the boot's own
@@ -923,6 +992,12 @@ export function startResponder(opts: {
       // The Ctrl+S hook is registered by each successful project.open (startSaveHook).
       const mod: Record<string, unknown> = w.Module ?? {};
       const caps = Object.keys(mod).filter((k) => /^kicad[A-Za-z0-9]*$/.test(k) && typeof mod[k] === 'function').sort();
+      // ev.edited: polled only when the engine has the undo depth export at
+      // boot; an older build is never polled and nothing is said about it.
+      if (typeof mod.kicadCollabTestUndoDepth === 'function') {
+        const edits = setInterval(() => pollEdits(w), timing.editPollMs);
+        stopEdits = () => clearInterval(edits);
+      }
       const n = help.attempts();
       if (n > 0) emit({ type: 'ev.state', phase: 'booting', detail: popupNote(n) });
       emit({ type: 'ev.ready', caps, engine });
