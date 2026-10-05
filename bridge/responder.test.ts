@@ -1273,6 +1273,41 @@ describe('ev.edited', () => {
     expect(edited()).toEqual([{ type: 'ev.edited', depth: 3 }, { type: 'ev.edited', depth: 2 }]);
   });
 
+  it('takes the baseline when a load parked on a KiCad dialog settles, never the depth read while it was parked', async () => {
+    const { eng, undo, depthFn, request, edited } = edits();
+    expect(await request('project.open', OPEN)).toMatchObject({ ok: true });
+    undo.depth = 5;   // the previous document's undo list
+    await settle(40);
+    expect(edited()).toEqual([{ type: 'ev.edited', depth: 5 }]);
+    // An older file: the load parks on KiCad's file-version confirm, so the
+    // open answers while the engine is still busy and the previous list stands.
+    const mod = eng.Module as { kicadOpenFileBusy: () => boolean };
+    let busy = false;
+    mod.kicadOpenFileBusy = () => busy;
+    eng.Module.kicadOpenFile.mockImplementation((p: string) => {
+      eng.opened.push(p);
+      busy = true;
+      eng.dialogs.push({ typeName: 'wxDialog', visible: true });
+    });
+    expect(await request('project.open', OPEN)).toMatchObject({ ok: true });
+    const calls = depthFn.mock.calls.length;
+    await settle(40);
+    expect(depthFn.mock.calls.length).toBe(calls);   // the dialog is up: nothing is read
+    // The reader answers the dialog; the load runs on, still busy, and nothing is read.
+    eng.dialogs.length = 0;
+    await settle(40);
+    expect(depthFn.mock.calls.length).toBe(calls);
+    // The load settles and KiCad starts the document's undo list at 0: the baseline, not an edit.
+    undo.depth = 0;
+    busy = false;
+    await settle(40);
+    expect(depthFn.mock.calls.length).toBeGreaterThan(calls);
+    expect(edited()).toEqual([{ type: 'ev.edited', depth: 5 }]);
+    undo.depth = 1;
+    await settle(40);
+    expect(edited()).toEqual([{ type: 'ev.edited', depth: 5 }, { type: 'ev.edited', depth: 1 }]);
+  });
+
   it('reads nothing while a dialog is up, a progress dialog included, and sends the change once the last one closes', async () => {
     const { eng, undo, depthFn, request, edited } = edits();
     await request('project.open', OPEN);

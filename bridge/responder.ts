@@ -412,9 +412,16 @@ export function startResponder(opts: {
     } catch { return null; }
   }
 
-  /** ev.edited's baseline after a load: the depth it left, read only when the poll runs. */
+  /**
+   * ev.edited's baseline after a load: the depth it left, read only when the
+   * poll runs. A load still parked on a KiCad dialog (the file-version confirm
+   * on an older file: the open answers while kicadOpenFileBusy holds) has not
+   * reset the undo list yet, so no baseline is read then: null, and the first
+   * read that passes the poll's busy and dialog gates takes it.
+   */
   function editBaseline(w: ToolWindow): number | null {
-    return stopEdits == null ? null : undoDepth(w);
+    if (stopEdits == null || engineBusy() || dialogUp(w, true)) return null;
+    return undoDepth(w);
   }
 
   /**
@@ -512,7 +519,7 @@ export function startResponder(opts: {
     }
     opened = normalizePath(target);
     startSaveHook(w);   // a fresh hook lifetime for this document
-    editDepth = editBaseline(w);   // the depth the load left: ev.edited's baseline, never sent
+    editDepth = editBaseline(w);   // the depth the load left (null while it is parked): ev.edited's baseline, never sent
     quietClear();   // a new document: the engine's leave prompt guards it again
     // Loading a file shows the menu bar again, and an infobar when the file is
     // from an older KiCad (e2e 2026-10-01): the hidden chrome is put back and
