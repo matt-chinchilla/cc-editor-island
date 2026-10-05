@@ -12,7 +12,7 @@ const PAGE = 'http://circuitcenter.localhost:4173';
 const ISLAND = 'http://editor.circuitcenter.localhost:4174';
 const PAIR = new Set([PAGE, ISLAND]);
 
-interface Ev { type: string; phase?: string; detail?: string; path?: string; bytes?: number; text?: string; topic?: string; caps?: string[]; open?: boolean; at: number }
+interface Ev { type: string; phase?: string; detail?: string; path?: string; bytes?: number; text?: string; topic?: string; caps?: string[]; open?: boolean; depth?: number; at: number }
 interface Harness {
   __events: Ev[];
   /** The latest bytes ev.saved brought for each path, whole. */
@@ -515,6 +515,38 @@ test('a popup menu is reported as ev.menu while it is up, and holds the host\'s 
   await page.keyboard.press('Escape');
   await expect.poll(menus, { timeout: 10_000 }).toEqual([true, false]);
   expect(await request(page, 'view.fit')).toEqual({});
+});
+
+/** The engine's own test hooks (PCBJam's ysync suite uses them): an undoable local commit, KiCad's Undo and its undo depth. */
+interface EngineHooks { Module: { kicadCollabTestUndoDepth(): number; kicadCollabTestMoveFirst(dx: number, dy: number): string; kicadCollabTestUndo(): boolean } }
+
+test('an edit in the drawing is sent as ev.edited with KiCad\'s undo depth, an undo too, and opening or saving the board sends none', async ({ page }) => {
+  const frame = await boot(page, 'fixture=glasgow&frame=pcb', 'glasgow.kicad_pcb');
+  expect((await events(page)).find((e) => e.type === 'ev.ready')?.caps).toContain('kicadCollabTestUndoDepth');
+  const edited = async (): Promise<number[]> => (await events(page)).filter((e) => e.type === 'ev.edited').map((e) => e.depth ?? -1);
+  const depth = (): Promise<number> => frame.evaluate(() => (window as unknown as EngineHooks).Module.kicadCollabTestUndoDepth());
+  // Opening Glasgow is no edit: four polls, 500 ms apart, send nothing.
+  await page.waitForTimeout(2_000);
+  expect(await edited()).toEqual([]);
+  const before = await depth();
+  expect(before).toBeGreaterThanOrEqual(0);
+  // A real undoable commit: the engine's own move of the first item, 2 mm to the right.
+  expect(await frame.evaluate(() => (window as unknown as EngineHooks).Module.kicadCollabTestMoveFirst(2_000_000, 0))).toMatch(/[0-9a-f-]{36}/);
+  await expect.poll(async () => (await edited()).at(-1) ?? -1, { timeout: 10_000 }).toBeGreaterThan(before);
+  const after = await depth();
+  await expect.poll(async () => (await edited()).at(-1), { timeout: 10_000 }).toBe(after);
+  measure('ev.edited', `depth ${before} before the move, ${after} after it`);
+  // Each event carries exactly its keys (the harness adds `at`).
+  const first = (await events(page)).find((e) => e.type === 'ev.edited');
+  expect(Object.keys(first ?? {}).filter((k) => k !== 'at').sort()).toEqual(['depth', 'type']);
+  // KiCad's Undo lowers the depth, and that is sent too.
+  expect(await frame.evaluate(() => (window as unknown as EngineHooks).Module.kicadCollabTestUndo())).toBe(true);
+  await expect.poll(async () => (await edited()).at(-1), { timeout: 10_000 }).toBe(before);
+  // A save leaves the undo list as it is: nothing more is sent.
+  const sent = (await edited()).length;
+  expect(await request(page, 'project.save')).toMatchObject({ path: 'glasgow.kicad_pcb' });
+  await page.waitForTimeout(1_500);
+  expect((await edited()).length).toBe(sent);
 });
 
 test('a schematic save closes an open popup menu first, as Escape does, and saves every sheet', async ({ page }) => {
