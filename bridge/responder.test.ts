@@ -1192,6 +1192,9 @@ describe('ev.menu', () => {
 
 describe('ev.edited', () => {
   const OPEN = { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] };
+  /** Every responder edits() started: closed after each test, so no 5 ms poll outlives its test. */
+  const started: Array<{ close: () => void }> = [];
+  afterEach(() => { for (const r of started.splice(0)) r.close(); });
 
   /**
    * A connected responder over a booted engine whose kicadCollabTestUndoDepth
@@ -1203,6 +1206,7 @@ describe('ev.edited', () => {
   function edits(search = '?frame=sch&theme=day', exportAt: 'boot' | 'late' = 'boot') {
     const { page, parent } = fakePage(search);
     const r = startResponder({ parentOrigin: PARENT, page });
+    started.push(r);
     const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
     const eng = fakeEngine();
     const undo = { depth: 0 };
