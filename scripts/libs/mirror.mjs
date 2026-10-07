@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
 // Writes and checks one library mirror, `<out>/<tag>/`, exactly as LIBRARY.md
-// lays it out: manifest.json, fp-index.json, one ccl1 bundle per library
-// (<id>.bin), LICENSE.md and SHA256SUMS, every file stored gzipped only
+// lays it out: manifest.json, fp-index.json, the picker's sym-index.json and
+// fp-search.json (search-index.mjs), one ccl2 bundle per library (<id>.bin),
+// LICENSE.md and SHA256SUMS, every file stored gzipped only
 // (<name>.gz, level 9, mtime 0). The output is a function of the sources
 // alone: every list is sorted in code point order and nothing carries a time,
 // so the same sources give the same bytes and the same SHA256SUMS.
@@ -17,11 +18,15 @@ import { gunzipSync, gzip } from 'node:zlib';
 import { compareNames, decodeBundle, encodeBundle } from './bundle.mjs';
 import { extractLib, listLibs, readLibTable } from './extract-libs.mjs';
 import { countUniquePads } from './kicad-pretty.mjs';
-import { parseSymbolLib } from './kicad-symdir.mjs';
+import { buildSelfContainedLib, parseSymbolLib, resolveChain } from './kicad-symdir.mjs';
+import {
+  footprintFacts, FP_FIELDS, FP_SEARCH, fpSearchText, INDEX_SCHEMA, SYM_FIELDS, SYM_INDEX, symbolFacts, symbolRow, symIndexText,
+} from './search-index.mjs';
 
 export const SCHEMA = 1;
 export const MANIFEST = 'manifest.json';
 export const FP_INDEX = 'fp-index.json';
+export { FP_SEARCH, SYM_INDEX };
 export const LICENSE = 'LICENSE.md';
 export const SUMS = 'SHA256SUMS';
 export const bundleName = (id) => `${id}.bin`;
@@ -89,6 +94,8 @@ export async function buildMirror({ symbolsSrc, footprintsSrc, out, tag, only = 
   const stored = new Map();   // stored file name -> sha256 of its gz bytes
   const manifestLibs = [];
   const fpIndex = {};
+  const symRows = [];
+  const fpRows = [];
   const raw = {};
   const skipped = [];
   const inflight = new Set();
@@ -106,6 +113,7 @@ export async function buildMirror({ symbolsSrc, footprintsSrc, out, tag, only = 
     manifestLibs.push(row);
     // extractLib sorts by name in code point order, the order encodeBundle writes.
     if (lib.kind === 'footprint') fpIndex[lib.id] = items.map((it) => [it.name, it.pads]);
+    for (const it of items) (lib.kind === 'symbol' ? symRows : fpRows).push(it.row);
     const job = gz(bundle).then((zipped) => {
       const name = `${bundleName(lib.id)}.gz`;
       writeFileSync(join(stage, name), zipped);
@@ -129,6 +137,8 @@ export async function buildMirror({ symbolsSrc, footprintsSrc, out, tag, only = 
   };
   await put(MANIFEST, JSON.stringify({ schema: SCHEMA, tag, libs: manifestLibs }));
   await put(FP_INDEX, JSON.stringify({ schema: SCHEMA, tag, libs: fpIndexSorted }));
+  await put(SYM_INDEX, symIndexText(tag, symRows));
+  await put(FP_SEARCH, fpSearchText(tag, fpRows));
   await put(LICENSE, licence);
   const sums = [...stored.keys()].sort(compareNames).map((name) => `${stored.get(name)}  ${name}\n`).join('');
   await put(SUMS, sums);
@@ -156,14 +166,25 @@ function readStored(dir, name) {
   return { zipped, bytes: gunzipSync(zipped) };
 }
 
+/** An index file's rows, its header checked against the manifest's tag and the fields the picker reads. */
+function readIndexRows(dir, name, tag, fields) {
+  const doc = JSON.parse(readStored(dir, `${name}.gz`).bytes.toString('utf8'));
+  if (doc === null || typeof doc !== 'object' || doc.schema !== INDEX_SCHEMA || doc.tag !== tag) throw new Error(`${name} is not schema ${INDEX_SCHEMA} with the manifest's tag`);
+  if (JSON.stringify(doc.fields) !== JSON.stringify(fields)) throw new Error(`${name} fields are ${JSON.stringify(doc.fields)}, not ${JSON.stringify(fields)}`);
+  if (!Array.isArray(doc.rows)) throw new Error(`${name} has no rows`);
+  return doc.rows;
+}
+
 /**
  * Check a built mirror end to end: every file a regular `*.gz`, SHA256SUMS
  * covering exactly the other files and matching them, the manifest sorted by
  * id with each bundle's stored size and item count, every bundle decoding,
- * every symbol body a self-contained kicad_symbol_lib whose symbols run root
- * first down its extends chain to the item, and fp-index keyed by footprint
+ * every symbol body a kicad_symbol_lib holding the item alone (ccl2) whose
+ * extends chain resolves inside its own bundle, fp-index keyed by footprint
  * library id with every footprint's name and unique pad count recomputed from
- * its body. Throws on the first fault; returns the mirror's figures.
+ * its body, and sym-index and fp-search holding exactly one row per item of
+ * the manifest's libraries, in order, each recomputed from the bodies.
+ * Throws on the first fault; returns the mirror's figures.
  */
 export function verifyMirror(dir) {
   const names = readdirSync(dir).sort(compareNames);
@@ -171,7 +192,7 @@ export function verifyMirror(dir) {
     if (!name.endsWith('.gz')) throw new Error(`${name} is not stored gzipped`);
     if (!lstatSync(join(dir, name)).isFile()) throw new Error(`${name} is not a regular file`);
   }
-  for (const need of [MANIFEST, FP_INDEX, LICENSE, SUMS]) {
+  for (const need of [MANIFEST, FP_INDEX, SYM_INDEX, FP_SEARCH, LICENSE, SUMS]) {
     if (!names.includes(`${need}.gz`)) throw new Error(`${need}.gz is missing`);
   }
 
@@ -196,8 +217,25 @@ export function verifyMirror(dir) {
   const fpIndex = JSON.parse(readStored(dir, `${FP_INDEX}.gz`).bytes.toString('utf8'));
   if (fpIndex.schema !== SCHEMA || fpIndex.tag !== manifest.tag || fpIndex.libs === null || typeof fpIndex.libs !== 'object') throw new Error('fp-index.json is not schema 1 with the manifest\'s tag and libs');
   if (readStored(dir, `${LICENSE}.gz`).bytes.length === 0) throw new Error('LICENSE.md is empty');
+  const symRows = readIndexRows(dir, SYM_INDEX, manifest.tag, SYM_FIELDS);
+  const fpRows = readIndexRows(dir, FP_SEARCH, manifest.tag, FP_FIELDS);
+  // The rows are sorted by lib then name; the manifest by id, which within a
+  // kind is the same order, so each library's rows are a run at a cursor.
+  const cursor = { symbol: 0, footprint: 0 };
+  const expectRow = (kind, row) => {
+    const rows = kind === 'symbol' ? symRows : fpRows;
+    const file = kind === 'symbol' ? SYM_INDEX : FP_SEARCH;
+    const at = cursor[kind]++;
+    if (JSON.stringify(rows[at]) !== JSON.stringify(row)) throw new Error(`${file}: row ${at} is ${JSON.stringify(rows[at])}, the bundle says ${JSON.stringify(row)}`);
+  };
 
-  const figures = { tag: manifest.tag, symbol: { libs: 0, items: 0, bytes: 0 }, footprint: { libs: 0, items: 0, bytes: 0 }, biggest: [] };
+  const figures = {
+    tag: manifest.tag,
+    symbol: { libs: 0, items: 0, bytes: 0, raw: 0 },
+    footprint: { libs: 0, items: 0, bytes: 0, raw: 0 },
+    biggest: [],
+    indexes: {},
+  };
   const bundles = new Set(others.filter((n) => n.endsWith('.bin.gz')));
   const fpIds = [];
   let prev = null;
@@ -217,34 +255,61 @@ export function verifyMirror(dir) {
     if (bundle.id !== lib.id || bundle.kind !== lib.kind) throw new Error(`${name} says ${bundle.id} (${bundle.kind})`);
     if (bundle.items.length !== lib.itemCount) throw new Error(`manifest: ${lib.id} itemCount ${lib.itemCount}, but the bundle holds ${bundle.items.length}`);
     if (lib.kind === 'symbol') {
+      const byName = new Map();
       for (const item of bundle.items) {
         const where = `${lib.id}:${item.name}`;
-        const syms = parseSymbolLib(item.body.toString('utf8')).symbols;
-        if (syms[syms.length - 1].name !== item.name) throw new Error(`${where}: the body ends with symbol ${syms[syms.length - 1].name}`);
-        if (syms[0].extends !== null) throw new Error(`${where}: the chain does not start at its root (${syms[0].name} extends ${syms[0].extends})`);
-        for (let i = 1; i < syms.length; i += 1) {
-          if (syms[i].extends !== syms[i - 1].name) throw new Error(`${where}: ${syms[i].name} follows ${syms[i - 1].name} but extends ${syms[i].extends}`);
+        const text = item.body.toString('utf8');
+        const parsed = parseSymbolLib(text);
+        if (parsed.symbols.length !== 1 || parsed.symbols[0].name !== item.name) {
+          throw new Error(`${where}: the body holds ${parsed.symbols.map((s) => s.name).join(', ')}, not the item alone`);
         }
+        if (buildSelfContainedLib(parsed.header, [], parsed.symbols[0].block) !== text) throw new Error(`${where}: the body is not the library header and the symbol, as the builder writes them`);
+        byName.set(item.name, parsed.symbols[0]);
+      }
+      const facts = new Map();
+      const factsOf = (sym) => {
+        if (!facts.has(sym.name)) facts.set(sym.name, symbolFacts(sym.block));
+        return facts.get(sym.name);
+      };
+      for (const item of bundle.items) {
+        const sym = byName.get(item.name);
+        let parents;
+        try {
+          parents = resolveChain(byName, sym);
+        } catch (err) {
+          throw new Error(`${lib.id}: ${err.message}`);
+        }
+        expectRow('symbol', symbolRow(lib.name, [...parents, sym].map(factsOf)));
       }
     } else {
       fpIds.push(lib.id);
       const index = fpIndex.libs[lib.id];
       if (!Array.isArray(index) || index.length !== bundle.items.length) throw new Error(`fp-index: ${lib.id} does not list the bundle's ${bundle.items.length} footprints`);
       bundle.items.forEach((item, i) => {
-        const pads = countUniquePads(item.body.toString('utf8'));
+        const text = item.body.toString('utf8');
+        const pads = countUniquePads(text);
         const row = index[i];
         if (!Array.isArray(row) || row[0] !== item.name || row[1] !== pads) throw new Error(`fp-index: ${lib.id} row ${i} is ${JSON.stringify(row)}, the bundle says ["${item.name}",${pads}]`);
+        const { desc, tags } = footprintFacts(text);
+        expectRow('footprint', [lib.name, item.name, desc, tags, pads]);
       });
     }
     const k = figures[lib.kind];
     k.libs += 1;
     k.items += bundle.items.length;
     k.bytes += f.zipped.length;
+    k.raw += f.bytes.length;
     figures.biggest.push({ id: lib.id, bytes: f.zipped.length, raw: f.bytes.length, items: bundle.items.length });
   }
   if (bundles.size > 0) throw new Error(`${[...bundles].join(', ')} not named by the manifest`);
   const indexIds = Object.keys(fpIndex.libs);
   if (indexIds.join('\n') !== fpIds.join('\n')) throw new Error('fp-index is not keyed by exactly the manifest\'s footprint libraries, in id order');
+  if (cursor.symbol !== symRows.length) throw new Error(`${SYM_INDEX} has ${symRows.length} rows, the bundles hold ${cursor.symbol} symbols`);
+  if (cursor.footprint !== fpRows.length) throw new Error(`${FP_SEARCH} has ${fpRows.length} rows, the bundles hold ${cursor.footprint} footprints`);
+  for (const [file, rows] of [[SYM_INDEX, symRows], [FP_SEARCH, fpRows]]) {
+    const f = readStored(dir, `${file}.gz`);
+    figures.indexes[file] = { rows: rows.length, bytes: f.zipped.length, raw: f.bytes.length };
+  }
   figures.biggest.sort((a, b) => b.bytes - a.bytes || compareNames(a.id, b.id));
   figures.biggest = figures.biggest.slice(0, 5);
   figures.sumsSha256 = sha256(readFileSync(join(dir, `${SUMS}.gz`)));

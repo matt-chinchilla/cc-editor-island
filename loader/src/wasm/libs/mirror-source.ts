@@ -3,11 +3,13 @@
 import { asyncMap } from "../../lib/async-map";
 import { openIdbBundleStore, type BundleStore } from "./bundle-store";
 import type { LibInfo, LibItemInfo, LibPresyncProgress, LibsSource, LibsSyncState } from "./source";
+import { assembleSymbolBody } from "./symbol-body";
 
 /**
  * A read-only `LibsSource` over KiCad's library mirror on the island origin
- * (LIBRARY.md): `/libs/<tag>/manifest.json`, `fp-index.json` and one bundle
- * per library, `<id>.bin` in format `ccl1`.
+ * (LIBRARY.md): `/libs/<tag>/manifest.json`, `fp-index.json`, the picker's
+ * search indexes `sym-index.json` and `fp-search.json` (PICKER.md), and one
+ * bundle per library, `<id>.bin` in format `ccl2`.
  *
  * - The manifest is read once per session, retried with backoff; a failure is
  *   never kept, so the next call reads it again.
@@ -19,7 +21,10 @@ import type { LibInfo, LibItemInfo, LibPresyncProgress, LibsSource, LibsSyncStat
  *   session; that is never a failure.
  * - Bodies are handed over as views onto the one buffer of their bundle: the
  *   provider frames raw bytes, so nothing is copied or decoded on the bulk
- *   path. Only `getItemBody` decodes, one slice.
+ *   path. Only `getItemBody` decodes, one slice (a derived symbol: its chain
+ *   too, assembled into one self-contained body, `symbol-body.ts`).
+ * - The search indexes are read once per session and kept in IndexedDB beside
+ *   the bundles; `prefetch` warms one bundle at low fetch priority.
  */
 
 export interface MirrorLibEntry {
@@ -70,9 +75,42 @@ export interface MirrorSourceOptions {
 
 const MANIFEST_RETRY_MS = [250, 750, 2000] as const;
 const MANIFEST_TIMEOUT_MS = 10_000;
-/** The symbol plugin asks for a library's names and then its bodies back to back; this keeps both reads off IndexedDB. */
+/**
+ * The symbol plugin asks for a library's names and then its bodies back to
+ * back; this keeps both reads off IndexedDB. On ccl2 (233 MB decoded for the
+ * symbol set, 351 MB on ccl1) it also holds the picker's quiet warm-up set
+ * (ten symbol and six footprint libraries, 30.1 MB decoded) with room left
+ * for the biggest bundle (sym.MCU_ST_STM32H7, 15.5 MB).
+ */
 const MEMORY_BYTES = 48 * 1024 * 1024;
 const PREFIX: Record<MirrorLibEntry["kind"], string> = { symbol: "sym.", footprint: "fp." };
+
+/** The picker's search index of each kind (PICKER.md section 1): its file and the fields its rows carry, in order. */
+export const SEARCH_INDEX: Record<MirrorLibEntry["kind"], { file: string; fields: readonly string[] }> = {
+  symbol: { file: "sym-index.json", fields: ["lib", "name", "desc", "keys", "fp", "pins", "units", "power"] },
+  footprint: { file: "fp-search.json", fields: ["lib", "name", "desc", "tags", "pads"] },
+};
+
+/**
+ * Throws unless `text` is the search index of `kind` at `tag`: JSON, schema 1,
+ * the tag, the kind's fields in order, and a list of rows. The rows are the
+ * page's to read; only their being a list is checked here.
+ */
+export function checkSearchIndex(text: string, kind: MirrorLibEntry["kind"], tag: string): void {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    throw new Error(`${SEARCH_INDEX[kind].file}: not JSON`);
+  }
+  if (!isRecord(doc) || doc.schema !== 1) throw new Error(`${SEARCH_INDEX[kind].file}: not schema 1`);
+  if (doc.tag !== tag) throw new Error(`${SEARCH_INDEX[kind].file}: tag ${JSON.stringify(doc.tag)}, expected ${JSON.stringify(tag)}`);
+  const fields = SEARCH_INDEX[kind].fields;
+  if (!Array.isArray(doc.fields) || doc.fields.length !== fields.length || fields.some((f, i) => (doc.fields as unknown[])[i] !== f)) {
+    throw new Error(`${SEARCH_INDEX[kind].file}: fields ${JSON.stringify(doc.fields)}, expected ${JSON.stringify(fields)}`);
+  }
+  if (!Array.isArray(doc.rows)) throw new Error(`${SEARCH_INDEX[kind].file}: no rows`);
+}
 
 /** A failure no retry can mend (a 404, a manifest of another schema or tag). */
 class Definitive extends Error {}
@@ -119,11 +157,12 @@ export function checkManifest(raw: unknown, tag: string): { manifest: MirrorMani
 }
 
 /**
- * Reads a `ccl1` bundle: one line of JSON `{"v":1,"id","kind","items":[[name,
+ * Reads a `ccl2` bundle: one line of JSON `{"v":2,"id","kind","items":[[name,
  * byteLength],...]}`, a newline, then the bodies concatenated in `items` order.
- * Throws unless v is 1, the id and kind are the ones asked for, every item is a
- * non-empty unique name with a non-negative integer length, and the lengths sum
- * to exactly the bytes after the header line.
+ * Throws unless v is 2 (a ccl1 bundle, whose symbol bodies carried their
+ * extends chains, is refused like any malformed one), the id and kind are the
+ * ones asked for, every item is a non-empty unique name with a non-negative
+ * integer length, and the lengths sum to exactly the bytes after the header line.
  */
 export function parseBundle(bytes: Uint8Array, id: string, kind: MirrorLibEntry["kind"]): ParsedBundle {
   const nl = bytes.indexOf(0x0a);
@@ -134,7 +173,7 @@ export function parseBundle(bytes: Uint8Array, id: string, kind: MirrorLibEntry[
   } catch {
     throw new Error(`bundle ${id}: the header is not JSON`);
   }
-  if (!isRecord(header) || header.v !== 1) throw new Error(`bundle ${id}: not version 1`);
+  if (!isRecord(header) || header.v !== 2) throw new Error(`bundle ${id}: not version 2 (ccl2)`);
   if (header.id !== id) throw new Error(`bundle ${id}: the header names ${JSON.stringify(header.id)}`);
   if (header.kind !== kind) throw new Error(`bundle ${id}: kind ${JSON.stringify(header.kind)}, expected ${kind}`);
   if (!Array.isArray(header.items)) throw new Error(`bundle ${id}: no items`);
@@ -164,10 +203,29 @@ export function parseBundle(bytes: Uint8Array, id: string, kind: MirrorLibEntry[
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** The source plus `ready()`, which boot uses to choose between the mirror and the fallback. */
+/** The source plus `ready()`, which boot uses to choose between the mirror and the fallback, and the picker's reads. */
 export interface MirrorLibsSource extends LibsSource {
   /** Resolves once the manifest is read; rejects when it cannot be (after its retries). */
   ready(): Promise<void>;
+  /**
+   * The picker's search index of `kind` as its raw JSON text (`sym-index.json`
+   * or `fp-search.json`, PICKER.md section 1), checked (schema 1, this tag, the
+   * kind's fields). Read once per session: from IndexedDB (key
+   * `<tag>/index:<kind>`) when a session stored it, else fetched (`priority`
+   * passed to fetch; concurrent asks share one read) and stored. Null when the
+   * mirror is unavailable (its manifest cannot be read) or the index cannot be
+   * read now; a null is never kept, so the next ask tries again. Never rejects.
+   */
+  getSearchIndex(kind: "symbol" | "footprint", opts?: { priority?: RequestPriority }): Promise<string | null>;
+  /**
+   * Warms one library's bundle (`sym.<nick>` or `fp.<nick>`) in the background:
+   * fetched at low fetch priority unless IndexedDB has it, checked, stored, and
+   * held in the memory window, so a following `getItemBody` reads it at once.
+   * Shares the one load of that bundle with every other ask (the engine's, a
+   * presync's, another prefetch's). A library the mirror does not have is a
+   * no-op. Never rejects: a failure is logged and the bundle loads on demand.
+   */
+  prefetch(id: string): Promise<void>;
 }
 
 export function mirrorLibsSource(opts: MirrorSourceOptions): MirrorLibsSource {
@@ -217,6 +275,8 @@ export function mirrorLibsSource(opts: MirrorSourceOptions): MirrorLibsSource {
   interface Tiered {
     get(key: string): Promise<Uint8Array | null>;
     put(key: string, bytes: Uint8Array): Promise<void>;
+    /** Stores in IndexedDB only (the caller keeps its own copy for the session); a failure is quiet. */
+    putDurable(key: string, bytes: Uint8Array): Promise<void>;
     delete(key: string): Promise<void>;
     keySet(): Promise<Set<string>>;
   }
@@ -259,6 +319,9 @@ export function mirrorLibsSource(opts: MirrorSourceOptions): MirrorLibsSource {
           // Not stored durably (no IndexedDB, quota, an error): memory keeps it, so it is never fetched twice.
           if (!kept) memory.set(key, bytes);
         },
+        async putDurable(key, bytes) {
+          if (durable) await safe(() => durable!.put(key, bytes), false);
+        },
         async delete(key) {
           memory.delete(key);
           if (durable) await safe(() => durable!.delete([key]), undefined);
@@ -290,14 +353,19 @@ export function mirrorLibsSource(opts: MirrorSourceOptions): MirrorLibsSource {
   };
   const loading = new Map<string, Promise<ParsedBundle | null>>();
 
-  const fetchBundle = async (id: string): Promise<Uint8Array> => {
-    const r = await fetchImpl(`${base}${encodeURIComponent(id)}.bin`);
+  const fetchBundle = async (id: string, priority?: RequestPriority): Promise<Uint8Array> => {
+    const url = `${base}${encodeURIComponent(id)}.bin`;
+    const r = await (priority === undefined ? fetchImpl(url) : fetchImpl(url, { priority }));
     if (!r.ok) throw new Error(`bundle ${id}: HTTP ${r.status}`);
     return new Uint8Array(await r.arrayBuffer());
   };
 
-  /** The checked bundle, or null when the mirror has no such library. Rejects when it cannot be read now. */
-  const bundle = (id: string): Promise<ParsedBundle | null> => {
+  /**
+   * The checked bundle, or null when the mirror has no such library. Rejects
+   * when it cannot be read now. `priority` reaches the fetch only when this
+   * call starts the load; an ask while a load is in flight shares it as it is.
+   */
+  const bundle = (id: string, priority?: RequestPriority): Promise<ParsedBundle | null> => {
     const hit = recent.get(id);
     if (hit) {
       remember(hit);
@@ -321,7 +389,7 @@ export function mirrorLibsSource(opts: MirrorSourceOptions): MirrorLibsSource {
           await st.delete(key);
         }
       }
-      const bytes = await fetchBundle(id);
+      const bytes = await fetchBundle(id, priority);
       const b = parseBundle(bytes, id, entry.kind); // throws: nothing is kept
       await st.put(key, bytes);
       remember(b);
@@ -333,6 +401,45 @@ export function mirrorLibsSource(opts: MirrorSourceOptions): MirrorLibsSource {
 
   let fpIndexP: Promise<string | null> | null = null;
   const decoder = new TextDecoder();
+  const slice = (b: ParsedBundle, i: number): string => decoder.decode(b.bytes.subarray(b.offsets[i], b.offsets[i] + b.lengths[i]));
+
+  // ---- the picker's search indexes: once per session, a null never kept
+  const searchIndexP = new Map<MirrorLibEntry["kind"], Promise<string | null>>();
+  const readSearchIndex = async (kind: MirrorLibEntry["kind"], priority?: RequestPriority): Promise<string | null> => {
+    try {
+      await loadManifest();
+    } catch {
+      return null; // no mirror
+    }
+    const st = await store();
+    const key = `${tag}/index:${kind}`;
+    const kept = await st.get(key);
+    if (kept) {
+      try {
+        const text = decoder.decode(kept);
+        checkSearchIndex(text, kind, tag);
+        return text;
+      } catch (e) {
+        log(`[libs] stored ${SEARCH_INDEX[kind].file} fails its check, fetching it again: ${String(e)}`);
+        await st.delete(key);
+      }
+    }
+    try {
+      const url = `${base}${SEARCH_INDEX[kind].file}`;
+      const r = await (priority === undefined ? fetchImpl(url) : fetchImpl(url, { priority }));
+      if (!r.ok) {
+        log(`[libs] ${SEARCH_INDEX[kind].file}: HTTP ${r.status}`);
+        return null;
+      }
+      const text = await r.text();
+      checkSearchIndex(text, kind, tag);
+      await st.putDurable(key, new TextEncoder().encode(text));
+      return text;
+    } catch (e) {
+      log(`[libs] ${SEARCH_INDEX[kind].file}: ${String(e)}`);
+      return null;
+    }
+  };
 
   return {
     async ready() {
@@ -368,7 +475,37 @@ export function mirrorLibsSource(opts: MirrorSourceOptions): MirrorLibsSource {
       if (!b || b.kind !== kind) return null;
       const i = b.index.get(name);
       if (i === undefined) return null;
-      return decoder.decode(b.bytes.subarray(b.offsets[i], b.offsets[i] + b.lengths[i]));
+      if (b.kind !== "symbol") return slice(b, i);
+      // A single read is linked against what it carries alone: give a derived
+      // symbol its extends chain from the same bundle, root first.
+      return assembleSymbolBody(name, (n) => {
+        const j = b.index.get(n);
+        return j === undefined ? null : slice(b, j);
+      }, (msg) => log(`${msg} (${libId})`));
+    },
+    getSearchIndex(kind: "symbol" | "footprint", opts?: { priority?: RequestPriority }): Promise<string | null> {
+      if (kind !== "symbol" && kind !== "footprint") return Promise.resolve(null);
+      let p = searchIndexP.get(kind);
+      if (!p) {
+        p = readSearchIndex(kind, opts?.priority)
+          .catch((e: unknown) => {
+            log(`[libs] ${SEARCH_INDEX[kind].file}: ${String(e)}`);
+            return null;
+          })
+          .then((text) => {
+            if (text === null) searchIndexP.delete(kind);
+            return text;
+          });
+        searchIndexP.set(kind, p);
+      }
+      return p;
+    },
+    async prefetch(id: string): Promise<void> {
+      try {
+        await bundle(id, "low");
+      } catch (e) {
+        log(`[libs] prefetch ${id}: ${String(e)}`);
+      }
     },
     async getFpIndex(): Promise<string | null> {
       // Passed through as text (the engine parses it once). A null is never

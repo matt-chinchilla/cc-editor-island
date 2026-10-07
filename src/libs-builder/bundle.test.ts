@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
-// The ccl1 bundle (LIBRARY.md): one JSON line, a newline, the bodies as raw
+// The ccl2 bundle (LIBRARY.md): one JSON line, a newline, the bodies as raw
 // UTF-8 in item order, items sorted by name in code point order, every length
-// in BYTES. The decoder hands back slices of the buffer, never re-encoded text.
+// in BYTES. The decoder hands back slices of the buffer, never re-encoded text,
+// and refuses a ccl1 bundle (version 1) like any other malformed one.
 import { describe, expect, it } from 'vitest';
 import { compareNames, decodeBundle, encodeBundle } from '../../scripts/libs/bundle.mjs';
 
 const utf8 = (s: string) => new TextEncoder().encode(s);
 const text = (b: Uint8Array) => new TextDecoder().decode(b);
 
-describe('the ccl1 bundle', () => {
+describe('the ccl2 bundle', () => {
   it('round trips non-ASCII names and bodies, with every length in bytes', () => {
     const items: [string, string][] = [
       ['R_10kΩ', '(kicad_symbol_lib (symbol "R_10kΩ" (property "Description" "±1 % µ")))\n'],
@@ -20,7 +21,7 @@ describe('the ccl1 bundle', () => {
     const nl = buf.indexOf(0x0a);
     const header = JSON.parse(text(buf.subarray(0, nl)));
     expect(header).toEqual({
-      v: 1, id: 'sym.Device', kind: 'symbol',
+      v: 2, id: 'sym.Device', kind: 'symbol',
       items: [['C', utf8(items[1][1]).length], ['R_10kΩ', utf8(items[0][1]).length], ['Thermistor_µ', utf8(items[2][1]).length]],
     });
     // Bytes, not UTF-16 code units: the Ω, ±, µ and the emoji each take more than one.
@@ -29,7 +30,7 @@ describe('the ccl1 bundle', () => {
     expect(buf.length).toBe(nl + 1 + header.items.reduce((n: number, [, len]: [string, number]) => n + len, 0));
 
     const back = decodeBundle(buf);
-    expect(back.v).toBe(1);
+    expect(back.v).toBe(2);
     expect(back.id).toBe('sym.Device');
     expect(back.kind).toBe('symbol');
     expect(back.items.map((i) => i.name)).toEqual(['C', 'R_10kΩ', 'Thermistor_µ']);
@@ -57,7 +58,7 @@ describe('the ccl1 bundle', () => {
 
   it('keeps the header on one line when a name holds a newline', () => {
     const buf = encodeBundle({ id: 'sym.N', kind: 'symbol', items: [['two\nlines', 'x']] });
-    expect(text(buf).split('\n')[0]).toBe('{"v":1,"id":"sym.N","kind":"symbol","items":[["two\\nlines",1]]}');
+    expect(text(buf).split('\n')[0]).toBe('{"v":2,"id":"sym.N","kind":"symbol","items":[["two\\nlines",1]]}');
     expect(decodeBundle(buf).items[0].name).toBe('two\nlines');
   });
 
@@ -73,11 +74,18 @@ describe('the ccl1 bundle', () => {
     const longer = new Uint8Array(good.length + 1);
     longer.set(good);
     expect(() => decodeBundle(longer)).toThrow(/1 bytes after the last item/);
-    expect(() => decodeBundle(utf8('{"v":1,"id":"x","kind":"symbol","items":[]}'))).toThrow(/no header line/);
-    expect(() => decodeBundle(utf8('{"v":2,"id":"x","kind":"symbol","items":[]}\n'))).toThrow(/version 2/);
+    expect(() => decodeBundle(utf8('{"v":2,"id":"x","kind":"symbol","items":[]}'))).toThrow(/no header line/);
+    expect(() => decodeBundle(utf8('{"v":3,"id":"x","kind":"symbol","items":[]}\n'))).toThrow(/version 3/);
     expect(() => decodeBundle(utf8('not json\n'))).toThrow(/not JSON/);
-    expect(() => decodeBundle(utf8('{"v":1,"id":"x","kind":"symbol","items":[["B",0],["A",0]]}\n'))).toThrow(/"A" is out of order/);
-    expect(() => decodeBundle(utf8('{"v":1,"id":"x","kind":"symbol","items":[["A",0],["A",0]]}\n'))).toThrow(/out of order/);
-    expect(() => decodeBundle(utf8('{"v":1,"id":"x","kind":"symbol","items":[["A",-1]]}\n'))).toThrow(/not \[name, byte length\]/);
+    expect(() => decodeBundle(utf8('{"v":2,"id":"x","kind":"symbol","items":[["B",0],["A",0]]}\n'))).toThrow(/"A" is out of order/);
+    expect(() => decodeBundle(utf8('{"v":2,"id":"x","kind":"symbol","items":[["A",0],["A",0]]}\n'))).toThrow(/out of order/);
+    expect(() => decodeBundle(utf8('{"v":2,"id":"x","kind":"symbol","items":[["A",-1]]}\n'))).toThrow(/not \[name, byte length\]/);
+  });
+
+  it('refuses a ccl1 bundle, which carried each symbol with its extends chain', () => {
+    const ccl1 = utf8('{"v":1,"id":"sym.D","kind":"symbol","items":[["A",3]]}\naaa');
+    expect(() => decodeBundle(ccl1)).toThrow(/not a ccl2 bundle: version 1/);
+    // The same bytes under version 2 read.
+    expect(decodeBundle(utf8('{"v":2,"id":"sym.D","kind":"symbol","items":[["A",3]]}\naaa')).items.map((i) => i.name)).toEqual(['A']);
   });
 });

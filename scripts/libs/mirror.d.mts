@@ -3,12 +3,14 @@
 // Types for scripts/libs/mirror.mjs, so the strict typecheck can read its tests.
 import type { Kind } from './bundle.mjs';
 export interface ManifestLib { id: string; name: string; kind: Kind; itemCount: number; bytes: number; description?: string }
-export interface KindFigures { libs: number; items: number; bytes: number }
+export interface KindFigures { libs: number; items: number; bytes: number; raw: number }
 export interface MirrorFigures {
   tag: string;
   symbol: KindFigures;
   footprint: KindFigures;
   biggest: { id: string; bytes: number; raw: number; items: number }[];
+  /** sym-index.json and fp-search.json: their rows, stored (gzipped) and raw sizes. */
+  indexes: Record<string, { rows: number; bytes: number; raw: number }>;
   sumsSha256: string;
 }
 export interface BuildOptions {
@@ -25,6 +27,8 @@ export interface Built { dir: string; libs: ManifestLib[]; raw: Record<string, n
 export const SCHEMA: 1;
 export const MANIFEST: string;
 export const FP_INDEX: string;
+export const SYM_INDEX: string;
+export const FP_SEARCH: string;
 export const LICENSE: string;
 export const SUMS: string;
 export function bundleName(id: string): string;

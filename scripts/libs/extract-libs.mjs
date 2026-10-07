@@ -18,6 +18,12 @@
 // than the engine's pinned fork reads is refused.
 // Modified by Circuit Center on 2026-10-07: readLibTable reads the lib-table
 // descriptions (KiCad's own sym-lib-table and fp-lib-table).
+// Modified by Circuit Center on 2026-10-07: format ccl2 (PICKER.md): a symbol
+// body is the symbol alone under its file's library header, never its extends
+// chain (the engine links a derived symbol to its parent once the whole
+// library has merged); the chain is still resolved, so a cycle or a missing
+// parent is refused as before. Every item carries its search index row
+// (search-index.mjs), with desc, keys and fp inherited down the chain.
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import * as path from "node:path";
@@ -33,6 +39,7 @@ import {
   rootForm,
 } from "./kicad-symdir.mjs";
 import { assertForkReads as assertFootprintVersion, countUniquePads, parseFootprintFile } from "./kicad-pretty.mjs";
+import { footprintFacts, symbolFacts, symbolRow } from "./search-index.mjs";
 
 /* ----------------------------------------------------- full-set extraction --
  * The CURATED extractAll above provisions a small example tree on disk. For the
@@ -115,10 +122,12 @@ export function listLibs({ symbolsSrc, footprintsSrc }) {
 }
 
 /**
- * One library's items as { id, nick, kind, items: [{ name, body, pads? }] },
- * items sorted by name in code point order. A symbol body is a self-contained
- * `kicad_symbol_lib` (its extends chain first, root first); a footprint body
- * is the `.kicad_mod` text, with its unique pad count beside it.
+ * One library's items as { id, nick, kind, items: [{ name, body, row, pads? }] },
+ * items sorted by name in code point order. A symbol body is a `kicad_symbol_lib`
+ * holding the symbol alone under its file's header (format ccl2); a footprint
+ * body is the `.kicad_mod` text, with its unique pad count beside it. `row` is
+ * the item's search index row: sym-index.json's for a symbol, fp-search.json's
+ * for a footprint.
  */
 export function extractLib(lib) {
   const items = [];
@@ -135,6 +144,17 @@ export function extractLib(lib) {
         byName.set(sym.name, { ...sym, header: parsed.header });
       }
     }
+    const facts = new Map();
+    const factsOf = (sym) => {
+      if (!facts.has(sym.name)) {
+        try {
+          facts.set(sym.name, symbolFacts(sym.block));
+        } catch (err) {
+          throw new Error(`${lib.id}: ${sym.name}: ${err.message}`);
+        }
+      }
+      return facts.get(sym.name);
+    };
     for (const sym of byName.values()) {
       let parents;
       try {
@@ -142,7 +162,11 @@ export function extractLib(lib) {
       } catch (err) {
         throw new Error(`${lib.id}: ${err.message}`);
       }
-      items.push({ name: sym.name, body: buildSelfContainedLib(sym.header, parents.map((p) => p.block), sym.block) });
+      items.push({
+        name: sym.name,
+        body: buildSelfContainedLib(sym.header, [], sym.block),
+        row: symbolRow(lib.nick, [...parents, sym].map(factsOf)),
+      });
     }
   } else {
     for (const file of readdirSync(lib.path).filter((f) => f.endsWith(MOD)).sort(compareNames)) {
@@ -150,14 +174,16 @@ export function extractLib(lib) {
       const src = readFileSync(where, "utf8");
       let fp;
       let pads;
+      let text;
       try {
         fp = parseFootprintFile(src, file.slice(0, -MOD.length));
         pads = countUniquePads(src);
+        text = footprintFacts(src);
       } catch (err) {
         throw new Error(`${where}: ${err.message}`);
       }
       assertFootprintVersion(fp.version, where);
-      items.push({ name: fp.name, body: fp.body, pads });
+      items.push({ name: fp.name, body: fp.body, pads, row: [lib.nick, fp.name, text.desc, text.tags, pads] });
     }
   }
   items.sort((a, b) => compareNames(a.name, b.name));
