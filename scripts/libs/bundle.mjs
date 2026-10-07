@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
-// The library bundle, format ccl1 (LIBRARY.md): one line of JSON naming the
+// The library bundle, format ccl2 (LIBRARY.md): one line of JSON naming the
 // library and every item with its body's length in BYTES, a newline, then the
 // bodies as raw UTF-8, concatenated in item order, items sorted by name in
 // code point order. A reader slices the bodies out and never re-encodes them.
+// ccl2 differs from ccl1 in what a symbol body holds (the symbol alone, never
+// its extends chain); the framing is the same, and a ccl1 bundle is refused.
 //
-//   {"v":1,"id":"sym.Device","kind":"symbol","items":[["C",1043],["R",987]]}\n<C body><R body>
+//   {"v":2,"id":"sym.Device","kind":"symbol","items":[["C",1043],["R",987]]}\n<C body><R body>
 
-export const BUNDLE_VERSION = 1;
+export const BUNDLE_VERSION = 2;
 export const KINDS = ['symbol', 'footprint'];
 
 const NEWLINE = 0x0a;
@@ -37,22 +39,22 @@ export function encodeBundle({ id, kind, items }) {
 /**
  * Decode one bundle into { v, id, kind, items: [{ name, body }] }, every body a
  * slice of `buf` (bytes, never re-encoded). Refuses anything that is not a
- * well formed ccl1 bundle: a missing header line, an unknown version or kind,
+ * well formed ccl2 bundle: a missing header line, an unknown version or kind,
  * items out of order or repeated, lengths that do not add up to the buffer.
  */
 export function decodeBundle(buf) {
   const bytes = Buffer.isBuffer(buf) ? buf : Buffer.from(buf.buffer, buf.byteOffset, buf.byteLength);
   const nl = bytes.indexOf(NEWLINE);
-  if (nl < 0) throw new Error('not a ccl1 bundle: no header line');
+  if (nl < 0) throw new Error('not a ccl2 bundle: no header line');
   let header;
   try {
     header = JSON.parse(bytes.subarray(0, nl).toString('utf8'));
   } catch {
-    throw new Error('not a ccl1 bundle: the header line is not JSON');
+    throw new Error('not a ccl2 bundle: the header line is not JSON');
   }
-  if (header === null || typeof header !== 'object' || header.v !== BUNDLE_VERSION) throw new Error(`not a ccl1 bundle: version ${JSON.stringify(header?.v)}`);
+  if (header === null || typeof header !== 'object' || header.v !== BUNDLE_VERSION) throw new Error(`not a ccl2 bundle: version ${JSON.stringify(header?.v)}`);
   const { id, kind, items } = header;
-  if (typeof id !== 'string' || id === '') throw new Error('not a ccl1 bundle: no id');
+  if (typeof id !== 'string' || id === '') throw new Error('not a ccl2 bundle: no id');
   if (!KINDS.includes(kind)) throw new Error(`${id}: kind ${JSON.stringify(kind)} is not symbol or footprint`);
   if (!Array.isArray(items)) throw new Error(`${id}: items is not a list`);
   let at = nl + 1;

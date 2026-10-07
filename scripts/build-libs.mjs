@@ -36,7 +36,7 @@
 // extract every library, encode one bundle per library, write the top
 // manifest and the footprint index).
 // Modified by Circuit Center on 2026-10-07: ported from TypeScript to a plain
-// Node script. It writes the island's own layout, LIBRARY.md's ccl1 mirror
+// Node script. It writes the island's own layout, LIBRARY.md's mirror
 // under <out>/<tag>/ (scripts/libs/mirror.mjs), in place of the r2-idb-sync
 // static origins described above: no store driver, bucket, prefix, force,
 // top-up or sizes.json (the manifest carries each bundle's stored size).
@@ -48,6 +48,9 @@
 // Modified by Circuit Center on 2026-10-07: --only <id,...> builds a subset,
 // and every build ends by reading its output back (verifyMirror); --verify
 // <dir> runs that check alone on a built mirror.
+// Modified by Circuit Center on 2026-10-07: format ccl2 and the picker's two
+// search indexes, sym-index.json and fp-search.json (PICKER.md, LIBRARY.md);
+// the figures print each kind's decoded size and each index's size.
 //
 //   node scripts/build-libs.mjs --out <dir> [--tag <t>] --clone <dir> [--only <id,...>]
 //   node scripts/build-libs.mjs --out <dir> [--tag <t>] --symbols-src <p> --footprints-src <p> [--only <id,...>]
@@ -137,7 +140,10 @@ const mb = (n) => `${(n / 1e6).toFixed(1)} MB`;
 function printFigures(f) {
   for (const kind of ["symbol", "footprint"]) {
     const k = f[kind];
-    console.log(`${kind} libraries: ${k.libs}, items: ${k.items}, stored: ${k.bytes} bytes (${mb(k.bytes)})`);
+    console.log(`${kind} libraries: ${k.libs}, items: ${k.items}, stored: ${k.bytes} bytes (${mb(k.bytes)}), decoded: ${k.raw} bytes (${mb(k.raw)})`);
+  }
+  for (const [name, x] of Object.entries(f.indexes)) {
+    console.log(`${name}: ${x.rows} rows, stored: ${x.bytes} bytes (${mb(x.bytes)}), decoded: ${x.raw} bytes (${mb(x.raw)})`);
   }
   console.log("biggest bundles (stored):");
   for (const b of f.biggest) console.log(`  ${b.id}: ${b.bytes} bytes stored, ${b.raw} bytes raw, ${b.items} items`);

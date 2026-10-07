@@ -76,8 +76,8 @@ cut -c67- "$WORK/SHA256SUMS" | LC_ALL=C sort > "$WORK/listed"
 (cd "$SRC" && find . -mindepth 1 -maxdepth 1 -printf '%P\n') | grep -vx 'SHA256SUMS.gz' | LC_ALL=C sort > "$WORK/present"
 cmp -s "$WORK/listed" "$WORK/present" || refuse "$SRC holds files SHA256SUMS does not list, or misses one it does: $(LC_ALL=C comm -3 "$WORK/listed" "$WORK/present" | tr -d '\t' | tr '\n' ' ')"
 
-# The deep check: every bundle decodes, the manifest and fp-index agree with
-# the bundles, and the manifest names this tag.
+# The deep check: every bundle decodes, the manifest, fp-index and the two
+# search indexes agree with the bundles, and the manifest names this tag.
 node scripts/build-libs.mjs --verify "$SRC" > "$WORK/verify" || refuse "$SRC does not verify (node scripts/build-libs.mjs --verify $SRC)"
 grep -qxF "verified $SRC (tag $TAG)" "$WORK/verify" || refuse "$SRC/manifest.json does not name the tag $TAG"
 sed 's/^/  /' "$WORK/verify"
