@@ -1,0 +1,8 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+Copyright (c) 2026 Chirichella Inc.
+
+Written for this repository on 2026-10-07, no third-party content: an empty
+one-sheet schematic and an empty two-layer board with a 40 by 30 mm outline,
+the starting point of the library playtest in tests/e2e/libs.spec.ts. The
+KiCad files carry no comment (their formats have none), so this file holds
+their licence.
