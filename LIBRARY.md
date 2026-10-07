@@ -186,8 +186,8 @@ choosers. Measured in Chromium over the local pair (`tests/e2e/libs.spec.ts`) wi
 
 | Moment | Requests | Provider ops |
 | --- | --- | --- |
-| Schematic frame: boot, project open, 3 to 8 s idle | `manifest.json` only | none |
-| Board frame: boot, project open, 3 to 8 s idle | `manifest.json` only | none |
+| Schematic frame: boot, project open, 3 to 8 s idle | `manifest.json` only (measured before the picker's quiet warm-up, below) | none |
+| Board frame: boot, project open, 3 to 8 s idle | `manifest.json` only (measured before the picker's quiet warm-up, below) | none |
 | Symbol chooser opened (place symbol, `A`) | each of the 6 symbol bundles once, `fp-index.json` once | 17 `get` (one per symbol placed in the open schematic, for its Already Placed list), then `list bodies` for every symbol library, then one `index` |
 | Power chooser opened (place power symbol, `P`) | each of the 6 symbol bundles once | the same `get`s, then `list bodies` for every symbol library; no `index` |
 | Footprint chooser opened (place footprint, `A`) | each of the 5 footprint bundles once | `list bodies` for every footprint library |
@@ -209,6 +209,15 @@ chooser appeared 1.0 s after the key, with all 5 bundles in flight together (2.0
 a time). A `get` (one item: the Already Placed list, a footprint loaded by name) never starts
 the warm-up. The warm-up stops on the `shutdown` op and on `pagehide`. None of this
 changes `ev.state` or the protocol: the e2e checks that no `ev.state` follows the project open.
+
+**Since the picker (PICKER.md, island v0.2.3-cc7):** boot still asks for nothing but the manifest
+first, and then, once `picker` is in `ev.ready`'s caps and no request has been in flight for 1.5 s,
+an idle callback (at most 2 s) starts the QUIET warm-up: the frame's search index
+(`sym-index.json` in a `sch` frame, `fp-search.json` in a `pcb` frame) at low fetch priority, then
+the common libraries PICKER.md lists, one at a time through `prefetch` (measured on the full
+mirror: the symbol index and the ten common symbol libraries in 0.6 s). No event, no state, nothing
+on screen; it stops on `shutdown` and `pagehide`, and never runs on the example library. A
+`place` reads one library and asks the engine for nothing: no `list bodies`, no provider op.
 
 On the full mirror the first chooser of a kind on a browser therefore fetches every bundle of that
 kind once, several at a time, before it appears; every later chooser, in that session or a later
