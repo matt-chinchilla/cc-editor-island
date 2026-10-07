@@ -65,5 +65,16 @@
     ],
     "replacedEntries": 60,
     "entries": 5116
+  },
+  "libs": {
+    "tag": "10.0.4",
+    "symbols": {
+      "repo": "https://gitlab.com/kicad/libraries/kicad-symbols",
+      "commit": "dcd4e9e491eee9b8835b843d8ac92e8c2a7e10f8"
+    },
+    "footprints": {
+      "repo": "https://gitlab.com/kicad/libraries/kicad-footprints",
+      "commit": "cb8299c2ba2baed8d76a9207b76e4884bcfc24e6"
+    }
   }
 }
