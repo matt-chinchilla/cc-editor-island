@@ -2,16 +2,16 @@
 // Copyright (c) 2026 Chirichella Inc.
 import { describe, expect, it } from 'vitest';
 import { memoryBundleStore, openIdbBundleStore, type BundleStore } from '../loader/src/wasm/libs/bundle-store';
-import { checkManifest, mirrorLibsSource, parseBundle, type MirrorSourceOptions } from '../loader/src/wasm/libs/mirror-source';
+import { checkManifest, checkSearchIndex, mirrorLibsSource, parseBundle, type MirrorSourceOptions } from '../loader/src/wasm/libs/mirror-source';
 
 const TAG = '10.0.4';
 const BASE = `/libs/${TAG}/`;
 const enc = new TextEncoder();
 
-/** A ccl1 bundle (LIBRARY.md): one JSON line, a newline, the bodies in items order. */
+/** A ccl2 bundle (LIBRARY.md): one JSON line, a newline, the bodies in items order. */
 function bundleBytes(id: string, kind: string, items: Array<[string, string]>, header?: Record<string, unknown>): Uint8Array {
   const bodies = items.map(([, b]) => enc.encode(b));
-  const head = JSON.stringify(header ?? { v: 1, id, kind, items: items.map(([n], i) => [n, bodies[i].length]) });
+  const head = JSON.stringify(header ?? { v: 2, id, kind, items: items.map(([n], i) => [n, bodies[i].length]) });
   const out = new Uint8Array(enc.encode(`${head}\n`).length + bodies.reduce((n, b) => n + b.length, 0));
   let off = 0;
   for (const part of [enc.encode(`${head}\n`), ...bodies]) { out.set(part, off); off += part.length; }
@@ -38,11 +38,13 @@ function manifestOf(extra: Array<Record<string, unknown>> = []) {
 /** A fake network over a table of path -> answer; every request is recorded. */
 function fakeNet(table: Record<string, () => Response | Promise<Response>>) {
   const calls: string[] = [];
+  const inits: Array<RequestInit | undefined> = [];
   let inFlight = 0;
   let maxInFlight = 0;
-  const fetchImpl = (async (input: RequestInfo | URL) => {
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     calls.push(url);
+    inits.push(init);
     inFlight++;
     maxInFlight = Math.max(maxInFlight, inFlight);
     try {
@@ -52,7 +54,15 @@ function fakeNet(table: Record<string, () => Response | Promise<Response>>) {
       inFlight--;
     }
   }) as typeof fetch;
-  return { fetchImpl, calls, max: () => maxInFlight, bundleCalls: () => calls.filter((c) => c.endsWith('.bin')) };
+  return {
+    fetchImpl,
+    calls,
+    inits,
+    max: () => maxInFlight,
+    bundleCalls: () => calls.filter((c) => c.endsWith('.bin')),
+    /** The priority each request to `url` was made with (undefined: none given). */
+    priorities: (url: string) => calls.flatMap((c, i) => (c === url ? [inits[i]?.priority] : [])),
+  };
 }
 
 const json = (v: unknown) => () => new Response(JSON.stringify(v), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -148,13 +158,15 @@ describe('the mirror source', () => {
     const bad: Record<string, Uint8Array> = {
       'truncated': good.subarray(0, good.length - 3),
       'longer than its items': (() => { const b = new Uint8Array(good.length + 1); b.set(good); b[good.length] = 0x29; return b; })(),
-      'another id': bundleBytes('sym.Device', 'symbol', DEVICE, { v: 1, id: 'sym.power', kind: 'symbol', items: [['C', 30], ['R', 50]] }),
-      'version 2': bundleBytes('sym.Device', 'symbol', [], { v: 2, id: 'sym.Device', kind: 'symbol', items: [] }),
+      'another id': bundleBytes('sym.Device', 'symbol', DEVICE, { v: 2, id: 'sym.power', kind: 'symbol', items: [['C', 30], ['R', 50]] }),
+      // ccl1: the same framing, but symbol bodies that carried their chains. Refused.
+      'version 1 (ccl1)': bundleBytes('sym.Device', 'symbol', DEVICE, { v: 1, id: 'sym.Device', kind: 'symbol', items: DEVICE.map(([n, b]) => [n, enc.encode(b).length]) }),
+      'version 3': bundleBytes('sym.Device', 'symbol', [], { v: 3, id: 'sym.Device', kind: 'symbol', items: [] }),
       'another kind': bundleBytes('sym.Device', 'footprint', []),
-      'no header line': enc.encode('{"v":1,"id":"sym.Device","kind":"symbol","items":[]}'),
+      'no header line': enc.encode('{"v":2,"id":"sym.Device","kind":"symbol","items":[]}'),
       'a header that is not JSON': enc.encode('ccl1 sym.Device\n'),
       'a name twice': bundleBytes('sym.Device', 'symbol', [['R', 'a'], ['R', 'b']]),
-      'a negative length': bundleBytes('sym.Device', 'symbol', [], { v: 1, id: 'sym.Device', kind: 'symbol', items: [['R', -1]] }),
+      'a negative length': bundleBytes('sym.Device', 'symbol', [], { v: 2, id: 'sym.Device', kind: 'symbol', items: [['R', -1]] }),
       'an empty name': bundleBytes('sym.Device', 'symbol', [['', 'a']]),
       'a short file': new Uint8Array(0),
     };
@@ -185,7 +197,7 @@ describe('the mirror source', () => {
 
   it('fetches again a stored bundle that no longer passes its check', async () => {
     const store = memoryBundleStore();
-    store.map.set(`${TAG}/sym.Device`, enc.encode('{"v":1,"id":"sym.Device","kind":"symbol","items":[["R",999]]}\n(oops'));
+    store.map.set(`${TAG}/sym.Device`, enc.encode('{"v":2,"id":"sym.Device","kind":"symbol","items":[["R",999]]}\n(oops'));
     const net = fakeNet(standardTable());
     expect(await source(net, store).listItems('sym.Device')).toHaveLength(2);
     expect(net.bundleCalls()).toEqual([`${BASE}sym.Device.bin`]);
@@ -409,5 +421,259 @@ describe('the bundle store', () => {
   it('is null when the open never settles', async () => {
     const stuck = { open: () => ({}) } as unknown as IDBFactory;
     expect(await openIdbBundleStore(stuck, 10)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------- ccl2 symbol bodies
+
+const HEADER = '(version 20251024)\n\t(generator "kicad_symbol_editor")';
+const lib1 = (block: string, header = HEADER) => `(kicad_symbol_lib\n\t${header}\n\t${block}\n)\n`;
+const BASE_BLOCK = '(symbol "Base"\n\t\t(property "Value" "Base")\n\t\t(symbol "Base_1_1"\n\t\t\t(pin passive line\n\t\t\t\t(number "1")\n\t\t\t)\n\t\t)\n\t)';
+const MID_BLOCK = '(symbol "Mid"\n\t\t(extends "Base")\n\t\t(property "Value" "Mid")\n\t)';
+const LEAF_BLOCK = '(symbol "Leaf"\n\t\t(extends "Mid")\n\t\t(property "Description" "a leaf (extends \\"Nope\\")")\n\t)';
+const CHAIN: Array<[string, string]> = [['Base', lib1(BASE_BLOCK)], ['Leaf', lib1(LEAF_BLOCK, `${HEADER}\n\t(generator_version "10.0")`)], ['Mid', lib1(MID_BLOCK)]];
+
+function chainSource(items: Array<[string, string]> = CHAIN, more: Partial<MirrorSourceOptions> = {}) {
+  const table = standardTable();
+  table[`${BASE}manifest.json`] = json(manifestOf([{ id: 'sym.Chain', name: 'Chain', kind: 'symbol', itemCount: items.length, bytes: 1 }]));
+  table[`${BASE}sym.Chain.bin`] = bytes(bundleBytes('sym.Chain', 'symbol', items));
+  const net = fakeNet(table);
+  return { net, src: source(net, memoryBundleStore(), more) };
+}
+
+describe('a symbol read alone (ccl2)', () => {
+  it('assembles a derived symbol\'s chain from the same bundle, root first, under the symbol\'s own header', async () => {
+    const { net, src } = chainSource();
+    expect(await src.getItemBody('sym.Chain', 'symbol', 'Leaf')).toBe(
+      `(kicad_symbol_lib\n\t${HEADER}\n\t(generator_version "10.0")\n\t${BASE_BLOCK}\n\t${MID_BLOCK}\n\t${LEAF_BLOCK}\n)\n`,
+    );
+    expect(await src.getItemBody('sym.Chain', 'symbol', 'Mid')).toBe(`(kicad_symbol_lib\n\t${HEADER}\n\t${BASE_BLOCK}\n\t${MID_BLOCK}\n)\n`);
+    // A symbol that extends nothing is its body unchanged.
+    expect(await src.getItemBody('sym.Chain', 'symbol', 'Base')).toBe(CHAIN[0][1]);
+    // The fat list is unchanged: each body alone, views onto the bundle.
+    const all = await src.getAllItems!('sym.Chain');
+    expect(all.map((i) => new TextDecoder().decode(i.body))).toEqual(CHAIN.map(([, b]) => b));
+    expect(net.bundleCalls()).toEqual([`${BASE}sym.Chain.bin`]);
+  });
+
+  it('finds a parent whose name is written with KiCad escapes', async () => {
+    const parent = lib1('(symbol "P\\"A"\n\t\t(property "Value" "x")\n\t)');
+    const child = lib1('(symbol "Kid"\n\t\t(extends "P\\x22A")\n\t)');
+    const { src } = chainSource([['Kid', child], ['P"A', parent]]);
+    expect(await src.getItemBody('sym.Chain', 'symbol', 'Kid')).toBe(`(kicad_symbol_lib\n\t${HEADER}\n\t(symbol "P\\"A"\n\t\t(property "Value" "x")\n\t)\n\t(symbol "Kid"\n\t\t(extends "P\\x22A")\n\t)\n)\n`);
+  });
+
+  it('gives the body as it is, and logs, when a parent is missing, unreadable, or the chain is a cycle', async () => {
+    const cases: Array<[string, Array<[string, string]>, string, RegExp]> = [
+      ['missing', [['Leaf', CHAIN[1][1]], ['Mid', CHAIN[2][1]]], 'Leaf', /Leaf: its parent Base is not in the library; the body is given without its chain \(sym\.Chain\)/],
+      ['unreadable', [['Base', '(kicad_symbol_lib\n\t(symbol "Base"\n'], ['Mid', CHAIN[2][1]]], 'Mid', /Mid: its parent Base is unreadable/],
+      ['cycle', [['A', lib1('(symbol "A"\n\t\t(extends "B")\n\t)')], ['B', lib1('(symbol "B"\n\t\t(extends "A")\n\t)')]], 'A', /A: extends cycle at A/],
+      ['self', [['S', lib1('(symbol "S"\n\t\t(extends "S")\n\t)')]], 'S', /S: extends cycle at S/],
+    ];
+    for (const [why, items, name, line] of cases) {
+      const log: string[] = [];
+      const { src } = chainSource(items, { log: (m) => log.push(m) });
+      expect(await src.getItemBody('sym.Chain', 'symbol', name), why).toBe(items.find(([n]) => n === name)![1]);
+      expect(log.some((m) => line.test(m)), `${why}: ${log.join(' | ')}`).toBe(true);
+    }
+  });
+
+  it('never assembles a footprint: its body is the .kicad_mod text', async () => {
+    const mod = '(footprint "F"\n\t(extends "G")\n)\n';
+    const table = standardTable();
+    table[`${BASE}fp.Resistor_SMD.bin`] = bytes(bundleBytes('fp.Resistor_SMD', 'footprint', [['R_0603_1608Metric', mod]]));
+    expect(await source(fakeNet(table)).getItemBody('fp.Resistor_SMD', 'footprint', 'R_0603_1608Metric')).toBe(mod);
+  });
+});
+
+// ---------------------------------------------------------------- the search indexes
+
+const SYM_INDEX_TEXT = JSON.stringify({ schema: 1, tag: TAG, fields: ['lib', 'name', 'desc', 'keys', 'fp', 'pins', 'units', 'power'], rows: [['Device', 'R', 'Resistor', 'R res resistor', '', 2, 1, 0]] });
+const FP_SEARCH_TEXT = JSON.stringify({ schema: 1, tag: TAG, fields: ['lib', 'name', 'desc', 'tags', 'pads'], rows: [['Resistor_SMD', 'R_0603_1608Metric', 'Resistor SMD 0603', 'resistor', 2]] });
+
+function indexTable(): Record<string, () => Response | Promise<Response>> {
+  const table = standardTable();
+  table[`${BASE}sym-index.json`] = () => new Response(SYM_INDEX_TEXT, { status: 200 });
+  table[`${BASE}fp-search.json`] = () => new Response(FP_SEARCH_TEXT, { status: 200 });
+  return table;
+}
+const indexCalls = (net: ReturnType<typeof fakeNet>) => net.calls.filter((c) => c.endsWith('sym-index.json') || c.endsWith('fp-search.json'));
+
+describe('getSearchIndex', () => {
+  it('reads each kind\'s index once per session, concurrent asks included, and keeps it in IndexedDB under <tag>/index:<kind>', async () => {
+    const store = memoryBundleStore();
+    const net = fakeNet(indexTable());
+    const src = source(net, store);
+    const [a, b, f] = await Promise.all([src.getSearchIndex('symbol'), src.getSearchIndex('symbol'), src.getSearchIndex('footprint')]);
+    expect(a).toBe(SYM_INDEX_TEXT);
+    expect(b).toBe(SYM_INDEX_TEXT);
+    expect(f).toBe(FP_SEARCH_TEXT);
+    expect(await src.getSearchIndex('symbol')).toBe(SYM_INDEX_TEXT);
+    expect(indexCalls(net)).toEqual([`${BASE}sym-index.json`, `${BASE}fp-search.json`]);
+    expect(new TextDecoder().decode(store.map.get(`${TAG}/index:symbol`)!)).toBe(SYM_INDEX_TEXT);
+    expect(new TextDecoder().decode(store.map.get(`${TAG}/index:footprint`)!)).toBe(FP_SEARCH_TEXT);
+    // A new session on the same storage: no index request.
+    const next = fakeNet(indexTable());
+    expect(await source(next, store).getSearchIndex('symbol')).toBe(SYM_INDEX_TEXT);
+    expect(indexCalls(next)).toEqual([]);
+    // The index keys are of this tag: the next session's tag sweep keeps them, and they are no library.
+    expect((await source(next, store).syncState!('symbol'))?.total).toBe(2);
+    expect(store.map.has(`${TAG}/index:symbol`)).toBe(true);
+  });
+
+  it('passes the priority it is asked for to the fetch', async () => {
+    const net = fakeNet(indexTable());
+    const src = source(net);
+    await src.getSearchIndex('footprint', { priority: 'low' });
+    await src.getSearchIndex('symbol');
+    expect(net.priorities(`${BASE}fp-search.json`)).toEqual(['low']);
+    expect(net.priorities(`${BASE}sym-index.json`)).toEqual([undefined]);
+  });
+
+  it('is null after a 404, an error or an index that fails its check; none of that is kept, and the next ask reads again', async () => {
+    const answers: Array<() => Response> = [
+      () => new Response('', { status: 404 }),
+      () => { throw new TypeError('Failed to fetch'); },
+      () => new Response('<html>not json</html>', { status: 200 }),
+      () => new Response(SYM_INDEX_TEXT.replace(`"tag":"${TAG}"`, '"tag":"9.0.0"'), { status: 200 }),
+      () => new Response(FP_SEARCH_TEXT, { status: 200 }),   // the other kind's file: fields out of shape
+      () => new Response(JSON.stringify({ schema: 2, tag: TAG, fields: [], rows: [] }), { status: 200 }),
+      () => new Response(SYM_INDEX_TEXT, { status: 200 }),
+    ];
+    const table = indexTable();
+    table[`${BASE}sym-index.json`] = () => answers.shift()!();
+    const store = memoryBundleStore();
+    const log: string[] = [];
+    const net = fakeNet(table);
+    const src = source(net, store, { log: (m) => log.push(m) });
+    for (let i = 0; i < 6; i++) {
+      expect(await src.getSearchIndex('symbol'), `answer ${i}`).toBeNull();
+      expect(store.map.has(`${TAG}/index:symbol`), `answer ${i}`).toBe(false);
+    }
+    expect(await src.getSearchIndex('symbol')).toBe(SYM_INDEX_TEXT);
+    expect(await src.getSearchIndex('symbol')).toBe(SYM_INDEX_TEXT);
+    expect(indexCalls(net)).toHaveLength(7);
+    expect(log.filter((m) => m.includes('sym-index.json'))).toHaveLength(6);
+  });
+
+  it('is null without a mirror, and asks for no index then', async () => {
+    const table = indexTable();
+    table[`${BASE}manifest.json`] = () => new Response('', { status: 404 });
+    const net = fakeNet(table);
+    const src = source(net);
+    expect(await src.getSearchIndex('symbol')).toBeNull();
+    expect(indexCalls(net)).toEqual([]);
+    // Not kept: once the mirror answers, so does the index.
+    table[`${BASE}manifest.json`] = json(manifestOf());
+    expect(await src.getSearchIndex('symbol')).toBe(SYM_INDEX_TEXT);
+  });
+
+  it('fetches again a stored index that fails its check, and runs on memory alone without IndexedDB', async () => {
+    const store = memoryBundleStore();
+    store.map.set(`${TAG}/index:symbol`, enc.encode('{"schema":1,"tag":"10.0.4","fields":["lib"],"rows":[]}'));
+    const net = fakeNet(indexTable());
+    expect(await source(net, store).getSearchIndex('symbol')).toBe(SYM_INDEX_TEXT);
+    expect(indexCalls(net)).toEqual([`${BASE}sym-index.json`]);
+    expect(new TextDecoder().decode(store.map.get(`${TAG}/index:symbol`)!)).toBe(SYM_INDEX_TEXT);
+
+    const bare = fakeNet(indexTable());
+    const src = source(bare, null);
+    expect(await src.getSearchIndex('symbol')).toBe(SYM_INDEX_TEXT);
+    expect(await src.getSearchIndex('symbol')).toBe(SYM_INDEX_TEXT);
+    expect(indexCalls(bare)).toEqual([`${BASE}sym-index.json`]);
+  });
+
+  it('answers null for a kind that is not symbol or footprint', async () => {
+    const net = fakeNet(indexTable());
+    expect(await source(net).getSearchIndex('model3d' as never)).toBeNull();
+    expect(net.calls).toEqual([]);
+  });
+
+  it('checks the shape: schema 1, the tag, the kind\'s fields in order, a list of rows', () => {
+    expect(() => checkSearchIndex(SYM_INDEX_TEXT, 'symbol', TAG)).not.toThrow();
+    expect(() => checkSearchIndex(FP_SEARCH_TEXT, 'footprint', TAG)).not.toThrow();
+    expect(() => checkSearchIndex(SYM_INDEX_TEXT, 'footprint', TAG)).toThrow(/fp-search\.json: fields/);
+    expect(() => checkSearchIndex(SYM_INDEX_TEXT, 'symbol', '9.0.0')).toThrow(/tag "10\.0\.4", expected "9\.0\.0"/);
+    expect(() => checkSearchIndex(SYM_INDEX_TEXT.replace('"rows":[', '"rowz":['), 'symbol', TAG)).toThrow(/no rows/);
+    expect(() => checkSearchIndex('[]', 'symbol', TAG)).toThrow(/not schema 1/);
+  });
+});
+
+// ---------------------------------------------------------------- prefetch
+
+describe('prefetch', () => {
+  it('fetches a bundle at low priority, stores it, and the read that follows needs no network', async () => {
+    const store = memoryBundleStore();
+    const net = fakeNet(standardTable());
+    const src = source(net, store);
+    await expect(src.prefetch('sym.Device')).resolves.toBeUndefined();
+    expect(net.priorities(`${BASE}sym.Device.bin`)).toEqual(['low']);
+    expect([...store.map.keys()]).toEqual([`${TAG}/sym.Device`]);
+    let reads = 0;
+    const get = store.get.bind(store);
+    store.get = async (k) => { reads++; return get(k); };
+    expect(await src.getItemBody('sym.Device', 'symbol', 'R')).toBe(DEVICE[1][1]);
+    expect(reads).toBe(0);   // held in memory
+    await src.prefetch('sym.Device');
+    expect(net.bundleCalls()).toEqual([`${BASE}sym.Device.bin`]);
+  });
+
+  it('shares one fetch with every other ask of that bundle, whichever starts it', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const table = standardTable();
+    table[`${BASE}sym.Device.bin`] = async () => { await gate; return bytes(bundleBytes('sym.Device', 'symbol', DEVICE))(); };
+    const net = fakeNet(table);
+    const src = source(net);
+    const engine = src.getAllItems!('sym.Device');
+    const pre = [src.prefetch('sym.Device'), src.prefetch('sym.Device')];
+    const one = src.getItemBody('sym.Device', 'symbol', 'C');
+    await new Promise((r) => setTimeout(r, 0));
+    release();
+    await Promise.all([engine, one, ...pre]);
+    expect(net.bundleCalls()).toEqual([`${BASE}sym.Device.bin`]);
+    // The engine started it, so it went out at the default priority.
+    expect(net.priorities(`${BASE}sym.Device.bin`)).toEqual([undefined]);
+
+    // And the other way round: a prefetch in flight serves the engine's ask.
+    const net2 = fakeNet(standardTable());
+    const src2 = source(net2);
+    const p = src2.prefetch('sym.power');
+    const names = src2.listItems('sym.power');
+    await p;
+    expect(await names).toEqual([{ kind: 'symbol', name: 'GND' }]);
+    expect(net2.priorities(`${BASE}sym.power.bin`)).toEqual(['low']);
+  });
+
+  it('fetches nothing for a stored bundle or a library the mirror does not have', async () => {
+    const store = memoryBundleStore();
+    store.map.set(`${TAG}/sym.power`, bundleBytes('sym.power', 'symbol', POWER));
+    const net = fakeNet(standardTable());
+    const src = source(net, store);
+    await src.prefetch('sym.power');
+    await src.prefetch('sym.Nope');
+    await src.prefetch('../../etc');
+    expect(net.bundleCalls()).toEqual([]);
+  });
+
+  it('never rejects: a refused, malformed or unreachable bundle is logged, not kept, and loads on demand later', async () => {
+    const table = standardTable();
+    const answers: Array<() => Response> = [
+      () => new Response('', { status: 503 }),
+      () => new Response('{"v":1,"id":"sym.Device","kind":"symbol","items":[]}\n', { status: 200 }),
+      () => { throw new TypeError('Failed to fetch'); },
+      () => bytes(bundleBytes('sym.Device', 'symbol', DEVICE))(),
+    ];
+    table[`${BASE}sym.Device.bin`] = () => answers.shift()!();
+    const manifestDown = standardTable();
+    manifestDown[`${BASE}manifest.json`] = () => new Response('', { status: 500 });
+    const log: string[] = [];
+    const store = memoryBundleStore();
+    const src = source(fakeNet(table), store, { log: (m) => log.push(m) });
+    for (let i = 0; i < 3; i++) await expect(src.prefetch('sym.Device')).resolves.toBeUndefined();
+    expect(store.map.size).toBe(0);
+    expect(log.filter((m) => m.startsWith('[libs] prefetch sym.Device: '))).toHaveLength(3);
+    expect(await src.listItems('sym.Device')).toHaveLength(2);
+    await expect(source(fakeNet(manifestDown), store).prefetch('sym.Device')).resolves.toBeUndefined();
   });
 });
