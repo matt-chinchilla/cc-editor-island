@@ -12,9 +12,15 @@ reader presses A (or the pencil case's Add a part)
   -> typing filters 22,776 rows in the page, per keystroke        (no request)
   -> a highlighted row: lib.prefetch its library, lib.item draws its preview
   -> Enter / click: place {kind, lib, name}
-  -> the island builds the clipboard blob from the cached bundle and calls the engine's
-     kicadPlaceImportedItem: the part hangs off the pointer, the click commits it (undo, ev.edited)
+  -> the island builds the clipboard blob from the item's body (a derived symbol flattened) and
+     calls the engine's kicadPlaceImportedItem; it answers once the editor holds the part: the
+     part hangs off the pointer, the click commits it (undo, ev.edited), Escape drops it
 ```
+
+Measured on the local pair (2026-10-07, Chromium, no throttling), from the host's `place` to its
+answer: 230 to 610 ms for a symbol whose bundle was not yet fetched (`MCU_ST_STM32F1`, 86 KB
+gzipped), 115 to 280 ms once it is held; 310 to 530 ms cold and 220 to 430 ms warm for the LQFP-48 on
+a board. The quiet warm-up fetched the full mirror's symbol index and 10 common libraries in 0.6 s.
 
 KiCad's chooser stays reachable through KiCad's own menus (Show KiCad's menus); that path is
 unchanged and still enumerates.
@@ -63,29 +69,69 @@ power symbol (`(power)`), else 0. Empty strings, never null.
 
 | op | args | result |
 | --- | --- | --- |
-| `lib.index` | `{ kind: "symbol" \| "footprint" }` | `{ text: string \| null }` (the index JSON text; null without a mirror) |
+| `lib.index` | `{ kind: "symbol" \| "footprint" }` | `{ text: string \| null }` (the index JSON text; null without a mirror or an index) |
 | `lib.item` | `{ kind, lib: string, name: string }` | `{ body: string \| null }` (self-contained symbol lib, or the footprint text; null when absent) |
 | `lib.prefetch` | `{ kind, libs: string[] }` (nicknames, at most 16) | `{}` at once; the bundles warm in the background |
 | `place` | `{ kind, lib: string, name: string }` | `{}` once the item hangs off the pointer |
 
-`place` refusals: `unsupported` (no `kicadPlaceImportedItem`, or a symbol in a `pcb` frame / a
-footprint in a `sch` frame), `not_found` (no such item), `busy` (a dialog, a popup or a load is up),
-`not_ready`, `island_error`. `place` is a new op the host may only send when `ev.ready` `caps` lists
-`kicadPlaceImportedItem`.
+`lib` and `name` are strings of 1 to 255 characters with no control character; anything else, or an
+extra key, is `bad_args`. All four answer `not_ready` before `ev.ready`. `lib.item` answers a body
+for an unknown library or item as null, not as an error. `lib.prefetch` passes unknown nicknames
+over, and warms nothing when the island booted on its example library (no mirror).
+
+`place` refusals, in the order they are checked: `bad_args`; `unsupported` (a symbol in a `pcb`
+frame or a footprint in a `sch` frame, or no `kicadPlaceImportedItem` / `kicadCollabGetSelection`);
+`not_ready` (no engine, or no document opened by `project.open` / `project.import`); `busy` (a load,
+a dialog or a popup menu is up; also when the engine says a load is in flight, or never takes the
+item within about 10 s because a placement of KiCad's own is under way); `not_found` (no such
+library or item, `message` `lib:name`); `island_error` (the engine refused the blob). The answer
+waits for the editor's selection to hold the new item: `kicadPlaceImportedItem` answers `{ok:true}`
+when it has only queued the blob, and logs a blob it cannot parse.
+
+What `place` puts down (decided while building, 2026-10-07):
+- A symbol is `lib:name` against the project's lib table. The sheet's `lib_symbols` takes no derived
+  symbol (KiCad's schematic parser keeps no parent map there): with an `extends` entry the engine
+  placed an STM32F103C8Tx with no pins. So a derived symbol is FLATTENED as KiCad's
+  `LIB_SYMBOL::Flatten` does: the parents' flags, graphics and pins under the symbol's own name (the
+  units renamed `<name>_<unit>_<style>`, the prefix KiCad's parser checks), a filled mandatory field,
+  `ki_keywords` or `ki_fp_filters` of the child wins and an empty one inherits, any other field of
+  the child replaces its parent's. The instance carries every library field (not the `ki_` ones) at
+  its library position, as a chooser pick does, and the library's `exclude_from_sim`, `in_bom` and
+  `on_board`; KiCad annotates it (`U1`, `#PWR01`).
+- A footprint is named `lib:name` (a `.kicad_mod` names itself without its library), its format
+  version as the body has it (the builder refuses one newer than the engine reads).
+- One item at a time: a `place` while the previous item still hangs drops it first. When the reader
+  drops a schematic item with Escape (or Undo), the island sends KiCad a second Escape: KiCad's
+  placement tool stays armed after the first, and its next press would open KiCad's own chooser.
+- The keyboard focus stays with the page: after the answer the page gives the frame the focus
+  (`iframe.focus()`) so R rotates the item before the press.
+
+**Which islands have `place`.** The pinned engine has exported `kicadPlaceImportedItem` since PCBJam
+v0.2.3, so `ev.ready` `caps` lists it on islands without these ops too (they answer `unknown_op`).
+The page sends `lib.index` once after `ev.ready` (it wants the index early anyway): `unknown_op`
+means an older island, and the page keeps pressing KiCad's keys for it. Ship order: the page that
+handles `ev.pick` first, then the island (an older page ignores `ev.pick`, so the reader's A would do
+nothing).
 
 **Event `ev.pick { kind: "symbol" | "footprint", power?: true }`**: the reader pressed the frame's
 place key inside the frame (`A` in a `sch` frame: symbol; `P` in a `sch` frame: power symbol, with
-`power: true`; `A` in a `pcb` frame: footprint), with no modifier, no KiCad dialog or popup up and no
-text field focused. The island swallowed the key (KiCad's chooser does not open) and the host opens
-its picker. A `key.press` of those keys from the host is swallowed the same way (the host opens its
-picker directly instead of pressing them).
+`power: true`; `A` in a `pcb` frame: footprint), with no modifier, nothing of KiCad's over its
+canvas (no popup menu, no dialog but a progress dialog, no other KiCad window such as its footprint
+chooser frame) and no text field focused. The key counts by the character it types (the key that
+types `a` on AZERTY; Caps Lock's `A` too). The island swallowed the keydown, keypress and keyup
+(capture listeners installed before the engine's scripts load), so KiCad's chooser does not open, and
+sends one `ev.pick` per press (repeats of a held key send none); the host opens its picker. A
+`key.press` of those keys from the host is swallowed the same way and answers `{}` (the host opens
+its picker directly instead of pressing them).
 
-**Quiet warm-up (no event, no state):** once `ev.ready` has gone and the frame has been idle for a
-moment, the island fetches the frame's search index (`sch` symbol, `pcb` footprint) and a short list
-of common libraries at low priority: symbols `Device`, `power`, `Connector`, `Connector_Generic`,
-`Switch`, `LED`, `Diode`, `Transistor_FET`, `Transistor_BJT`, `Regulator_Linear`; footprints
-`Resistor_SMD`, `Capacitor_SMD`, `LED_SMD`, `Diode_SMD`, `Package_TO_SOT_SMD`,
-`Connector_PinHeader_2.54mm`. It stops on `shutdown` and `pagehide`. Nothing is shown.
+**Quiet warm-up (no event, no state):** once `ev.ready` has gone and no request has been in flight
+for 1.5 s (so after the project's open), on the browser's next idle moment (at most 2 s later), the
+island fetches the frame's search index (`sch` symbol, `pcb` footprint) at low priority, then the
+common libraries of its kind that the mirror holds, one at a time through the mirror's `prefetch`:
+symbols `Device`, `power`, `Connector`, `Connector_Generic`, `Switch`, `LED`, `Diode`,
+`Transistor_FET`, `Transistor_BJT`, `Regulator_Linear`; footprints `Resistor_SMD`, `Capacitor_SMD`,
+`LED_SMD`, `Diode_SMD`, `Package_TO_SOT_SMD`, `Connector_PinHeader_2.54mm`. It stops on `shutdown`
+and `pagehide`, and never runs on the example library. Nothing is shown.
 
 ## 3. The page's picker (circuits-com `/viewer`, Edit mode)
 
