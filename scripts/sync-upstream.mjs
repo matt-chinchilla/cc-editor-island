@@ -4,7 +4,7 @@
 // notice sources. At a bump, `git diff` over loader/pristine shows what
 // upstream changed so the same change can be carried into loader/src.
 import { execSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 const pin = JSON.parse(readFileSync('PIN.json', 'utf8'));
@@ -26,6 +26,11 @@ for (const rel of CLOSURE) {
   mkdirSync(dirname(dst), { recursive: true });
   copyFileSync(join(STANDALONE, rel), dst);
 }
+// The day the closure was taken: the notices census asks every changed copy in
+// loader/src for a notice dated on or after it (never the copies' commit date,
+// which a history rewrite moves).
+pin.pcbjam.pristineTaken = new Date().toISOString().slice(0, 10);
+writeFileSync('PIN.json', `${JSON.stringify(pin, null, 2)}\n`);
 mkdirSync('notices', { recursive: true });
 copyFileSync('upstream/site/src/content/legal/licenses.md', 'notices/pcbjam-licenses.md');
 copyFileSync('upstream/scripts/common/versions.sh', 'notices/versions.sh');   // at v0.2.3 it lives in scripts/common (the plan expected scripts/deps)

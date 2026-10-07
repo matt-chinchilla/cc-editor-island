@@ -10,8 +10,8 @@
 //   (a) every NAME= in notices/versions.sh belongs to an entry of DEPS below;
 //   (b) every file in loader/src that differs from loader/pristine carries a
 //       `Modified by Circuit Center on YYYY-MM-DD:` line dated on or after the
-//       pristine copy's date (its last commit date, or its mtime when git does
-//       not hold it unchanged);
+//       pristine copy's date (PIN.json pcbjam.pristineTaken, or its mtime when
+//       git does not hold it unchanged);
 //   (c) every copied file keeps its pristine counterpart's leading comment
 //       block verbatim (PCBJam's files carry no licence header at the pin, so
 //       the leading comment is the only header there is to keep); a file in
@@ -140,12 +140,18 @@ export function leadingComment(text) {
 
 const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-/** The date a pristine copy was taken: its last commit date when git holds it unchanged, else its mtime. */
+/**
+ * The date a pristine copy was taken: `PIN.json` `pcbjam.pristineTaken` (which
+ * sync-upstream writes when it refreshes the closure) while git holds the copy
+ * unchanged, else its mtime, so a refresh not yet committed still asks for a
+ * new notice. Never the copy's commit date: a history rewrite (the 2026-10-05
+ * squash) re-dated every commit without changing a single copy.
+ */
 function pristineDate(path) {
+  const taken = JSON.parse(read('PIN.json')).pcbjam?.pristineTaken;
   try {
     const dirty = execFileSync('git', ['status', '--porcelain', '--', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    const day = execFileSync('git', ['log', '-1', '--format=%cs', '--', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    if (!dirty && /^\d{4}-\d{2}-\d{2}$/.test(day)) return { day, from: 'commit' };
+    if (!dirty && /^\d{4}-\d{2}-\d{2}$/.test(taken ?? '')) return { day: taken, from: 'PIN.json pcbjam.pristineTaken' };
   } catch {
     // not a git checkout: fall through to the file's own date
   }
