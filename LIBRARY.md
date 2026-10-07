@@ -132,6 +132,7 @@ Measured in Chromium over the local pair (`tests/e2e/libs.spec.ts`) with a mirro
 | Power chooser opened (place power symbol, `P`) | each of the 6 symbol bundles once | the same `get`s, then `list bodies` for every symbol library; no `index` |
 | Footprint chooser opened (place footprint, `A`) | each of the 5 footprint bundles once | `list bodies` for every footprint library |
 | Symbol chooser in a new session, same browser | `manifest.json`, `fp-index.json`, no bundle | as above |
+| Symbol highlighted in the chooser, with a Footprint property (full mirror) | that footprint's bundle once (e.g. `fp.Package_QFP.bin`) | one `get` from the footprint preview; it starts no warm-up |
 
 Neither frame enumerates a library at boot (the engine's adapters skip enumeration in `AsyncLoad`; a
 library loads on first access). A chooser enumerates every library of its kind before it appears,
@@ -153,6 +154,16 @@ On the full mirror the first chooser of a kind on a browser therefore fetches ev
 kind once, several at a time, before it appears; every later chooser, in that session or a later
 one, reads IndexedDB. The engine fires `pcbjam:lib-loading` events on `window` around each fat
 list (done and total per kind), which the island does not render yet.
+
+### On the full mirror (measured 2026-10-07, local pair, no throttling)
+
+The symbol chooser appears 15.2 to 15.8 s after the key in a fresh browser, about 70 % of it the engine enumerating
+22,776 symbols rather than the network: the next session on the same storage takes 10.8 to 12.0 s with no bundle
+request, and a reopen in the same session about 1 s (no enumeration). The footprint chooser takes 8.5 to 12.3 s
+cold and 6.0 to 7.0 s in the next session. IndexedDB holds 351.2 MB decoded for the symbol set (Chromium's
+`storage.estimate()` reports 36.3 MB) and 156.6 MB for the footprints (24.9 MB), so the 48 MB memory cap
+keeps only the newest bundles and the rest are read back from IndexedDB. The editor shows nothing of this
+wait yet (the engine's `pcbjam:lib-loading` events are not rendered).
 
 ### The local pair
 
