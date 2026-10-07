@@ -7,14 +7,19 @@
 // The page origin also serves tests/fixtures under /fixtures/, so the harness
 // loads its fixture projects same-origin, and tests/e2e/fixtures under
 // /e2e-fixtures/ (the boards the import tests hand over).
+// With LIBS_DIR set, the island also serves that directory as /libs/ (the
+// library mirror, LIBRARY.md: LIBS_DIR holds <tag>/manifest.json.gz and the
+// rest, gzip only, sent with Content-Encoding gzip like every .gz here).
+// Without it /libs/ is a 404 and the island boots on its example library.
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { extname, join, normalize } from 'node:path';
+import { extname, join, normalize, resolve } from 'node:path';
 import { islandHeaders } from './headers.mjs';
 
 const TYPES = { '.txt': 'text/plain; charset=utf-8', '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm', '.gz': 'application/octet-stream', '.png': 'image/png', '.svg': 'image/svg+xml' };
 const PAGE = 'http://circuitcenter.localhost:4173';
 const ISLAND = 'http://editor.circuitcenter.localhost:4174';
+const LIBS_DIR = process.env.LIBS_DIR ? resolve(process.env.LIBS_DIR) : null;
 
 function serveFile(root, urlPath, res, headers) {
   let p = normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, '');
@@ -32,8 +37,14 @@ function serveFile(root, urlPath, res, headers) {
   createReadStream(file).pipe(res);
 }
 
-createServer((req, res) => serveFile('dist', req.url.split('?')[0], res, islandHeaders(PAGE)))
-  .listen(4174, '127.0.0.1');
+createServer((req, res) => {
+  const path = req.url.split('?')[0];
+  if (path === '/libs' || path.startsWith('/libs/')) {
+    if (LIBS_DIR == null) { res.writeHead(404, islandHeaders(PAGE)); return res.end(); }
+    return serveFile(LIBS_DIR, path.slice('/libs'.length), res, islandHeaders(PAGE));
+  }
+  return serveFile('dist', path, res, islandHeaders(PAGE));
+}).listen(4174, '127.0.0.1');
 createServer((req, res) => {
   const path = req.url.split('?')[0];
   const headers = { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'credentialless', 'Content-Security-Policy': `frame-src ${ISLAND}` };
@@ -41,4 +52,4 @@ createServer((req, res) => {
   if (path.startsWith('/e2e-fixtures/')) return serveFile('tests/e2e/fixtures', path.slice('/e2e-fixtures'.length), res, headers);
   return serveFile('tests/harness', path, res, headers);
 }).listen(4173, '127.0.0.1');
-console.log(`page ${PAGE}  island ${ISLAND}`);
+console.log(`page ${PAGE}  island ${ISLAND}${LIBS_DIR ? `  libs ${LIBS_DIR}` : ''}`);
