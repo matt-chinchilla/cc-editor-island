@@ -8,6 +8,10 @@
 // (a schematic and a board built from the mirror's parts in KiCad's own
 // choosers) runs on any mirror holding Device, MCU_ST_STM32F1, Connector and
 // Package_QFP: the 6-library one make-mirror.mjs builds, or the full one.
+// KiCad's choosers open through KiCad's own Place menu: the island takes the
+// A key for the host's picker (PICKER.md, tests/e2e/picker.spec.ts), and once
+// the frame has been idle for a moment after the open, its quiet warm-up
+// fetches the frame's search index and the common libraries the mirror holds.
 import { expect, test, type BrowserContext, type Frame, type Page } from '@playwright/test';
 import pin from '../../PIN.json' with { type: 'json' };
 
@@ -62,13 +66,44 @@ async function boot(page: Page, frameName: 'sch' | 'pcb', fixture = 'glasgow'): 
   return frame;
 }
 
-/** Presses A (the place tool: the symbol chooser, the footprint chooser), waits for the chooser window and resolves with how long it took. */
+/** The centre of the first DOM element under `selector` whose text is `text` (wx-dom.js draws the menu bar and its popups as DOM). */
+const domPoint = (frame: Frame, selector: string, text: string): Promise<[number, number] | null> =>
+  frame.evaluate(([sel, t]) => {
+    const el = [...document.querySelectorAll(sel)].find((e) => e.textContent?.trim() === t);
+    if (el == null) return null;
+    const r = el.getBoundingClientRect();
+    return [r.x + r.width / 2, r.y + r.height / 2] as [number, number];
+  }, [selector, text] as const);
+
+/**
+ * Opens KiCad's own chooser (the symbol chooser, the footprint chooser) through
+ * its own menus, Place > Place Symbols or Place Footprints (KiCad's chrome comes
+ * on for it), waits for the chooser window and resolves with how long it took
+ * from the menu item's press. The A key is the host's picker's (PICKER.md).
+ */
 async function openChooser(page: Page, frame: Frame, name: string): Promise<number> {
+  const item = name === 'FootprintChooserFrame' ? 'Place Footprints' : 'Place Symbols';
+  expect(await request(page, 'chrome.show', { on: true })).toEqual({});
+  await expect.poll(() => domPoint(frame, '.wx-menu-title', 'Place')).not.toBeNull();
+  await clickIn(page, ...(await domPoint(frame, '.wx-menu-title', 'Place'))!);
+  await expect.poll(() => domPoint(frame, '.wx-menu-popup *', item)).not.toBeNull();
+  const at = (await domPoint(frame, '.wx-menu-popup *', item))!;
   const t0 = Date.now();
-  expect(await request(page, 'key.press', { key: 'a', code: 'KeyA' })).toEqual({});
+  await clickIn(page, ...at);
   await expect.poll(() => windows(frame), { timeout: 120_000 }).toContain(name);
   return Date.now() - t0;
 }
+
+/** The quiet warm-up's end, as the island logs it (PICKER.md): the frame's index, then the common libraries. */
+const warmedUp = (page: Page, kind: 'symbol' | 'footprint'): Promise<void> => new Promise((resolve) => {
+  const on = (m: { text(): string }): void => { if (m.text().includes(`[libs] quiet ${kind} warm-up done`)) { page.off('console', on); resolve(); } };
+  page.on('console', on);
+});
+/** The common libraries of a kind the quiet warm-up fetches (src/picker.ts COMMON_LIBS), as mirror ids. */
+const COMMON: Record<'symbol' | 'footprint', string[]> = {
+  symbol: ['Device', 'power', 'Connector', 'Connector_Generic', 'Switch', 'LED', 'Diode', 'Transistor_FET', 'Transistor_BJT', 'Regulator_Linear'].map((n) => `sym.${n}`),
+  footprint: ['Resistor_SMD', 'Capacitor_SMD', 'LED_SMD', 'Diode_SMD', 'Package_TO_SOT_SMD', 'Connector_PinHeader_2.54mm'].map((n) => `fp.${n}`),
+};
 
 /** The keys the island's IndexedDB holds (LIBRARY.md: database cc-libs, store bundles). */
 const storedKeys = (frame: Frame): Promise<string[]> => frame.evaluate(() => new Promise<string[]>((resolve, reject) => {
@@ -205,23 +240,29 @@ const QFP = 'Package_QFP:LQFP-48_7x7mm_P0.5mm';
 test.describe('with a mirror', () => {
   test.skip(process.env.LIBS_DIR == null, 'needs a library mirror: LIBS_DIR=<the directory served as /libs/> (tests/libs/make-mirror.mjs builds one)');
 
-  test('the schematic frame boots with no library request, its chooser fetches each symbol bundle once, and the next session fetches none', async ({ page, context }) => {
+  test('the schematic frame boots with no library request but its quiet warm-up\'s, its chooser fetches each other symbol bundle once, and the next session fetches none', async ({ page, context }) => {
     const w = libsWatch(context, page);
+    const warm = warmedUp(page, 'symbol');
     const frame = await boot(page, 'sch');
-    // Neither boot nor the project open touches a library: the manifest alone, read once.
-    await page.waitForTimeout(3000);
-    expect(files(w)).toEqual(['manifest.json']);
-    expect(w.ops).toEqual([]);
-    measure('schematic boot', `${w.net.length} library request (${files(w).join(', ')}), ${w.ops.length} provider ops, 3 s after the open`);
     const readyAt = (await events(page)).length;
+    // Neither boot nor the project open touches a library: the manifest alone, read once. Then,
+    // once the frame has been idle, the quiet warm-up: the symbol index (when the mirror has one)
+    // and each common library the mirror holds, once, with no provider op (KiCad asked for nothing).
+    await warm;
     const symbols = ids(await readManifest(frame), 'symbol');
+    const common = COMMON.symbol.filter((id) => symbols.includes(id));
+    expect(files(w)[0]).toBe('manifest.json');
+    expect(bundles(w)).toEqual(common.map((id) => `${id}.bin`).sort());
+    expect(files(w).filter((f) => !f.endsWith('.bin') && f !== 'manifest.json').every((f) => f === 'sym-index.json')).toBe(true);
+    expect(w.ops).toEqual([]);
+    measure('schematic boot', `${w.net.length} library requests after the quiet warm-up (${files(w).join(', ')}), ${w.ops.length} provider ops`);
 
-    // The symbol chooser enumerates every symbol library: each bundle once, and the footprint index once.
+    // The symbol chooser enumerates every symbol library: each other bundle once, and the footprint index once.
     const before = w.net.length;
     const opsBefore = w.ops.length;
     const ms = await openChooser(page, frame, 'dialog');
     await page.waitForTimeout(2000);
-    expect(bundles(w, before)).toEqual(symbols.map((id) => `${id}.bin`));
+    expect(bundles(w, before)).toEqual(symbols.filter((id) => !common.includes(id)).map((id) => `${id}.bin`));
     expect(files(w, before).filter((f) => !f.endsWith('.bin'))).toEqual(['fp-index.json']);
     const ops = w.ops.slice(opsBefore);
     expect(count(ops, /^op=list .*arg=bodies$/)).toBe(symbols.length);
@@ -239,18 +280,26 @@ test.describe('with a mirror', () => {
     measure('symbol chooser, next session', `shown ${ms2} ms after the press; library requests: ${files(w, second).join(', ')}`);
   });
 
-  test('the board frame boots with no library request, and its chooser\'s first enumerate fetches the footprint bundles in parallel', async ({ page, context }) => {
+  test('the board frame boots with no library request but its quiet warm-up\'s, and its chooser\'s first enumerate fetches the footprint bundles in parallel', async ({ page, context }) => {
     const w = libsWatch(context, page);
+    // The quiet warm-up's bundles are refused here, so every footprint bundle is cold at the chooser
+    // (a refused bundle is never kept: the next ask fetches it again).
+    let refuse = true;
+    await context.route('**/libs/**/*.bin', async (route) => {
+      if (refuse) return route.fulfill({ status: 503, body: '' });
+      // Each bundle answers 400 ms late. KiCad's own crossings are serial (one in
+      // flight at a time, measured 2026-10-07), so overlapping requests are the chooser's warm-up's.
+      await new Promise((r) => setTimeout(r, 400));
+      return route.continue();
+    });
+    const warm = warmedUp(page, 'footprint');
     const frame = await boot(page, 'pcb');
-    await page.waitForTimeout(3000);
-    expect(files(w)).toEqual(['manifest.json']);
-    expect(w.ops).toEqual([]);
-    measure('board boot', `${w.net.length} library request (${files(w).join(', ')}), ${w.ops.length} provider ops, 3 s after the open`);
+    await warm;
     const footprints = ids(await readManifest(frame), 'footprint');
-
-    // Each bundle answers 400 ms late. KiCad's own crossings are serial (one in
-    // flight at a time, measured 2026-10-07), so overlapping requests are the warm-up's.
-    await context.route('**/libs/**/*.bin', async (route) => { await new Promise((r) => setTimeout(r, 400)); await route.continue(); });
+    expect(bundles(w)).toEqual(COMMON.footprint.filter((id) => footprints.includes(id)).map((id) => `${id}.bin`).sort());
+    expect(w.ops).toEqual([]);
+    measure('board boot', `${w.net.length} library requests after the quiet warm-up, its bundles refused (${files(w).join(', ')}), ${w.ops.length} provider ops`);
+    refuse = false;
     const before = w.net.length;
     const opsBefore = w.ops.length;
     const ms = await openChooser(page, frame, 'FootprintChooserFrame');
@@ -273,7 +322,8 @@ test.describe('with a mirror', () => {
 
     // The first chooser of the session fetches the symbol set; then each part is
     // found by its LIB_ID in KiCad's own search and dropped on the sheet.
-    const spots: Array<[number, number]> = [[300, 250], [640, 420], [950, 300]];
+    // KiCad's chrome is on (its Place menu opened the chooser): the spots stay clear of its panes.
+    const spots: Array<[number, number]> = [[650, 250], [850, 420], [1050, 300]];
     const opened: number[] = [];
     const placed: number[] = [];
     const opsAt: number[] = [];
@@ -291,8 +341,9 @@ test.describe('with a mirror', () => {
     const opsOf = (i: number): string[] => w.ops.slice(opsAt[i], opsAt[i + 1] ?? w.ops.length);
     measure('provider ops per chooser open', PARTS.map((part, i) => `${part}: ${count(opsOf(i), /^op=list .*arg=bodies$/)} list bodies, ${count(opsOf(i), /^op=get /)} get (${count(opsOf(i), /^op=get .*lib=\/mnt\/pcbjam\/fp\./)} of a footprint), ${count(opsOf(i), /^op=index /)} index`).join('; '));
 
-    // Each bundle at most once: the three parts' bundles once each, and every symbol bundle once (the warm-up).
-    const got = bundles(w, start);
+    // Each bundle at most once in the session: the three parts' bundles once each, and every symbol
+    // bundle once (the quiet warm-up and the chooser's first-enumerate warm-up between them).
+    const got = bundles(w);
     expect(got.length).toBe(new Set(got).size);
     for (const id of PART_BUNDLES) expect(got.filter((f) => f === `${id}.bin`)).toHaveLength(1);
     expect(got.filter((f) => f.startsWith('sym.'))).toEqual(symbols.map((id) => `${id}.bin`));
@@ -316,9 +367,9 @@ test.describe('with a mirror', () => {
     const second = w.net.length;
     const frame2 = await boot(page, 'sch', 'blank');
     const warm = await openChooser(page, frame2, 'dialog');
-    const warmPlaced = await place(page, frame2, 'dialog', PARTS[2], [640, 400]);
+    const warmPlaced = await place(page, frame2, 'dialog', PARTS[2], [850, 400]);
     expect(bundles(w, second)).toEqual([]);
-    expect(files(w, second).filter((f) => f !== 'manifest.json' && f !== 'fp-index.json')).toEqual([]);
+    expect(files(w, second).filter((f) => !['manifest.json', 'fp-index.json', 'sym-index.json'].includes(f))).toEqual([]);
     await request(page, 'project.save');
     expect(schematicFacts(await savedText(page, 'blank.kicad_sch')).placed.map((p) => p.libId)).toEqual([PARTS[2]]);
     measure('symbol chooser, next session', `shown ${warm} ms after the press, part dropped ${warmPlaced} ms after its first key; library requests: ${files(w, second).join(', ')}`);
@@ -335,8 +386,9 @@ test.describe('with a mirror', () => {
     await expect.poll(async () => (await storedKeys(frame)).filter((k) => k.startsWith(`${TAG}/fp.`)).length, { timeout: 60_000 }).toBe(footprints.length);
     const stored = await storedBytes(frame);
     measure('footprint set stored', `${stored.count} bundles, ${mb(stored.bytes)} as stored (decoded); navigator.storage.estimate usage ${mb(stored.usage)}, indexedDB ${stored.indexedDB == null ? 'not broken out' : mb(stored.indexedDB)}`);
-    const ms = await place(page, frame, 'FootprintChooserFrame', QFP, [1000, 400]);
-    const got = bundles(w, start);
+    const ms = await place(page, frame, 'FootprintChooserFrame', QFP, [700, 400]);
+    // Each footprint bundle once in the session, between the quiet warm-up and the chooser's.
+    const got = bundles(w);
     expect(got).toEqual(footprints.map((id) => `${id}.bin`));
     measure('footprint chooser, cold', `shown ${cold} ms after the press (${footprints.length} footprint libraries, no throttling); found and dropped ${ms} ms after the first key; ${got.length} bundles, ${files(w, start).filter((f) => !f.endsWith('.bin')).join(', ') || 'nothing else'}`);
 

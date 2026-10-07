@@ -92,6 +92,28 @@ async function clickWx(page: Page, frame: Frame, label: string): Promise<void> {
   await clickIn(page, el.x, el.y);
 }
 
+/** The centre of the first DOM element under `selector` whose text is `text` (wx-dom.js draws the menu bar and its popups as DOM). */
+const domPoint = (frame: Frame, selector: string, text: string): Promise<[number, number] | null> =>
+  frame.evaluate(([sel, t]) => {
+    const el = [...document.querySelectorAll(sel)].find((e) => e.textContent?.trim() === t);
+    if (el == null) return null;
+    const r = el.getBoundingClientRect();
+    return [r.x + r.width / 2, r.y + r.height / 2] as [number, number];
+  }, [selector, text] as const);
+
+/**
+ * KiCad's own symbol chooser through its own menus, the path PICKER.md keeps
+ * (the island takes the A key for the host's picker): KiCad's chrome comes
+ * on, then Place > Place Symbols.
+ */
+async function kicadSymbolChooser(page: Page, frame: Frame): Promise<void> {
+  expect(await request(page, 'chrome.show', { on: true })).toEqual({});
+  await expect.poll(() => domPoint(frame, '.wx-menu-title', 'Place')).not.toBeNull();
+  await clickIn(page, ...(await domPoint(frame, '.wx-menu-title', 'Place'))!);
+  await expect.poll(() => domPoint(frame, '.wx-menu-popup *', 'Place Symbols')).not.toBeNull();
+  await clickIn(page, ...(await domPoint(frame, '.wx-menu-popup *', 'Place Symbols'))!);
+}
+
 // KiCad draws its menus on the canvas; these points were measured on both
 // engines at the harness's 1280 by 800 frame (the menu bar is the frame's top row).
 const MENU = { help: [461, 9], gettingStarted: [560, 59], getInvolved: [508, 107] } as const;
@@ -246,15 +268,14 @@ test('a hierarchical schematic saves every sheet, the hotkeys work, and a second
   expect(await savedCount(page, 'io_banks.kicad_sch')).toBe(2);
   expect(sub?.text?.startsWith('(kicad_sch')).toBe(true);
 
-  // The seeded hotkey A starts placing a symbol: the chooser opens. A chooser's first open
-  // enumerates every symbol library, about 15 s on the full KiCad mirror (LIBRARY.md), so
-  // each chooser wait in this file allows 120 s, as tests/e2e/libs.spec.ts does.
+  // KiCad's place key A is the host's picker's now (PICKER.md): the island sends ev.pick and
+  // KiCad's chooser never opens (tests/e2e/picker.spec.ts has the rest).
   expect(await visibleWx(frame, { type: 'wxDialog' })).toEqual([]);
   await clickIn(page, 1100, 730);
   await page.keyboard.press('a');
-  await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length, { timeout: 120_000 }).toBe(1);
-  await clickWx(page, frame, 'Cancel');
-  await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length).toBe(0);
+  await page.waitForFunction(() => (window as unknown as Harness).__events.some((e) => e.type === 'ev.pick'));
+  await page.waitForTimeout(1_000);
+  expect(await visibleWx(frame, { type: 'wxDialog' })).toEqual([]);
   await page.keyboard.press('Escape');
 
   // project.open over the opened, unmodified project: answered, and no modal is left up.
@@ -309,9 +330,10 @@ test('a traversal path is dropped, never written', async ({ page }) => {
 test('an HTTP library named by the project produces zero off-origin requests', async ({ page, context }) => {
   const w = watch(context, page);
   const frame = await boot(page, 'fixture=http-lib&frame=sch', 'httplib.kicad_sch');
-  // The symbol chooser enumerates the libraries the project's sym-lib-table names.
-  await clickIn(page, 1100, 730);
-  await page.keyboard.press('a');
+  // The symbol chooser enumerates the libraries the project's sym-lib-table names. A
+  // chooser's first open enumerates every symbol library, about 15 s on the full KiCad
+  // mirror (LIBRARY.md), so the wait allows 120 s, as tests/e2e/libs.spec.ts does.
+  await kicadSymbolChooser(page, frame);
   await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length, { timeout: 120_000 }).toBe(1);
   await page.waitForTimeout(3000);   // the brief's quiet period for a late library fetch
   expect(w.leftPair).toEqual([]);
@@ -462,7 +484,7 @@ async function expectCanvasOnly(page: Page, frame: Frame): Promise<void> {
   expect(await shownTypes(frame)).toEqual(['wxFrame', 'wxGLCanvas']);
 }
 
-test('boots with KiCad\'s chrome hidden, and key.press opens the chooser with no real click', async ({ page }) => {
+test('boots with KiCad\'s chrome hidden, and key.press reaches KiCad with no real click', async ({ page }) => {
   const frame = await boot(page, 'fixture=glasgow&frame=sch', 'glasgow.kicad_sch');
   // Canvas only: no menu bar, toolbar, status bar or pane is visible, and the open said so.
   await expectCanvasOnly(page, frame);
@@ -472,13 +494,14 @@ test('boots with KiCad\'s chrome hidden, and key.press opens the chooser with no
     return { w: r.width, h: r.height, iw: innerWidth, ih: innerHeight };
   });
   expect((box.w * box.h) / (box.iw * box.ih)).toBeGreaterThan(0.95);
-  // No real click anywhere: the boot's own focus click is what makes this work.
+  // No real click anywhere: the boot's own focus click is what makes this work. The
+  // seeded chord Ctrl+Alt+7 opens KiCad's schematic checker (theme/pencil-tools.json).
   expect(await visibleWx(frame, { type: 'wxDialog' })).toEqual([]);
-  expect(await request(page, 'key.press', { key: 'a', code: 'KeyA' })).toEqual({});
-  await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length, { timeout: 120_000 }).toBe(1);
-  // While the chooser is up, a key is refused rather than typed into it (the harness rejects with "code: message").
+  expect(await request(page, 'key.press', { key: '7', code: 'Digit7', ctrl: true, alt: true })).toEqual({});
+  await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length, { timeout: 15_000 }).toBe(1);
+  // While the checker is up, a key is refused rather than typed into it (the harness rejects with "code: message").
   await expect(request(page, 'key.press', { key: 'w', code: 'KeyW' })).rejects.toThrow('busy: key.press');
-  await clickWx(page, frame, 'Cancel');
+  await clickWx(page, frame, 'Close');
   await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length).toBe(0);
   // chrome.show brings the chrome back, and off again.
   expect(await request(page, 'chrome.show', { on: true })).toEqual({});
@@ -498,10 +521,10 @@ test('a press in the drawing takes the keyboard back from the host page, so its 
   await clickIn(page, 1100, 730);
   await expect.poll(() => frame.evaluate(() => document.hasFocus())).toBe(true);
   expect(await page.evaluate(() => document.activeElement?.tagName)).toBe('IFRAME');
-  // The user's own key reaches KiCad: A opens the symbol chooser.
+  // The user's own key reaches KiCad: the seeded chord Ctrl+Alt+7 opens its schematic checker.
   expect(await visibleWx(frame, { type: 'wxDialog' })).toEqual([]);
-  await page.keyboard.press('a');
-  await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length, { timeout: 120_000 }).toBe(1);
+  await page.keyboard.press('Control+Alt+7');
+  await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length, { timeout: 15_000 }).toBe(1);
 });
 
 test('a popup menu is reported as ev.menu while it is up, and holds the host\'s keys back', async ({ page }) => {
