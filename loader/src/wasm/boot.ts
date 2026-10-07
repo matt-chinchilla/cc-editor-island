@@ -16,6 +16,9 @@
 // Modified by Circuit Center on 2026-10-01: eeschema.json and pcbnew.json
 // also carry window.cursor (the small crosshair, always shown), so the
 // full-frame canvas keeps up with the pointer.
+// Modified by Circuit Center on 2026-10-07: BootOptions takes the enumerate
+// gate again and hands it to the libs provider (the island starts its library
+// warm-up from it, see src/libs.ts).
 import type { Tool } from "../../../src/types";
 import {
   KICAD_CONFIG_DIR,
@@ -127,6 +130,10 @@ export interface BootOptions {
    *  (empty lib-tables are seeded). Its libs become sym-lib-table and/or
    *  fp-lib-table rows depending on the tool (see `libKinds` in doBoot). */
   libsSource?: LibsSource | null;
+  /** Called before every provider enumerate of a kind, which waits for it.
+   *  See `LibsProviderOptions.enumerateGate`. Never gates boot's own
+   *  `listLibs` table seeding (a direct source call). */
+  enumerateGate?: (kind: string) => Promise<void>;
   /** Editor frame to open when the bundle serves more than one (e.g. `"fpedit"`
    *  so the pcbnew bundle opens the Footprint Editor). Passed through as
    *  `--frame=<token>` in `Module.arguments`; parsed in single_top.cpp. Omitted
@@ -399,6 +406,7 @@ async function doBoot(opts: BootOptions): Promise<void> {
     onProgress,
     libsSource,
     readOnly,
+    enumerateGate,
   } = opts;
   const fetchLabel = "Loading the editor…";
   // The deployed bundle backing this tool. footprint_editor/symbol_editor share
@@ -447,7 +455,7 @@ async function doBoot(opts: BootOptions): Promise<void> {
     bundle === "kicad_editor" ? ["symbol", "footprint"] : libKind ? [libKind] : [];
 
   if (libsSource && libKinds.length) {
-    installLibsProvider(libsSource, log);
+    installLibsProvider(libsSource, log, { enumerateGate });
     try {
       // One list per kind (origins are filtered to that kind; user libs are
       // kind-agnostic containers and appear in every list).

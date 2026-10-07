@@ -2,9 +2,10 @@
 // Copyright (c) 2026 Chirichella Inc.
 // The island entry (spec section 4): refuse to boot at top level or on an
 // unknown host, post cc.hello BEFORE the engine boots, wrap window.open
-// BEFORE wx.js loads, probe the browser, boot the one frame, wait for the
-// engine's frame, then hand the window to the responder. The engine is
-// released by the shutdown op or on pagehide (teardown.ts).
+// BEFORE wx.js loads, probe the browser (the library mirror's manifest is
+// read meanwhile, libs.ts), boot the one frame, wait for the engine's frame,
+// then hand the window to the responder. The engine is released by the
+// shutdown op or on pagehide (teardown.ts).
 //
 // OOM: the loader's createOomWatch is deliberately NOT started. Its recovery
 // reloads this frame in place with ?oomRetry=N (or opens a new tab under
@@ -15,7 +16,6 @@
 import { probeCapabilities } from '../loader/src/preflight/capabilities';
 import { looksLikeOom } from '../loader/src/recovery/oom-watch';
 import { bootKicadTool } from '../loader/src/wasm/boot';
-import { staticLibsSource } from '../loader/src/wasm/libs/static-source';
 import { startResponder } from '../bridge/responder';
 import { seedsFor } from '../theme/seeds';
 import { engineBase } from './assets';
@@ -29,9 +29,11 @@ import { bootHeartbeat } from './boot-heartbeat';
 import { installUnloadQuiet } from './unload-quiet';
 import { installWindowOpenWrapper } from './window-open';
 import { focusCanvas, focusFrameOnPress } from './keys';
+import { islandLibs, warmUpOnEnumerate } from './libs';
 
 declare const __ISLAND_TAG__: string;      // define'd by vite.config.ts from PIN.json
 declare const __KICAD_VERSION__: string;   // define'd by vite.config.ts
+declare const __LIBS_TAG__: string;        // define'd by vite.config.ts from PIN.json libs.tag
 
 /** How long the engine may take, after its scripts ran, to show its editor frame. */
 const ENGINE_UP_TIMEOUT_MS = 180_000;
@@ -73,8 +75,11 @@ async function main(): Promise<void> {
   // Before the engine's scripts load: every park of its scheduler also waits on
   // the teardown's kill switch, so the frame's realm can be released (teardown.ts).
   const teardown = installEngineTeardown(window);
+  // The library warm-up (libs.ts) stops when the engine is released or the frame goes.
+  const libsWarmUp = new AbortController();
+  window.addEventListener('pagehide', () => libsWarmUp.abort());
   // Hello goes out now, before anything heavy; events queue until the port connects.
-  const responder = startResponder({ parentOrigin: parent, page: window, onShutdown: () => teardown.shutdown() });
+  const responder = startResponder({ parentOrigin: parent, page: window, onShutdown: () => { libsWarmUp.abort(); return teardown.shutdown(); } });
   const popups = installWindowOpenWrapper(
     window,
     (topic) => responder.emit({ type: 'ev.help', topic }),
@@ -126,6 +131,12 @@ async function main(): Promise<void> {
   // (just after its own save, or after a forget), the engine's leave prompt is stopped.
   installUnloadQuiet(window);
 
+  // The library mirror's manifest is read beside the browser probe; boot waits
+  // for it (or for the example library it falls back to) before the engine's
+  // fetch, since the lib tables are written from it.
+  const libsLog = (m: string): void => console.info('[editor]', m);
+  const libs = islandLibs(__LIBS_TAG__, libsLog);
+
   showScreen('preflight');
   responder.emit({ type: 'ev.state', phase: 'preflight' });
   const report = probeCapabilities();
@@ -154,6 +165,7 @@ async function main(): Promise<void> {
   const container = document.getElementById('main-window');
   if (container == null) { die('no_container'); return; }
   try {
+    const { source: libsSource, mirror } = await libs;
     await bootKicadTool({
       tool: frameToTool(frame),
       base: engineBase(),
@@ -161,7 +173,10 @@ async function main(): Promise<void> {
       frame: FRAME_TOKEN[frame],
       dark: theme === 'night',
       seeds: seedsFor(theme),
-      libsSource: staticLibsSource(),
+      libsSource,
+      // Lazy (LIBRARY.md "The client"): a chooser's first enumerate of a kind
+      // starts that kind's warm-up; no bundle is fetched before KiCad asks.
+      enumerateGate: mirror ? warmUpOnEnumerate(mirror, libsLog, libsWarmUp.signal) : undefined,
       log: (m) => console.debug('[editor]', m),
       // Loader and engine status lines stay in the console; the loading animation
       // and the booting heartbeat are fed by onProgress alone. The one line that
