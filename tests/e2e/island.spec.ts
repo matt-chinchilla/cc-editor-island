@@ -268,14 +268,24 @@ test('a hierarchical schematic saves every sheet, the hotkeys work, and a second
   expect(await savedCount(page, 'io_banks.kicad_sch')).toBe(2);
   expect(sub?.text?.startsWith('(kicad_sch')).toBe(true);
 
-  // KiCad's place key A is the host's picker's now (PICKER.md): the island sends ev.pick and
-  // KiCad's chooser never opens (tests/e2e/picker.spec.ts has the rest).
+  // KiCad's place key A: with the library mirror (ev.ready lists the pseudo-cap picker) it is the
+  // host's picker's, so the island sends ev.pick and KiCad's chooser never opens
+  // (tests/e2e/picker.spec.ts has the rest); on the example library it opens KiCad's chooser.
+  // A chooser's first open enumerates every symbol library, about 15 s on the full KiCad
+  // mirror (LIBRARY.md), so each chooser wait in this file allows 120 s.
   expect(await visibleWx(frame, { type: 'wxDialog' })).toEqual([]);
+  const picker = (await events(page)).find((e) => e.type === 'ev.ready')?.caps?.includes('picker') === true;
   await clickIn(page, 1100, 730);
   await page.keyboard.press('a');
-  await page.waitForFunction(() => (window as unknown as Harness).__events.some((e) => e.type === 'ev.pick'));
-  await page.waitForTimeout(1_000);
-  expect(await visibleWx(frame, { type: 'wxDialog' })).toEqual([]);
+  if (picker) {
+    await page.waitForFunction(() => (window as unknown as Harness).__events.some((e) => e.type === 'ev.pick'));
+    await page.waitForTimeout(1_000);
+    expect(await visibleWx(frame, { type: 'wxDialog' })).toEqual([]);
+  } else {
+    await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length, { timeout: 120_000 }).toBe(1);
+    await clickWx(page, frame, 'Cancel');
+    await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length).toBe(0);
+  }
   await page.keyboard.press('Escape');
 
   // project.open over the opened, unmodified project: answered, and no modal is left up.

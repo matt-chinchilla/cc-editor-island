@@ -75,7 +75,10 @@ power symbol (`(power)`), else 0. Empty strings, never null.
 | `place` | `{ kind, lib: string, name: string }` | `{}` once the item hangs off the pointer |
 
 `lib` and `name` are strings of 1 to 255 characters with no control character; anything else, or an
-extra key, is `bad_args`. All four answer `not_ready` before `ev.ready`. `lib.item` answers a body
+extra key, is `bad_args`. All four answer `not_ready` before `ev.ready`. The three library reads
+answer either kind in either frame, outside the responder's serial request queue (they never touch
+the engine: a `lib.item` waiting on a bundle holds up no `key.press`, `view.fit` or `place` sent
+after it); `place` stays queued and frame-bound. `lib.item` answers a body
 for an unknown library or item as null, not as an error. `lib.prefetch` passes unknown nicknames
 over, and warms nothing when the island booted on its example library (no mirror).
 
@@ -106,15 +109,17 @@ What `place` puts down (decided while building, 2026-10-07):
 - The keyboard focus stays with the page: after the answer the page gives the frame the focus
   (`iframe.focus()`) so R rotates the item before the press.
 
-**Which islands have `place`.** The pinned engine has exported `kicadPlaceImportedItem` since PCBJam
-v0.2.3, so `ev.ready` `caps` lists it on islands without these ops too (they answer `unknown_op`).
-The page sends `lib.index` once after `ev.ready` (it wants the index early anyway): `unknown_op`
-means an older island, and the page keeps pressing KiCad's keys for it. Ship order: the page that
-handles `ev.pick` first, then the island (an older page ignores `ev.pick`, so the reader's A would do
-nothing).
+**Which islands have the picker.** `ev.ready` `caps` lists the pseudo-cap `picker` (sorted in with the
+engine exports) exactly when the ops and `ev.pick` are live: the library mirror loaded and the engine
+has `kicadPlaceImportedItem` and `kicadCollabGetSelection`. The page requires both `picker` and
+`kicadPlaceImportedItem`; the export alone proves nothing (the pinned engine has had it since PCBJam
+v0.2.3, so islands without these ops list it too). On the example library (no mirror) there is no
+`picker`: the island swallows no key, sends no `ev.pick`, and KiCad's own chooser works as before.
+Ship order: the page that handles `ev.pick` first, then the island (an older page ignores `ev.pick`,
+so the reader's A would do nothing).
 
-**Event `ev.pick { kind: "symbol" | "footprint", power?: true }`**: the reader pressed the frame's
-place key inside the frame (`A` in a `sch` frame: symbol; `P` in a `sch` frame: power symbol, with
+**Event `ev.pick { kind: "symbol" | "footprint", power?: true }`** (only with the `picker` cap): the
+reader pressed the frame's place key inside the frame (`A` in a `sch` frame: symbol; `P` in a `sch` frame: power symbol, with
 `power: true`; `A` in a `pcb` frame: footprint), with no modifier, nothing of KiCad's over its
 canvas (no popup menu, no dialog but a progress dialog, no other KiCad window such as its footprint
 chooser frame) and no text field focused. The key counts by the character it types (the key that

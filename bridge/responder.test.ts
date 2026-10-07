@@ -2110,6 +2110,55 @@ describe('the picker: lib.index, lib.item, lib.prefetch, place and ev.pick', () 
     expect(board.keys).toEqual(['a']);
   });
 
+  it('ev.ready lists the pseudo-cap picker only with a mirror and the engine\'s place exports; without one the place keys stay KiCad\'s and no ev.pick is sent', async () => {
+    const withMirror = picker();
+    await settle();
+    const caps = withMirror.got.find((m) => m.type === 'ev.ready')?.caps as string[];
+    expect(caps).toContain('picker');
+    expect(caps).toEqual([...caps].sort());
+    const bare = picker({ libs: fakeLibs(false) });
+    await settle();
+    expect(bare.got.find((m) => m.type === 'ev.ready')?.caps).not.toContain('picker');
+    expect(await bare.request('key.press', { key: 'a', code: 'KeyA' })).toMatchObject({ ok: true });
+    expect(bare.keys).toEqual(['a']);
+    const e = { type: 'keydown', key: 'a', code: 'KeyA', preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() };
+    (bare.page as unknown as { dispatch: (t: string, e: unknown) => void }).dispatch('keydown', e);
+    expect(e.preventDefault).not.toHaveBeenCalled();
+    await settle();
+    expect(bare.picks()).toEqual([]);
+    // An engine without the place export has no picker either, mirror or not.
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    started.push(r);
+    const { got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    r.engineReady(fakeEngine().win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 }, fakeLibs());
+    await settle();
+    expect(got.find((m) => m.type === 'ev.ready')?.caps).not.toContain('picker');
+  });
+
+  it('answers the library reads off the request queue: a lib.item waiting on its bundle holds up no key.press or place sent after it', async () => {
+    const { request, got, libs } = picker();
+    expect(await request('project.open', OPEN, 100)).toMatchObject({ ok: true });
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    libs!.source.getItemBody.mockImplementationOnce(async () => { await held; return R; });
+    const slow = request('lib.item', { kind: 'symbol', lib: 'Device', name: 'R' }, 400);
+    await settle(5);
+    expect(await request('key.press', { key: 'w', code: 'KeyW' })).toMatchObject({ ok: true });
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: true });
+    expect(got.some((m) => m.id === 2)).toBe(false);   // the lib.item still waits on its body
+    release();
+    expect(await slow).toEqual({ id: 2, ok: true, result: { body: R } });
+  });
+
+  it('reads either kind in either frame: only place is bound to the frame\'s kind', async () => {
+    const board = picker({ search: '?frame=pcb&theme=day' });
+    expect(await board.request('lib.index', { kind: 'symbol' })).toMatchObject({ ok: true, result: { text: '{"index":"symbol"}' } });
+    expect(await board.request('lib.item', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: true, result: { body: R } });
+    expect(await board.request('lib.prefetch', { kind: 'symbol', libs: ['Device'] })).toMatchObject({ ok: true, result: {} });
+    expect(await board.request('place', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: false, error: { code: 'unsupported' } });
+  });
+
   it('the frame\'s own keydown of a place key is swallowed with its keypress and keyup and sent as ev.pick, once per press', async () => {
     const { page, picks } = picker();
     const key = (type: string, init: Record<string, unknown>) => {

@@ -3,9 +3,10 @@
 // The fast part picker's island half (PICKER.md) over the local pair: KiCad's
 // place keys become ev.pick and its chooser never opens, and place puts a
 // library item on the pointer from the mirror without the engine enumerating
-// a library. The key tests and the example library's place run always; the
-// mirror tests run when the pair serves a mirror holding Device,
-// MCU_ST_STM32F1, Connector and Package_QFP (LIBS_DIR, as tests/e2e/libs.spec.ts).
+// a library. The picker needs the mirror (ev.ready lists the pseudo-cap
+// picker): the example library's test runs always, the others when the pair
+// serves a mirror holding Device, MCU_ST_STM32F1, Connector and Package_QFP
+// (LIBS_DIR, as tests/e2e/libs.spec.ts).
 import { expect, test, type BrowserContext, type Frame, type Page } from '@playwright/test';
 import pin from '../../PIN.json' with { type: 'json' };
 
@@ -123,45 +124,11 @@ function schematicFacts(text: string) {
   return { placed, cached };
 }
 
-test('A and P in a schematic are ev.pick, and KiCad\'s chooser never opens; with a modifier, or under a dialog, a key is KiCad\'s', async ({ page }) => {
-  const frame = await boot(page, 'sch', 'glasgow');
-  expect((await of(page, 'ev.ready'))[0]?.caps).toEqual(expect.arrayContaining(['kicadPlaceImportedItem', 'kicadCollabGetSelection']));
-  // A real press in the drawing gives the frame the keyboard; then the reader's own keys.
-  await clickIn(page, 1100, 730);
-  await page.keyboard.press('a');
-  await expect.poll(() => of(page, 'ev.pick')).toHaveLength(1);
-  await page.keyboard.press('p');
-  await expect.poll(() => of(page, 'ev.pick')).toHaveLength(2);
-  // The host's key.press of a place key takes the same path.
-  expect(await request(page, 'key.press', { key: 'a', code: 'KeyA' })).toEqual({});
-  await expect.poll(() => of(page, 'ev.pick')).toHaveLength(3);
-  const picks = await of(page, 'ev.pick');
-  expect(picks.map(({ at: _at, ...e }) => e)).toEqual([{ type: 'ev.pick', kind: 'symbol' }, { type: 'ev.pick', kind: 'symbol', power: true }, { type: 'ev.pick', kind: 'symbol' }]);
-  // KiCad's chooser never opened: on the full mirror it would take 11 to 15 s, so 3 s of nothing is the island's.
-  await page.waitForTimeout(3_000);
-  expect(await windows(frame)).toEqual(['SchematicFrame']);
-  expect(await of(page, 'ev.menu')).toEqual([]);
-  // Under a dialog (KiCad's checker, its seeded chord) the key is KiCad's: no pick.
-  await page.keyboard.press('Control+Alt+7');
-  await expect.poll(() => windows(frame), { timeout: 15_000 }).toContain('DialogErcWindowName');
-  await page.keyboard.press('a');
-  await page.waitForTimeout(500);
-  expect(await of(page, 'ev.pick')).toHaveLength(3);
-});
-
-test('A on a board is ev.pick for a footprint, and KiCad\'s footprint chooser never opens', async ({ page }) => {
-  const frame = await boot(page, 'pcb', 'glasgow');
-  await clickIn(page, 1100, 730);
-  await page.keyboard.press('a');
-  await expect.poll(async () => (await of(page, 'ev.pick')).map(({ at: _at, ...e }) => e)).toEqual([{ type: 'ev.pick', kind: 'footprint' }]);
-  await page.waitForTimeout(3_000);
-  expect(await windows(frame)).toEqual(['PcbFrame']);
-});
-
-test('without a mirror, lib.index answers no index, and place puts the example library\'s R on the pointer', async ({ page, context }) => {
+test('without a mirror there is no picker: A opens KiCad\'s own chooser, lib.index answers no index, and place still puts the example library\'s R on the pointer', async ({ page, context }) => {
   // Refused whatever the pair serves: the island boots on its example library.
   await context.route('**/libs/**', (route) => route.fulfill({ status: 404, body: '' }));
-  await boot(page, 'sch');
+  const frame = await boot(page, 'sch');
+  expect((await of(page, 'ev.ready'))[0]?.caps).not.toContain('picker');
   expect(await request(page, 'lib.index', { kind: 'symbol' })).toEqual({ text: null });
   const body = await request(page, 'lib.item', { kind: 'symbol', lib: 'pcbjam-examples', name: 'R' });
   expect(String(body.body)).toContain('(symbol "R"');
@@ -171,6 +138,10 @@ test('without a mirror, lib.index answers no index, and place puts the example l
   measure('place, example library', `${ms} ms from the request to the part on the pointer`);
   await request(page, 'project.save');
   expect(schematicFacts(await savedText(page, 'blank.kicad_sch')).placed.map((p) => [p.libId, p.pins])).toEqual([['pcbjam-examples:R', 2]]);
+  // The place keys stay KiCad's: A opens its chooser, on the example library, and no ev.pick is sent.
+  expect(await request(page, 'key.press', { key: 'a', code: 'KeyA' })).toEqual({});
+  await expect.poll(() => windows(frame), { timeout: 60_000 }).toContain('dialog');
+  expect(await of(page, 'ev.pick')).toEqual([]);
 });
 
 const PARTS: Array<[string, string, [number, number]]> = [
@@ -182,6 +153,42 @@ const QFP = 'Package_QFP:LQFP-48_7x7mm_P0.5mm';
 
 test.describe('with a mirror', () => {
   test.skip(process.env.LIBS_DIR == null, 'needs a library mirror: LIBS_DIR=<the directory served as /libs/> (tests/libs/make-mirror.mjs builds one)');
+
+  test('A and P in a schematic are ev.pick, and KiCad\'s chooser never opens; with a modifier, or under a dialog, a key is KiCad\'s', async ({ page }) => {
+    const frame = await boot(page, 'sch', 'glasgow');
+    // The picker is available: the mirror loaded and the engine places items.
+    expect((await of(page, 'ev.ready'))[0]?.caps).toEqual(expect.arrayContaining(['picker', 'kicadPlaceImportedItem', 'kicadCollabGetSelection']));
+    // A real press in the drawing gives the frame the keyboard; then the reader's own keys.
+    await clickIn(page, 1100, 730);
+    await page.keyboard.press('a');
+    await expect.poll(() => of(page, 'ev.pick')).toHaveLength(1);
+    await page.keyboard.press('p');
+    await expect.poll(() => of(page, 'ev.pick')).toHaveLength(2);
+    // The host's key.press of a place key takes the same path.
+    expect(await request(page, 'key.press', { key: 'a', code: 'KeyA' })).toEqual({});
+    await expect.poll(() => of(page, 'ev.pick')).toHaveLength(3);
+    const picks = await of(page, 'ev.pick');
+    expect(picks.map(({ at: _at, ...e }) => e)).toEqual([{ type: 'ev.pick', kind: 'symbol' }, { type: 'ev.pick', kind: 'symbol', power: true }, { type: 'ev.pick', kind: 'symbol' }]);
+    // KiCad's chooser never opened: on the full mirror it would take 11 to 15 s, so 3 s of nothing is the island's.
+    await page.waitForTimeout(3_000);
+    expect(await windows(frame)).toEqual(['SchematicFrame']);
+    expect(await of(page, 'ev.menu')).toEqual([]);
+    // Under a dialog (KiCad's checker, its seeded chord) the key is KiCad's: no pick.
+    await page.keyboard.press('Control+Alt+7');
+    await expect.poll(() => windows(frame), { timeout: 15_000 }).toContain('DialogErcWindowName');
+    await page.keyboard.press('a');
+    await page.waitForTimeout(500);
+    expect(await of(page, 'ev.pick')).toHaveLength(3);
+  });
+
+  test('A on a board is ev.pick for a footprint, and KiCad\'s footprint chooser never opens', async ({ page }) => {
+    const frame = await boot(page, 'pcb', 'glasgow');
+    await clickIn(page, 1100, 730);
+    await page.keyboard.press('a');
+    await expect.poll(async () => (await of(page, 'ev.pick')).map(({ at: _at, ...e }) => e)).toEqual([{ type: 'ev.pick', kind: 'footprint' }]);
+    await page.waitForTimeout(3_000);
+    expect(await windows(frame)).toEqual(['PcbFrame']);
+  });
 
   test('the quiet warm-up, then place puts Device:R, the derived STM32F103C8Tx and a USB C receptacle on the pointer: each fetches its own library at most, none enumerates, and the save holds them whole', async ({ page, context }) => {
     const w = libsWatch(context, page);
@@ -315,5 +322,25 @@ test.describe('with a mirror', () => {
     expect(await request(page, 'lib.prefetch', { kind: 'symbol', libs: ['MCU_ST_STM32F1', 'No_Such_Library'] })).toEqual({});
     await expect.poll(() => w.net.slice(n0), { timeout: 10_000 }).toEqual(['sym.MCU_ST_STM32F1.bin']);
     expect(w.ops).toEqual([]);
+  });
+
+  test('the library reads answer off the request queue, for either kind in either frame: a footprint read waiting on its bundle holds up no key.press behind it', async ({ page, context }) => {
+    const w = libsWatch(context, page);
+    await boot(page, 'sch');
+    await expect.poll(() => w.lines.some((l) => l.includes('[libs] quiet symbol warm-up done')), { timeout: 30_000 }).toBe(true);
+    // The footprint bundle answers 2 s late; a schematic frame reads it all the same.
+    await context.route('**/libs/**/fp.Connector_USB.bin', async (route) => { await new Promise((r) => setTimeout(r, 2_000)); await route.continue(); });
+    const t0 = Date.now();
+    const item = request(page, 'lib.item', { kind: 'footprint', lib: 'Connector_USB', name: 'USB_C_Receptacle_GCT_USB4105-xx-A_16P_TopMnt_Horizontal' }).then((r) => ({ r, ms: Date.now() - t0 }));
+    await page.waitForTimeout(100);
+    expect(await request(page, 'key.press', { key: 'w', code: 'KeyW' })).toEqual({});
+    expect(await request(page, 'key.press', { key: 'Escape', code: 'Escape' })).toEqual({});
+    const keyMs = Date.now() - t0;
+    expect(String((await request(page, 'lib.index', { kind: 'footprint' })).text ?? '')).toContain('"rows"');
+    const { r, ms } = await item;
+    expect(String(r.body)).toContain('(footprint "USB_C_Receptacle_GCT_USB4105-xx-A_16P_TopMnt_Horizontal"');
+    expect(keyMs).toBeLessThan(1_500);
+    expect(ms).toBeGreaterThanOrEqual(2_000);
+    measure('library reads off the queue', `key.press answered ${keyMs} ms after a lib.item whose bundle took ${ms} ms`);
   });
 });

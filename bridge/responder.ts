@@ -143,6 +143,14 @@ const SAVE_KEY: KeyPress = { key: 's', code: 'KeyS', ctrl: true, shift: false, a
 /** KiCad's window chrome as the element registry names it (measured with chrome.show on, 2026-10-01). */
 const CHROME_RE = /^wx(MenuBar|AuiToolBar|ToolBar|StatusBar)$|InfoBar/i;
 const OPS = new Set(['project.open', 'project.import', 'project.save', 'project.forget', 'chrome.show', 'readonly', 'shutdown', 'key.press', 'view.fit', 'sheet.tree', 'sheet.enter', 'layers.get', 'layers.visible', 'layers.active', 'lib.index', 'lib.item', 'lib.prefetch', 'place']);
+/**
+ * The picker's library reads: answered as they arrive, off the request queue
+ * (they never touch the engine), so a read waiting on a bundle never holds up
+ * a key.press, a view.fit or a place sent after it.
+ */
+const LIB_OPS = new Set(['lib.index', 'lib.item', 'lib.prefetch']);
+/** The pseudo-cap ev.ready lists when the picker is available: the place op, ev.pick and a library mirror. */
+export const PICKER_CAP = 'picker';
 /** A wx top-level window: the editor's own frame, or another window of KiCad's (its footprint chooser is a frame, not a dialog). */
 const FRAME_TYPE_RE = /Frame/;
 /** A sheet path as the engine reports it: "/" then one UUID and a slash per level. */
@@ -296,6 +304,12 @@ export function startResponder(opts: {
   let placeWatch: PlacementWatch | null = null;
   /** The names of the editor's own frames, read at ev.ready: any other visible frame is another window of KiCad's. */
   let ownFrames = new Set<string>();
+  /**
+   * The picker is available (ev.ready's `picker` cap): the island has a
+   * library mirror and the engine places items. Without it the place keys
+   * stay KiCad's and no ev.pick is sent. Set by engineReady.
+   */
+  let pickerOn = false;
 
   /** Rebuilds each event with exactly its protocol keys; saved bytes travel as a transferred copy. */
   const emit = (ev: IslandEvent): void => {
@@ -352,6 +366,12 @@ export function startResponder(opts: {
     port = p;
     page.removeEventListener('message', onConnect);
     port.onmessage = (m) => {
+      // The library reads skip the queue: they are answered when their read
+      // is, whatever runs on the queue (an import, a slow save, a place).
+      if (isLibRead(m.data)) {
+        void handleLib(m.data).catch((err: unknown) => answerIslandError(m.data, err));
+        return;
+      }
       // A handler that rejects answers island_error for its own request; the
       // chain itself never rejects, so every later request is still answered.
       // A request is in flight from its arrival to its answer (ev.edited waits).
@@ -373,6 +393,20 @@ export function startResponder(opts: {
     focused: () => { try { return page.document?.activeElement ?? null; } catch { return null; } },
     onPick: (pick) => emitPick(pick),
   });
+
+  /** A well-formed request for one of the library reads. */
+  function isLibRead(data: unknown): data is { id: number; op: string; args?: unknown } {
+    return isObj(data) && typeof data.id === 'number' && Number.isSafeInteger(data.id) && typeof data.op === 'string' && LIB_OPS.has(data.op);
+  }
+
+  /** One library read, off the queue: the same closed checks as any request, then its answer. */
+  async function handleLib(data: { id: number; op: string; args?: unknown }): Promise<void> {
+    if (closed) return;
+    const { id, op } = data;
+    if (!onlyKeys(data as unknown as Record<string, unknown>, ['id', 'op', 'args'])) return reply(id, fail('bad_args', op));
+    const a = op === 'lib.index' ? libIndex(data.args) : op === 'lib.item' ? libItem(data.args) : Promise.resolve(libPrefetch(data.args));
+    reply(id, await a.catch((err: unknown) => fail('island_error', describeError(err))));
+  }
 
   function answerIslandError(data: unknown, err: unknown): void {
     if (!isObj(data) || typeof data.id !== 'number' || !Number.isSafeInteger(data.id)) return;
@@ -410,7 +444,7 @@ export function startResponder(opts: {
    * other window of KiCad's such as its footprint chooser), and no import runs.
    */
   function pickOpen(w: ToolWindow): boolean {
-    if (closed || importing || keysBlocked(w)) return false;
+    if (!pickerOn || closed || importing || keysBlocked(w)) return false;
     try {
       return !(w.wxElementRegistry?.findAll({ visible: true }) ?? []).some((e) => FRAME_TYPE_RE.test(e.typeName) && !ownFrames.has(e.name));
     } catch { return false; }
@@ -541,9 +575,6 @@ export function startResponder(opts: {
       case 'layers.get': return noArgs(args) ? layersGet() : fail('bad_args', op);
       case 'layers.visible': return layersVisible(args);
       case 'layers.active': return layersActive(args);
-      case 'lib.index': return libIndex(args);
-      case 'lib.item': return libItem(args);
-      case 'lib.prefetch': return libPrefetch(args);
       case 'place': return placeItem(args);
     }
     return fail('unknown_op', op);
@@ -1167,6 +1198,10 @@ export function startResponder(opts: {
       // The Ctrl+S hook is registered by each successful project.open (startSaveHook).
       const mod: Record<string, unknown> = w.Module ?? {};
       const caps = Object.keys(mod).filter((k) => /^kicad[A-Za-z0-9]*$/.test(k) && typeof mod[k] === 'function').sort();
+      // The picker (PICKER.md) needs the mirror (the example library has no index to search) and the
+      // engine's place and selection exports; ev.ready says so with the pseudo-cap `picker`.
+      pickerOn = libs?.mirror != null && typeof mod.kicadPlaceImportedItem === 'function' && typeof mod.kicadCollabGetSelection === 'function';
+      if (pickerOn) { caps.push(PICKER_CAP); caps.sort(); }
       // ev.edited: polled only when the engine has the undo depth export at
       // boot; an older build is never polled and nothing is said about it.
       if (typeof mod.kicadCollabTestUndoDepth === 'function') {
