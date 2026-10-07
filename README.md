@@ -28,6 +28,21 @@ Then `npm test` runs the unit tests (vitest), `npm run typecheck` the type check
 
 `loader/` (our copy of PCBJam's loader, `loader/pristine` beside it) and `notices/` are committed, so a build needs neither `upstream/` nor the GitHub CLI. `npm run sync-upstream` checks PCBJam out at the pin into `upstream/`; it is a step for bumping the pin only, and it needs `gh` signed in. A pin bump must keep the engine's `kicadCollabTestUndoDepth` export: `ev.edited` reads it, and an engine without it sends no `ev.edited` and no error (the e2e checks that `ev.ready` `caps` lists it).
 
+## Libraries
+
+The editor's symbol and footprint libraries are KiCad's own, at the tag and the two commits `PIN.json` `libs` pins, served from the island origin under `/libs/<tag>/` in the layout `LIBRARY.md` sets out (one bundle per library, gzipped only, with `SHA256SUMS`).
+
+```bash
+npm run build:libs -- --clone ../kicad-libs                    # clone both repositories at the tag (or reuse the clones), build dist/libs/<tag>/
+npm run build:libs -- --symbols-src <dir> --footprints-src <dir>  # or build from checkouts you already have
+npm run build:libs -- --clone ../kicad-libs --only sym.Device,fp.Resistor_SMD   # a subset, by library id
+node scripts/build-libs.mjs --verify dist/libs/<tag>            # read a built mirror back
+```
+
+The build refuses unless each checkout sits at its pinned commit with no local changes, and it refuses a library declaring a format newer than the engine's pinned fork reads (`FORK_MAX_*` in `scripts/libs/`), so a bump of either pin is checked against the other. Bodies are KiCad's text unchanged; a derived symbol carries its extends chain before it, root first. The same checkouts give the same bytes, and every build ends by reading its output back (every bundle decoded, every chain and pad count checked against the manifest and `fp-index.json`). The full 10.0.4 set builds in about 25 seconds.
+
+`npm run ship:libs -- <tag>` ships `dist/libs/<tag>/` to `/opt/circuits-com/editor/libs/<tag>/` on the box (run it with `--dry-run` first; it is the owner's step). It checks every file against `SHA256SUMS` and the read back, refuses when the box already holds that tag, uploads into `libs/.incoming-<tag>` beside it, checks the copy there and renames it into place. A tag's mirror is never rewritten or deleted: a changed mirror needs a new tag.
+
 ## Theme
 
 Before boot the island seeds KiCad's canvas colour themes, toolbar layouts and hotkeys into the engine's filesystem (`theme/seeds.ts`). Since stage 1c the selected theme is `circuitcenter.json`, a copy of the site's generated palette (`frontend/scripts/gen-editor-palette.mjs` in the main repository): the editor's canvas is the viewer's canvas, by day and by night. The light and dark Lab Sheet themes stay seeded for a later theme switch. Every tool of the right-hand and left-hand toolbars in either editor, and the topbar's chosen tools (save, undo, redo, find, annotate and ERC, or update from schematic, DRC and fill all zones), can be pressed through `key.press`: a tool with no KiCad default key the grammar can express gets a Ctrl+Alt chord in `theme/user.hotkeys` (Ctrl+Alt+Shift+letter once the Ctrl+Alt set ran out), and `theme/pencil-tools.json` lists the tools by editor and strip in toolbar order with their default or seeded key, the one table the site copies. Both files come from `theme/pencil-tools.gen.mjs` (`npm run gen:pencil-tools`, `--check` to only compare), which reads the seeded toolbar layouts and KiCad's default keys at the pin (`theme/pencil-tools.defaults.json`); `theme/user.hotkeys` is its ledger, so a chord already there never moves and a new keyless tool takes the next free chord.
