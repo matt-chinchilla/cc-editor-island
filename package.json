@@ -12,7 +12,8 @@
     "e2e": "playwright test",
     "notices": "node scripts/notices.mjs",
     "gen:pencil-tools": "node theme/pencil-tools.gen.mjs",
-    "ship": "bash scripts/ship.sh"
+    "ship": "bash scripts/ship.sh",
+    "build:libs": "node scripts/build-libs.mjs --out dist/libs"
   },
   "license": "GPL-3.0-or-later",
   "private": true,
