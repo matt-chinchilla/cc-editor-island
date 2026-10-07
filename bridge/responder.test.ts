@@ -1895,15 +1895,16 @@ describe('the picker: lib.index, lib.item, lib.prefetch, place and ev.pick', () 
   const started: Array<{ close: () => void }> = [];
   afterEach(() => { for (const r of started.splice(0)) r.close(); });
 
-  function fakeLibs(withIndex = true) {
+  /** The libraries as src/libs.ts chooses them: the source items come from, and the mirror (null on the example library). */
+  function fakeLibs(withMirror = true) {
     const bodies: Record<string, Record<string, string>> = { 'sym.Device': { R }, 'fp.Package_QFP': { 'LQFP-48_7x7mm_P0.5mm': QFP } };
-    const libs = {
+    const source = {
       listLibs: vi.fn(async (kind?: string) => [{ id: 'sym.Device', name: 'Device', kind: 'symbol' }, { id: 'fp.Package_QFP', name: 'Package_QFP', kind: 'footprint' }].filter((l) => kind == null || l.kind === kind)),
-      listItems: vi.fn(async () => []),
       getItemBody: vi.fn(async (id: string, _kind: string, name: string) => bodies[id]?.[name] ?? null),
-      prefetch: vi.fn(async () => undefined),
+      getSearchIndex: vi.fn(async (kind: string) => `{"index":"${kind}"}`),
+      prefetch: vi.fn(async (_id: string) => undefined),
     };
-    return withIndex ? { ...libs, getSearchIndex: vi.fn(async (kind: string) => `{"index":"${kind}"}`) } : libs;
+    return { source, mirror: withMirror ? source : null };
   }
 
   /**
@@ -1973,7 +1974,7 @@ describe('the picker: lib.index, lib.item, lib.prefetch, place and ev.pick', () 
   it('lib.index passes the source\'s index text through, and answers null without one', async () => {
     const { request, libs } = picker();
     expect(await request('lib.index', { kind: 'footprint' })).toEqual({ id: 1, ok: true, result: { text: '{"index":"footprint"}' } });
-    expect((libs as unknown as { getSearchIndex: ReturnType<typeof vi.fn> }).getSearchIndex).toHaveBeenCalledWith('footprint');
+    expect(libs!.source.getSearchIndex).toHaveBeenCalledWith('footprint');
     expect(await picker({ libs: fakeLibs(false) }).request('lib.index', { kind: 'symbol' })).toEqual({ id: 1, ok: true, result: { text: null } });
     expect(await picker({ libs: null }).request('lib.index', { kind: 'symbol' })).toEqual({ id: 1, ok: true, result: { text: null } });
   });
@@ -1981,25 +1982,23 @@ describe('the picker: lib.index, lib.item, lib.prefetch, place and ev.pick', () 
   it('lib.item reads the body by the library\'s nickname, and answers null for an unknown library or item', async () => {
     const { request, libs } = picker();
     expect(await request('lib.item', { kind: 'symbol', lib: 'Device', name: 'R' })).toEqual({ id: 1, ok: true, result: { body: R } });
-    expect(libs!.getItemBody).toHaveBeenCalledWith('sym.Device', 'symbol', 'R');
+    expect(libs!.source.getItemBody).toHaveBeenCalledWith('sym.Device', 'symbol', 'R');
     expect(await request('lib.item', { kind: 'symbol', lib: 'Device', name: 'Nope' })).toMatchObject({ ok: true, result: { body: null } });
     expect(await request('lib.item', { kind: 'symbol', lib: 'Package_QFP', name: 'LQFP-48_7x7mm_P0.5mm' })).toMatchObject({ ok: true, result: { body: null } });
     expect(await request('lib.item', { kind: 'footprint', lib: 'Package_QFP', name: 'LQFP-48_7x7mm_P0.5mm' })).toMatchObject({ ok: true, result: { body: QFP } });
     // The source's list is read once per kind.
-    expect(libs!.listLibs).toHaveBeenCalledTimes(2);
+    expect(libs!.source.listLibs).toHaveBeenCalledTimes(2);
   });
 
-  it('lib.prefetch answers at once and warms each named library once, passing over unknown names', async () => {
+  it('lib.prefetch answers at once and warms each named library once through the mirror, passing over unknown names; without a mirror it warms nothing', async () => {
     const { request, libs } = picker();
     expect(await request('lib.prefetch', { kind: 'symbol', libs: ['Device', 'Device', 'Nope'] })).toEqual({ id: 1, ok: true, result: {} });
     await settle(10);
-    expect(libs!.prefetch.mock.calls).toEqual([['sym.Device']]);
-    // A source without prefetch is warmed by reading the library's item list.
-    const { prefetch: _drop, ...plain } = fakeLibs();
-    const other = picker({ libs: plain as ReturnType<typeof fakeLibs> });
-    expect(await other.request('lib.prefetch', { kind: 'footprint', libs: ['Package_QFP'] })).toMatchObject({ ok: true });
+    expect(libs!.source.prefetch.mock.calls).toEqual([['sym.Device']]);
+    const none = fakeLibs(false);
+    expect(await picker({ libs: none }).request('lib.prefetch', { kind: 'footprint', libs: ['Package_QFP'] })).toEqual({ id: 1, ok: true, result: {} });
     await settle(10);
-    expect(plain.listItems.mock.calls).toEqual([['fp.Package_QFP']]);
+    expect(none.source.prefetch).not.toHaveBeenCalled();
   });
 
   it('place builds the blob from the body, calls the engine and answers once the editor holds the item', async () => {

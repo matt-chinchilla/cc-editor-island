@@ -34,8 +34,9 @@ export type IslandEvent =
 export interface Responder {
   emit(ev: IslandEvent): void;
   /**
-   * The engine is up: ev.ready goes out. `libs` is the library source the
-   * picker's ops read (the mirror, or the example library), null for none.
+   * The engine is up: ev.ready goes out. `libs` is what the picker's ops read
+   * (src/libs.ts LibsChoice: the source boot chose, and the mirror when there
+   * is one), null for none.
    */
   engineReady(win: ToolWindow, engine: { tag: string; kicad: string }, help: { attempts(): number }, libs?: PickerLibs | null): void;
   /** A request is in flight (received and not yet answered, an import included): the quiet warm-up waits. */
@@ -287,7 +288,7 @@ export function startResponder(opts: {
   let editDepth: number | null = null;
   /** Stops the undo depth poll (ev.edited); set by engineReady when the engine has the export. */
   let stopEdits: (() => void) | null = null;
-  /** The library source the picker's ops read; set by engineReady. */
+  /** The libraries the picker's ops read (the source boot chose, and the mirror when there is one); set by engineReady. */
   let libs: PickerLibs | null = null;
   /** Library nicknames to the source's ids (src/picker.ts libIds). */
   let idOf: ((kind: PickKind, nick: string) => Promise<string | null>) | null = null;
@@ -1055,9 +1056,9 @@ export function startResponder(opts: {
     const a = parseIndexArgs(args);
     if (a == null) return fail('bad_args', op);
     if (!ready) return fail('not_ready', op);
-    const read = libs?.getSearchIndex;
-    if (libs == null || typeof read !== 'function') return ok({ text: null });
-    const text = await read.call(libs, a.kind);
+    const mirror = libs?.mirror;
+    if (mirror == null) return ok({ text: null });
+    const text = await mirror.getSearchIndex(a.kind);
     return ok({ text: typeof text === 'string' ? text : null });
   }
 
@@ -1066,7 +1067,7 @@ export function startResponder(opts: {
     if (libs == null || idOf == null) return null;
     const id = await idOf(kind, lib);
     if (id == null) return null;
-    const body = await libs.getItemBody(id, kind, name);
+    const body = await libs.source.getItemBody(id, kind, name);
     return typeof body === 'string' ? body : null;
   }
 
@@ -1084,11 +1085,12 @@ export function startResponder(opts: {
     const a = parsePrefetchArgs(args);
     if (a == null) return fail('bad_args', op);
     if (!ready) return fail('not_ready', op);
-    const source = libs;
-    const ids = idOf;
-    if (source != null && ids != null) {
+    // The mirror's own ids (sym.<nick>, fp.<nick>); without a mirror there is nothing to warm.
+    const mirror = libs?.mirror;
+    if (mirror != null) {
+      const ids = libIds(mirror);
       for (const nick of new Set(a.libs)) {
-        void ids(a.kind, nick).then((id) => (id == null ? undefined : warmLibrary(source, id)), () => undefined);
+        void ids(a.kind, nick).then((id) => (id == null ? undefined : warmLibrary(mirror, id)), () => undefined);
       }
     }
     return ok();
@@ -1143,7 +1145,7 @@ export function startResponder(opts: {
       ready = true;
       win = w;
       libs = source ?? null;
-      idOf = libs == null ? null : libIds(libs);
+      idOf = libs == null ? null : libIds(libs.source);
       // The editor's own frame, so any other window of KiCad's holds the place keys back.
       try { ownFrames = new Set((w.wxElementRegistry?.findAll({ visible: true }) ?? []).filter((e) => FRAME_TYPE_RE.test(e.typeName)).map((e) => e.name)); } catch { ownFrames = new Set(); }
       placeWatch = new PlacementWatch(w, { frame, timing, depth: () => undoDepth(w), blocked: () => keysBlocked(w), press: (k) => pressKey(w, k) });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { COMMON_LIBS, installPickKeys, libIds, MAX_PREFETCH, parseIndexArgs, parseItemArgs, parsePrefetchArgs, pickFor, quietWarmUp, takesText, warmTiming, type PickerLibs } from './picker';
+import { COMMON_LIBS, installPickKeys, libIds, MAX_PREFETCH, parseIndexArgs, parseItemArgs, parsePrefetchArgs, pickFor, quietWarmUp, takesText, warmTiming, type PickerMirror } from './picker';
 
 describe('the ops\' closed args', () => {
   it('lib.index takes { kind } and nothing else', () => {
@@ -152,17 +152,15 @@ describe('the quiet warm-up', () => {
   beforeEach(() => { Object.assign(warmTiming, { quietMs: 30, pollMs: 5, idleMs: 10 }); });
   afterEach(() => { Object.assign(warmTiming, saved); });
 
-  function source(opts: { index?: boolean; prefetch?: boolean } = {}) {
+  function source() {
     const calls: string[] = [];
-    const s: PickerLibs = {
+    const s: PickerMirror = {
       listLibs: async (kind) => (kind === 'symbol'
         ? [{ id: 'sym.power', name: 'power' }, { id: 'sym.Device', name: 'Device' }, { id: 'sym.MCU_ST_STM32F1', name: 'MCU_ST_STM32F1' }, { id: 'sym.LED', name: 'LED' }]
         : [{ id: 'fp.Resistor_SMD', name: 'Resistor_SMD' }, { id: 'fp.Package_QFP', name: 'Package_QFP' }]),
-      listItems: async (id) => { calls.push(`list ${id}`); return []; },
-      getItemBody: async () => null,
+      getSearchIndex: async (kind, o) => { calls.push(`index ${kind} ${o?.priority ?? 'auto'}`); return '{}'; },
+      prefetch: async (id) => { calls.push(`prefetch ${id}`); },
     };
-    if (opts.index !== false) s.getSearchIndex = async (kind) => { calls.push(`index ${kind}`); return '{}'; };
-    if (opts.prefetch !== false) s.prefetch = async (id) => { calls.push(`prefetch ${id}`); };
     return { s, calls };
   }
 
@@ -171,7 +169,7 @@ describe('the quiet warm-up', () => {
     let busy = true;
     const idle = vi.fn(async () => undefined);
     const t0 = Date.now();
-    const p = quietWarmUp({ frame: 'sch', source: s, signal: new AbortController().signal, busy: () => busy, idle });
+    const p = quietWarmUp({ frame: 'sch', mirror: s, signal: new AbortController().signal, busy: () => busy, idle });
     await new Promise((r) => setTimeout(r, 50));
     expect(calls).toEqual([]);   // a request is in flight: nothing yet
     busy = false;
@@ -179,26 +177,26 @@ describe('the quiet warm-up', () => {
     expect(Date.now() - t0).toBeGreaterThanOrEqual(50 + 30 - 5);
     expect(idle).toHaveBeenCalledWith(10);
     // Index first, then the common libraries in their list's order, only those the source has.
-    expect(calls).toEqual(['index symbol', 'prefetch sym.Device', 'prefetch sym.power', 'prefetch sym.LED']);
+    expect(calls).toEqual(['index symbol low', 'prefetch sym.Device', 'prefetch sym.power', 'prefetch sym.LED']);
     expect(warmed).toEqual(['sym.Device', 'sym.power', 'sym.LED']);
     expect(COMMON_LIBS.symbol.slice(0, 2)).toEqual(['Device', 'power']);
   });
 
-  it('a board warms its footprint index and libraries; a source without prefetch is warmed by its item list, and one without an index asks for none', async () => {
-    const { s, calls } = source({ index: false, prefetch: false });
-    expect(await quietWarmUp({ frame: 'pcb', source: s, signal: new AbortController().signal, busy: () => false, idle: async () => undefined })).toEqual(['fp.Resistor_SMD']);
-    expect(calls).toEqual(['list fp.Resistor_SMD']);
+  it('a board warms its footprint index and libraries', async () => {
+    const { s, calls } = source();
+    expect(await quietWarmUp({ frame: 'pcb', mirror: s, signal: new AbortController().signal, busy: () => false, idle: async () => undefined })).toEqual(['fp.Resistor_SMD']);
+    expect(calls).toEqual(['index footprint low', 'prefetch fp.Resistor_SMD']);
   });
 
   it('stops between steps once aborted, and never starts when aborted while it waits', async () => {
     const a = source();
     const stop = new AbortController();
     a.s.prefetch = async (id) => { a.calls.push(`prefetch ${id}`); stop.abort(); };
-    expect(await quietWarmUp({ frame: 'sch', source: a.s, signal: stop.signal, busy: () => false, idle: async () => undefined })).toEqual(['sym.Device']);
-    expect(a.calls).toEqual(['index symbol', 'prefetch sym.Device']);
+    expect(await quietWarmUp({ frame: 'sch', mirror: a.s, signal: stop.signal, busy: () => false, idle: async () => undefined })).toEqual(['sym.Device']);
+    expect(a.calls).toEqual(['index symbol low', 'prefetch sym.Device']);
     const b = source();
     const early = new AbortController();
-    const p = quietWarmUp({ frame: 'sch', source: b.s, signal: early.signal, busy: () => true, idle: async () => undefined });
+    const p = quietWarmUp({ frame: 'sch', mirror: b.s, signal: early.signal, busy: () => true, idle: async () => undefined });
     early.abort();
     expect(await p).toEqual([]);
     expect(b.calls).toEqual([]);
@@ -208,6 +206,6 @@ describe('the quiet warm-up', () => {
     const { s, calls } = source();
     s.getSearchIndex = async () => { throw new Error('offline'); };
     s.prefetch = async (id) => { calls.push(`prefetch ${id}`); throw new Error('offline'); };
-    expect(await quietWarmUp({ frame: 'sch', source: s, signal: new AbortController().signal, busy: () => false, idle: async () => undefined })).toEqual(['sym.Device', 'sym.power', 'sym.LED']);
+    expect(await quietWarmUp({ frame: 'sch', mirror: s, signal: new AbortController().signal, busy: () => false, idle: async () => undefined })).toEqual(['sym.Device', 'sym.power', 'sym.LED']);
   });
 });

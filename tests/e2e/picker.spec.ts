@@ -195,7 +195,8 @@ test.describe('with a mirror', () => {
     expect(warmed).toEqual(common.map((id) => `${id}.bin`).sort());
     expect(w.net.filter((f) => !f.endsWith('.bin') && f !== 'manifest.json').every((f) => f === 'sym-index.json')).toBe(true);
     expect(w.ops).toEqual([]);
-    measure('quiet warm-up, schematic', `${w.net.filter((f) => f !== 'manifest.json').join(', ')}`);
+    const done = w.lines.find((l) => l.includes('[libs] quiet symbol warm-up done')) ?? '';
+    measure('quiet warm-up, schematic', `${w.net.filter((f) => f !== 'manifest.json').join(', ')} (${done.slice(done.indexOf('warm-up done'))})`);
 
     // Each place: its own bundle at most, and no op of the engine's but none at all (no enumeration).
     const taken: string[] = [];
@@ -254,6 +255,21 @@ test.describe('with a mirror', () => {
       const pads = new Set(children(fp).filter((c) => head(c) === 'pad').map((c) => firstString(c) ?? '').filter((n) => n !== ''));
       expect([...pads].sort((a, b) => Number(a) - Number(b))).toEqual(Array.from({ length: 48 }, (_, i) => String(i + 1)));
     }
+  });
+
+  test('place puts a power symbol (P\'s pick) and a diode that extends another on the pointer, and KiCad annotates both', async ({ page }) => {
+    const frame = await boot(page, 'sch');
+    const manifest = await frame.evaluate(async (tag) => (await fetch(`/libs/${tag}/manifest.json`)).json() as Promise<{ libs: Array<{ id: string }> }>, TAG);
+    test.skip(!['sym.power', 'sym.Diode'].every((id) => manifest.libs.some((l) => l.id === id)), 'the mirror has no power or Diode library');
+    const gnd = await placeAt(page, 'symbol', 'power', 'GND', [500, 300]);
+    const diode = await placeAt(page, 'symbol', 'Diode', '1N4148', [800, 300]);
+    measure('place, power and derived diode', `power:GND ${gnd} ms, Diode:1N4148 ${diode} ms`);
+    await request(page, 'project.save');
+    const sch = schematicFacts(await savedText(page, 'blank.kicad_sch'));
+    expect(sch.placed.map((p) => [p.libId, p.pins]).sort()).toEqual([['Diode:1N4148', 2], ['power:GND', 1]]);
+    // A power symbol's reference is KiCad's #PWR series; the diode's is D1.
+    expect(sch.placed.map((p) => p.reference).sort()).toEqual(['#PWR01', 'D1']);
+    expect(sch.cached.find((c) => c.name === 'Diode:1N4148')).toMatchObject({ extends: false, units: ['1N4148_0_1', '1N4148_1_1'], pins: 2 });
   });
 
   test('a placement the reader drops with Escape leaves KiCad\'s tool (the next press opens no chooser), and a place while one hangs replaces it', async ({ page }) => {

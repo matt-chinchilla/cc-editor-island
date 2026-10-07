@@ -6,7 +6,7 @@
 // shipped before its library still opens designs; that is logged, never fatal,
 // and never reaches the host (no event, no state).
 //
-// Nothing is fetched until KiCad asks (LIBRARY.md "The client", measured
+// For KiCad's own reads nothing is fetched until KiCad asks (LIBRARY.md "The client", measured
 // 2026-10-07): neither frame enumerates a library at boot, but a chooser (the
 // symbol chooser, the power chooser, the footprint chooser) enumerates EVERY
 // library of its kind, one bridge crossing at a time, and appears only when

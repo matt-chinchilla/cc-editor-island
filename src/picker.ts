@@ -7,6 +7,8 @@
 // (A and P in a schematic, A on a board) and hands to the host as ev.pick, and
 // the quiet warm-up that fetches the frame's search index and the common
 // libraries once the frame has been idle for a moment after ev.ready.
+import type { MirrorLibsSource } from '../loader/src/wasm/libs/mirror-source';
+import type { LibsSource } from '../loader/src/wasm/libs/source';
 import type { Frame } from './types';
 
 export type PickKind = 'symbol' | 'footprint';
@@ -17,18 +19,18 @@ export const MAX_PREFETCH = 16;
 /** The longest library nickname or item name the ops take. */
 export const MAX_NAME = 255;
 
+/** What the mirror gives the picker beyond a plain source: the search indexes and a low-priority warm. */
+export type PickerMirror = Pick<MirrorLibsSource, 'listLibs' | 'getSearchIndex' | 'prefetch'>;
+
 /**
- * The library reads the picker makes. The mirror source has them all (the
- * search index and prefetch arrive with the ccl2 client); a source without
- * `getSearchIndex` answers no index, and one without `prefetch` is warmed
- * by reading the library's item list (which loads its bundle).
+ * The libraries the picker reads (src/libs.ts LibsChoice): items from the
+ * source boot chose (the mirror, or the example library), the search indexes
+ * and prefetch from the mirror alone. Without a mirror there is no index and
+ * nothing to warm.
  */
 export interface PickerLibs {
-  listLibs(kind?: string): Promise<Array<{ id: string; name: string }>>;
-  listItems?(libId: string): Promise<unknown>;
-  getItemBody(libId: string, kind: string, name: string): Promise<string | null>;
-  getSearchIndex?(kind: PickKind): Promise<string | null>;
-  prefetch?(id: string): Promise<void>;
+  source: Pick<LibsSource, 'listLibs' | 'getItemBody'>;
+  mirror: PickerMirror | null;
 }
 
 /** The common libraries the quiet warm-up fetches, by kind (PICKER.md). */
@@ -71,7 +73,7 @@ export function parsePrefetchArgs(args: unknown): { kind: PickKind; libs: string
  * source's own list (the mirror's `sym.<nick>` and `fp.<nick>`, the example
  * library's own id). A list that fails is not kept: the next read asks again.
  */
-export function libIds(source: Pick<PickerLibs, 'listLibs'>): (kind: PickKind, nick: string) => Promise<string | null> {
+export function libIds(source: Pick<LibsSource, 'listLibs'>): (kind: PickKind, nick: string) => Promise<string | null> {
   const maps = new Map<PickKind, Promise<Map<string, string>>>();
   return async (kind, nick) => {
     let p = maps.get(kind);
@@ -84,12 +86,9 @@ export function libIds(source: Pick<PickerLibs, 'listLibs'>): (kind: PickKind, n
   };
 }
 
-/** Warms one library: the source's own prefetch, else a read of its item list. Never rejects. */
-export async function warmLibrary(source: PickerLibs, id: string): Promise<void> {
-  try {
-    if (typeof source.prefetch === 'function') await source.prefetch(id);
-    else if (typeof source.listItems === 'function') await source.listItems(id);
-  } catch { /* best-effort: the library still loads when it is placed */ }
+/** Warms one library's bundle through the mirror's prefetch. Never rejects. */
+export async function warmLibrary(mirror: PickerMirror, id: string): Promise<void> {
+  try { await mirror.prefetch(id); } catch { /* best-effort: the library still loads when it is placed */ }
 }
 
 /** The fields of a key event the place-key filter reads. */
@@ -195,7 +194,7 @@ export const warmTiming = {
 
 export interface QuietWarmUpOptions {
   frame: Frame;
-  source: PickerLibs;
+  mirror: PickerMirror;
   /** Stops the warm-up between steps (the shutdown op, pagehide). */
   signal: AbortSignal;
   /** A request is in flight: the warm-up waits until none has been for warmTiming.quietMs. */
@@ -222,7 +221,7 @@ function browserIdle(timeoutMs: number): Promise<void> {
  * `signal` aborts. Resolves with the library ids it warmed (the tests read them).
  */
 export async function quietWarmUp(opts: QuietWarmUpOptions): Promise<string[]> {
-  const { source, signal } = opts;
+  const { mirror, signal } = opts;
   const idle = opts.idle ?? browserIdle;
   const warmed: string[] = [];
   let quietSince: number | null = null;
@@ -237,16 +236,14 @@ export async function quietWarmUp(opts: QuietWarmUpOptions): Promise<string[]> {
   if (signal.aborted) return warmed;
   const kind = kindOf(opts.frame);
   const t0 = Date.now();
-  if (typeof source.getSearchIndex === 'function') {
-    try { await source.getSearchIndex(kind); } catch { /* the host's lib.index asks again */ }
-  }
-  const idOf = libIds(source);
+  try { await mirror.getSearchIndex(kind, { priority: 'low' }); } catch { /* the host's lib.index asks again */ }
+  const idOf = libIds(mirror);
   for (const nick of COMMON_LIBS[kind]) {
     if (signal.aborted) break;
     let id: string | null = null;
     try { id = await idOf(kind, nick); } catch { break; }
     if (id == null) continue;
-    await warmLibrary(source, id);
+    await warmLibrary(mirror, id);
     warmed.push(id);
   }
   opts.log?.(`[libs] quiet ${kind} warm-up ${signal.aborted ? 'stopped' : 'done'}: ${warmed.length} libraries in ${Date.now() - t0} ms`);

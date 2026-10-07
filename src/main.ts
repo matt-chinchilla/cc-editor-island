@@ -213,12 +213,12 @@ async function main(): Promise<void> {
   // click above, which must not take focus from the page).
   focusFrameOnPress(window);
   hideScreens();
-  responder.engineReady(window as ToolWindow, { tag: __ISLAND_TAG__, kicad: __KICAD_VERSION__ }, popups, choice?.source ?? null);
+  responder.engineReady(window as ToolWindow, { tag: __ISLAND_TAG__, kicad: __KICAD_VERSION__ }, popups, choice);
   // The quiet warm-up (PICKER.md): once the frame has been idle for a moment,
   // the frame's search index and the common libraries of its kind, at low
   // priority, nothing shown and nothing sent. KiCad's own chooser keeps its
   // first-enumerate warm-up above.
-  if (choice?.mirror != null) void quietWarmUp({ frame, source: choice.mirror, signal: libsWarmUp.signal, busy: () => responder.busy(), log: libsLog });
+  if (choice?.mirror != null) void quietWarmUp({ frame, mirror: choice.mirror, signal: libsWarmUp.signal, busy: () => responder.busy(), log: libsLog });
 }
 
 void main();

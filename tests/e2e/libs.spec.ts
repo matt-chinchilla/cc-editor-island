@@ -266,8 +266,9 @@ test.describe('with a mirror', () => {
     expect(files(w, before).filter((f) => !f.endsWith('.bin'))).toEqual(['fp-index.json']);
     const ops = w.ops.slice(opsBefore);
     expect(count(ops, /^op=list .*arg=bodies$/)).toBe(symbols.length);
-    measure('symbol chooser, cold', `shown ${ms} ms after the press; ${w.net.length - before} requests (${symbols.length} bundles, fp-index.json); provider ops ${count(ops, /^op=get /)} get, ${count(ops, /^op=list .*arg=bodies$/)} list bodies, ${count(ops, /^op=list .*arg=$/)} list, ${count(ops, /^op=index /)} index`);
-    expect(await storedKeys(frame)).toEqual(symbols.map((id) => `${TAG}/${id}`));
+    measure('symbol chooser, cold', `shown ${ms} ms after the menu item's press; ${w.net.length - before} requests (${bundles(w, before).length} bundles, fp-index.json); provider ops ${count(ops, /^op=get /)} get, ${count(ops, /^op=list .*arg=bodies$/)} list bodies, ${count(ops, /^op=list .*arg=$/)} list, ${count(ops, /^op=index /)} index`);
+    // Every symbol bundle is stored (beside the symbol search index the quiet warm-up keeps, LIBRARY.md).
+    expect((await storedKeys(frame)).filter((k) => !k.startsWith(`${TAG}/index:`))).toEqual(symbols.map((id) => `${TAG}/${id}`));
     // The fetches changed nothing the host sees: no ev.state after the open.
     expect((await events(page)).slice(readyAt).filter((e) => e.type === 'ev.state')).toEqual([]);
 
@@ -308,9 +309,12 @@ test.describe('with a mirror', () => {
     expect(count(w.ops.slice(opsBefore), /^op=list .*arg=bodies$/)).toBe(footprints.length);
     const reqs = w.net.slice(before).filter((n) => n.file.endsWith('.bin'));
     const overlap = Math.max(...reqs.map((a) => reqs.filter((b) => b.start <= a.start && (b.end < 0 || b.end > a.start)).length));
-    measure('footprint chooser, cold, 400 ms per bundle', `shown ${ms} ms after the press; ${reqs.length} bundles, at most ${overlap} in flight at once (one at a time would take ${reqs.length * 400} ms or more)`);
+    // The bundles' own span, from the first request to the last answer: one at a time it would be
+    // reqs.length * 400 ms or more. (The chooser's own time on top of it is KiCad's and the menu's.)
+    const span = Math.max(...reqs.map((r) => r.end)) - Math.min(...reqs.map((r) => r.start));
+    measure('footprint chooser, cold, 400 ms per bundle', `shown ${ms} ms after the menu item's press; ${reqs.length} bundles in ${span} ms, at most ${overlap} in flight at once (one at a time would take ${reqs.length * 400} ms or more)`);
     expect(overlap).toBeGreaterThan(1);
-    expect(ms).toBeLessThan(reqs.length * 400);
+    expect(span).toBeLessThan(reqs.length * 400);
   });
 
   test('playtest: the symbol chooser places Device:R, an STM32F103C8Tx and a USB C receptacle from the mirror into an empty schematic, the save holds all three, and the next session places one with no bundle request', async ({ page, context }) => {
