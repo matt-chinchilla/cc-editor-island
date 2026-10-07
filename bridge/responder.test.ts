@@ -21,6 +21,8 @@ beforeAll(() => {
   Object.assign(timing, { viewPollMs: 2, viewStableMs: 15, viewSettleMs: 300 });
   // ev.edited reads the undo depth every 5 ms.
   Object.assign(timing, { editPollMs: 5 });
+  // A place reads the selection every 2 ms for 100 ms; a hanging one is read every 5 ms.
+  Object.assign(timing, { placePollMs: 2, placeMs: 100, placeWatchMs: 5, placeCancelMs: 50 });
 });
 // No DOM in this suite: a KeyboardEvent stand-in that keeps every init field (key, code, ctrlKey, ...).
 beforeEach(() => {
@@ -1040,8 +1042,8 @@ describe('key.press', () => {
     const { eng, request } = respond(true);
     const seen: string[] = [];
     eng.win.dispatchEvent = vi.fn((e: Event) => { seen.push(`${e.type}:${(e as KeyboardEvent).key}:${(e as KeyboardEvent).code}`); return true; });
-    expect(await request('key.press', { key: 'a', code: 'KeyA' })).toEqual({ id: 1, ok: true, result: {} });
-    expect(seen).toEqual(['keydown:a:KeyA', 'keyup:a:KeyA']);
+    expect(await request('key.press', { key: 'w', code: 'KeyW' })).toEqual({ id: 1, ok: true, result: {} });
+    expect(seen).toEqual(['keydown:w:KeyW', 'keyup:w:KeyW']);
   });
 
   it('answers busy while a KiCad dialog is up, and bad_args outside the grammar', async () => {
@@ -1068,7 +1070,7 @@ describe('key.press', () => {
     }
     expect(eng.win.dispatchEvent).not.toHaveBeenCalled();
     eng.dialogs.splice(0, eng.dialogs.length, { typeName: 'wxGenericProgressDialog', visible: true }, { typeName: 'wxDialog', visible: false });
-    expect(await request('key.press', { key: 'a', code: 'KeyA' })).toMatchObject({ ok: true });
+    expect(await request('key.press', { key: 'w', code: 'KeyW' })).toMatchObject({ ok: true });
     expect(eng.win.dispatchEvent).toHaveBeenCalledTimes(2);
   });
 
@@ -1878,5 +1880,275 @@ describe('the import\'s report lines', () => {
     expect(seen).toHaveLength(6);
     tap.stop();
     expect({ ...c }).toEqual(own);
+  });
+});
+
+describe('the picker: lib.index, lib.item, lib.prefetch, place and ev.pick', () => {
+  const OPEN = { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] };
+  const OPEN_PCB = { name: 'x', files: [{ path: 'blink.kicad_pcb', bytes: b('(kicad_pcb)') }] };
+  const R = `(kicad_symbol_lib (version 20251024) (generator "kicad_symbol_editor")
+  (symbol "R" (in_bom yes) (on_board yes)
+    (property "Reference" "R" (at 2.032 0 90) (effects (font (size 1.27 1.27))))
+    (property "Value" "R" (at 0 0 90) (effects (font (size 1.27 1.27))))
+    (symbol "R_1_1" (pin passive line (at 0 3.81 270) (length 1.27) (name "~") (number "1")))))`;
+  const QFP = '(footprint "LQFP-48_7x7mm_P0.5mm" (version 20241229) (layer "F.Cu") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu")))';
+  const started: Array<{ close: () => void }> = [];
+  afterEach(() => { for (const r of started.splice(0)) r.close(); });
+
+  function fakeLibs(withIndex = true) {
+    const bodies: Record<string, Record<string, string>> = { 'sym.Device': { R }, 'fp.Package_QFP': { 'LQFP-48_7x7mm_P0.5mm': QFP } };
+    const libs = {
+      listLibs: vi.fn(async (kind?: string) => [{ id: 'sym.Device', name: 'Device', kind: 'symbol' }, { id: 'fp.Package_QFP', name: 'Package_QFP', kind: 'footprint' }].filter((l) => kind == null || l.kind === kind)),
+      listItems: vi.fn(async () => []),
+      getItemBody: vi.fn(async (id: string, _kind: string, name: string) => bodies[id]?.[name] ?? null),
+      prefetch: vi.fn(async () => undefined),
+    };
+    return withIndex ? { ...libs, getSearchIndex: vi.fn(async (kind: string) => `{"index":"${kind}"}`) } : libs;
+  }
+
+  /**
+   * A connected responder over a booted engine with the place export: the
+   * editor selects the placed item `takeMs` after the call (never, at -1), and
+   * every key it is sent is kept in `keys`.
+   */
+  function picker(opts: { search?: string; libs?: ReturnType<typeof fakeLibs> | null; ready?: boolean } = {}) {
+    const { page, parent } = fakePage(opts.search);
+    const r = startResponder({ parentOrigin: PARENT, page });
+    started.push(r);
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    const sel: string[] = [];
+    const undo = { depth: 0 };
+    const place = { takeMs: 5, n: 0, answer: '{"ok":true}', blobs: [] as string[] };
+    const mod = eng.Module as Record<string, unknown>;
+    mod.kicadPlaceImportedItem = vi.fn((sx: string) => {
+      place.blobs.push(sx);
+      const uuid = `u${++place.n}`;
+      if (place.takeMs >= 0) setTimeout(() => { sel.splice(0, sel.length, uuid); }, place.takeMs);
+      return place.answer;
+    });
+    mod.kicadCollabGetSelection = () => JSON.stringify(sel);
+    mod.kicadCollabTestUndoDepth = () => undo.depth;
+    const keys: string[] = [];
+    const inner = eng.win.dispatchEvent.bind(eng.win);
+    eng.win.dispatchEvent = vi.fn((e: Event) => {
+      const k = e as KeyboardEvent;
+      if (e.type === 'keydown') {
+        keys.push(k.key);
+        // KiCad's placement tool: Escape drops the hanging item.
+        if (k.key === 'Escape') sel.length = 0;
+      }
+      return inner(e);
+    }) as typeof eng.win.dispatchEvent;
+    const libs = opts.libs === undefined ? fakeLibs() : opts.libs;
+    if (opts.ready !== false) r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 }, libs);
+    let id = 0;
+    const request = async (op: string, args?: unknown, ms = 40) => {
+      const n = ++id;
+      port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+      for (let i = 0; i < 100 && !got.some((m) => m.id === n); i++) await settle(ms / 4);
+      return got.find((m) => m.id === n);
+    };
+    const picks = () => got.filter((m) => m.type === 'ev.pick');
+    return { r, page, eng, got, sel, undo, place, keys, libs, request, picks };
+  }
+
+  it('answers not_ready before ev.ready, and bad_args for args outside each op\'s closed shape', async () => {
+    const early = picker({ ready: false });
+    for (const [op, args] of [['lib.index', { kind: 'symbol' }], ['lib.item', { kind: 'symbol', lib: 'Device', name: 'R' }], ['lib.prefetch', { kind: 'symbol', libs: [] }]] as const) {
+      expect(await early.request(op, args)).toMatchObject({ ok: false, error: { code: 'not_ready', message: op } });
+    }
+    expect(await early.request('place', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: false, error: { code: 'not_ready' } });
+    const { request } = picker();
+    const bad: Array<[string, unknown]> = [
+      ['lib.index', undefined], ['lib.index', { kind: 'model3d' }], ['lib.index', { kind: 'symbol', extra: 1 }],
+      ['lib.item', { kind: 'symbol', lib: 'Device' }], ['lib.item', { kind: 'symbol', lib: '', name: 'R' }], ['lib.item', { kind: 'symbol', lib: 'Device', name: 'R', at: 1 }],
+      ['lib.item', { kind: 'symbol', lib: 'Device', name: 'x'.repeat(256) }], ['lib.item', { kind: 'symbol', lib: 'Dev\nice', name: 'R' }],
+      ['lib.prefetch', { kind: 'symbol', libs: 'Device' }], ['lib.prefetch', { kind: 'symbol', libs: Array.from({ length: 17 }, (_, i) => `L${i}`) }], ['lib.prefetch', { kind: 'symbol', libs: [3] }],
+      ['place', { kind: 'symbol', lib: 'Device', name: 7 }], ['place', { kind: 'symbol', lib: 'Device', name: 'R', unit: 2 }],
+    ];
+    for (const [op, args] of bad) expect(await request(op, args)).toMatchObject({ ok: false, error: { code: 'bad_args', message: op } });
+  });
+
+  it('lib.index passes the source\'s index text through, and answers null without one', async () => {
+    const { request, libs } = picker();
+    expect(await request('lib.index', { kind: 'footprint' })).toEqual({ id: 1, ok: true, result: { text: '{"index":"footprint"}' } });
+    expect((libs as unknown as { getSearchIndex: ReturnType<typeof vi.fn> }).getSearchIndex).toHaveBeenCalledWith('footprint');
+    expect(await picker({ libs: fakeLibs(false) }).request('lib.index', { kind: 'symbol' })).toEqual({ id: 1, ok: true, result: { text: null } });
+    expect(await picker({ libs: null }).request('lib.index', { kind: 'symbol' })).toEqual({ id: 1, ok: true, result: { text: null } });
+  });
+
+  it('lib.item reads the body by the library\'s nickname, and answers null for an unknown library or item', async () => {
+    const { request, libs } = picker();
+    expect(await request('lib.item', { kind: 'symbol', lib: 'Device', name: 'R' })).toEqual({ id: 1, ok: true, result: { body: R } });
+    expect(libs!.getItemBody).toHaveBeenCalledWith('sym.Device', 'symbol', 'R');
+    expect(await request('lib.item', { kind: 'symbol', lib: 'Device', name: 'Nope' })).toMatchObject({ ok: true, result: { body: null } });
+    expect(await request('lib.item', { kind: 'symbol', lib: 'Package_QFP', name: 'LQFP-48_7x7mm_P0.5mm' })).toMatchObject({ ok: true, result: { body: null } });
+    expect(await request('lib.item', { kind: 'footprint', lib: 'Package_QFP', name: 'LQFP-48_7x7mm_P0.5mm' })).toMatchObject({ ok: true, result: { body: QFP } });
+    // The source's list is read once per kind.
+    expect(libs!.listLibs).toHaveBeenCalledTimes(2);
+  });
+
+  it('lib.prefetch answers at once and warms each named library once, passing over unknown names', async () => {
+    const { request, libs } = picker();
+    expect(await request('lib.prefetch', { kind: 'symbol', libs: ['Device', 'Device', 'Nope'] })).toEqual({ id: 1, ok: true, result: {} });
+    await settle(10);
+    expect(libs!.prefetch.mock.calls).toEqual([['sym.Device']]);
+    // A source without prefetch is warmed by reading the library's item list.
+    const { prefetch: _drop, ...plain } = fakeLibs();
+    const other = picker({ libs: plain as ReturnType<typeof fakeLibs> });
+    expect(await other.request('lib.prefetch', { kind: 'footprint', libs: ['Package_QFP'] })).toMatchObject({ ok: true });
+    await settle(10);
+    expect(plain.listItems.mock.calls).toEqual([['fp.Package_QFP']]);
+  });
+
+  it('place builds the blob from the body, calls the engine and answers once the editor holds the item', async () => {
+    const { request, place, eng } = picker();
+    expect(await request('project.open', OPEN, 100)).toMatchObject({ ok: true });
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'R' })).toEqual({ id: 2, ok: true, result: {} });
+    expect(place.blobs).toHaveLength(1);
+    expect(place.blobs[0]).toMatch(/^\(lib_symbols \(symbol "Device:R"/);
+    expect(place.blobs[0]).toContain('(lib_id "Device:R")');
+    expect(place.blobs[0]).toContain('(property "Reference" "R?"');
+    expect(eng.win.dispatchEvent).not.toHaveBeenCalled();
+  });
+
+  it('place refuses: another frame\'s kind or no export (unsupported), no document (not_ready), a dialog, a popup or a load (busy), an unknown item (not_found)', async () => {
+    const { request, eng, place } = picker();
+    expect(await request('place', { kind: 'footprint', lib: 'Package_QFP', name: 'LQFP-48_7x7mm_P0.5mm' })).toMatchObject({ ok: false, error: { code: 'unsupported' } });
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: false, error: { code: 'not_ready', message: 'place' } });
+    expect(await request('project.open', OPEN, 100)).toMatchObject({ ok: true });
+    eng.dialogs.push({ typeName: 'wxDialog', visible: true });
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: false, error: { code: 'busy' } });
+    eng.dialogs.length = 0;
+    eng.ui.popup = true;
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: false, error: { code: 'busy' } });
+    eng.ui.popup = false;
+    (eng.Module as Record<string, unknown>).kicadOpenFileBusy = () => true;
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: false, error: { code: 'busy' } });
+    (eng.Module as Record<string, unknown>).kicadOpenFileBusy = () => false;
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'Nope' })).toMatchObject({ ok: false, error: { code: 'not_found', message: 'Device:Nope' } });
+    expect(await request('place', { kind: 'symbol', lib: 'Nope', name: 'R' })).toMatchObject({ ok: false, error: { code: 'not_found' } });
+    expect(place.blobs).toEqual([]);
+    delete (eng.Module as Record<string, unknown>).kicadPlaceImportedItem;
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadPlaceImportedItem' } });
+    const board = picker({ search: '?frame=pcb&theme=day' });
+    expect(await board.request('place', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: false, error: { code: 'unsupported' } });
+  });
+
+  it('place maps the engine\'s refusals: a load in flight is busy, a blob it logs as refused or a throw is island_error, an item never taken is busy', async () => {
+    const { request, place, eng } = picker();
+    expect(await request('project.open', OPEN, 100)).toMatchObject({ ok: true });
+    place.answer = '{"ok":false,"error":"open in flight"}';
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: false, error: { code: 'busy', message: 'open in flight' } });
+    place.answer = '{"ok":true}';
+    place.takeMs = -1;
+    const mod = eng.Module as Record<string, unknown>;
+    const plain = mod.kicadPlaceImportedItem as (s: string) => string;
+    mod.kicadPlaceImportedItem = (s: string) => { setTimeout(() => eng.win.console.log('[import-item] eeschema: blob parse failed'), 3); return plain(s); };
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: false, error: { code: 'island_error', message: '[import-item] eeschema: blob parse failed' } });
+    // The console is the engine's own again once the place answered.
+    expect(eng.win.console).toBe(eng.engineConsole);
+    mod.kicadPlaceImportedItem = plain;
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'R' }, 200)).toMatchObject({ ok: false, error: { code: 'busy', message: 'the editor did not take the item' } });
+    mod.kicadPlaceImportedItem = () => { throw new Error('boom'); };
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: false, error: { code: 'island_error' } });
+  });
+
+  it('a schematic placement the reader cancels gets the second Escape that leaves KiCad\'s tool; a committed one gets none', async () => {
+    const { request, sel, undo, keys } = picker();
+    expect(await request('project.open', OPEN, 100)).toMatchObject({ ok: true });
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: true });
+    sel.length = 0;   // the reader's Escape dropped the item
+    await settle(40);
+    expect(keys).toEqual(['Escape']);
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: true });
+    undo.depth = 1;   // the reader's click committed it
+    sel.length = 0;
+    await settle(40);
+    expect(keys).toEqual(['Escape']);
+  });
+
+  it('a place while the previous item still hangs drops it first (Escape, then the schematic\'s second Escape); a board\'s takes one', async () => {
+    const { request, keys, place } = picker();
+    expect(await request('project.open', OPEN, 100)).toMatchObject({ ok: true });
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: true });
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: true });
+    expect(keys).toEqual(['Escape', 'Escape']);
+    expect(place.blobs).toHaveLength(2);
+    const board = picker({ search: '?frame=pcb&theme=day' });
+    expect(await board.request('project.open', OPEN_PCB, 100)).toMatchObject({ ok: true });
+    expect(await board.request('place', { kind: 'footprint', lib: 'Package_QFP', name: 'LQFP-48_7x7mm_P0.5mm' })).toMatchObject({ ok: true });
+    expect(board.place.blobs[0]).toMatch(/^\(footprint "Package_QFP:LQFP-48_7x7mm_P0\.5mm"/);
+    expect(await board.request('place', { kind: 'footprint', lib: 'Package_QFP', name: 'LQFP-48_7x7mm_P0.5mm' })).toMatchObject({ ok: true });
+    expect(board.keys).toEqual(['Escape']);
+  });
+
+  it('key.press of a place key is ev.pick, with exactly its keys, and presses nothing; any other key, or one with a modifier, is pressed', async () => {
+    const { request, picks, keys } = picker();
+    expect(await request('key.press', { key: 'a', code: 'KeyA' })).toEqual({ id: 1, ok: true, result: {} });
+    expect(await request('key.press', { key: 'p', code: 'KeyP' })).toMatchObject({ ok: true });
+    expect(picks()).toEqual([{ type: 'ev.pick', kind: 'symbol' }, { type: 'ev.pick', kind: 'symbol', power: true }]);
+    expect(Object.keys(picks()[0]).sort()).toEqual(['kind', 'type']);
+    expect(Object.keys(picks()[1]).sort()).toEqual(['kind', 'power', 'type']);
+    expect(keys).toEqual([]);
+    expect(await request('key.press', { key: 'A', code: 'KeyA', shift: true })).toMatchObject({ ok: true });
+    expect(await request('key.press', { key: 'w', code: 'KeyW' })).toMatchObject({ ok: true });
+    expect(keys).toEqual(['A', 'w']);
+    expect(picks()).toHaveLength(2);
+    const board = picker({ search: '?frame=pcb&theme=day' });
+    expect(await board.request('key.press', { key: 'a', code: 'KeyA' })).toMatchObject({ ok: true });
+    expect(await board.request('key.press', { key: 'p', code: 'KeyP' })).toMatchObject({ ok: true });
+    expect(board.picks()).toEqual([{ type: 'ev.pick', kind: 'footprint' }]);
+    expect(board.keys).toEqual(['p']);
+  });
+
+  it('a place key is KiCad\'s again while another window of KiCad\'s is up (its footprint chooser frame)', async () => {
+    const board = picker({ search: '?frame=pcb&theme=day' });
+    board.eng.dialogs.push({ typeName: 'wxFrame', name: 'FootprintChooserFrame', visible: true } as { typeName: string; visible: boolean });
+    expect(await board.request('key.press', { key: 'a', code: 'KeyA' })).toMatchObject({ ok: true });
+    expect(board.picks()).toEqual([]);
+    expect(board.keys).toEqual(['a']);
+  });
+
+  it('the frame\'s own keydown of a place key is swallowed with its keypress and keyup and sent as ev.pick, once per press', async () => {
+    const { page, picks } = picker();
+    const key = (type: string, init: Record<string, unknown>) => {
+      const e = { type, repeat: false, ...init, preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() };
+      (page as unknown as { dispatch: (t: string, e: unknown) => void }).dispatch(type, e);
+      return e;
+    };
+    const down = key('keydown', { key: 'a', code: 'KeyA' });
+    const repeat = key('keydown', { key: 'a', code: 'KeyA', repeat: true });
+    const press = key('keypress', { key: 'a', code: 'KeyA' });
+    const up = key('keyup', { key: 'a', code: 'KeyA' });
+    for (const e of [down, repeat, press, up]) {
+      expect(e.preventDefault).toHaveBeenCalled();
+      expect(e.stopImmediatePropagation).toHaveBeenCalled();
+    }
+    await settle();
+    expect(picks()).toEqual([{ type: 'ev.pick', kind: 'symbol' }]);
+    // A modifier, a text field, or a key that is no place key: KiCad's.
+    const ctrl = key('keydown', { key: 'a', code: 'KeyA', ctrlKey: true });
+    const typed = key('keydown', { key: 'p', code: 'KeyP', target: { tagName: 'INPUT', type: 'text' } });
+    const other = key('keydown', { key: 'w', code: 'KeyW' });
+    const otherUp = key('keyup', { key: 'w', code: 'KeyW' });
+    for (const e of [ctrl, typed, other, otherUp]) expect(e.preventDefault).not.toHaveBeenCalled();
+    await settle();
+    expect(picks()).toHaveLength(1);
+  });
+
+  it('before ev.ready, and while a dialog or a popup menu is up, the frame\'s own place key is KiCad\'s', async () => {
+    const early = picker({ ready: false });
+    const e1 = { type: 'keydown', key: 'a', code: 'KeyA', preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() };
+    (early.page as unknown as { dispatch: (t: string, e: unknown) => void }).dispatch('keydown', e1);
+    expect(e1.preventDefault).not.toHaveBeenCalled();
+    const { page, eng, picks } = picker();
+    eng.ui.popup = true;
+    const e2 = { type: 'keydown', key: 'a', code: 'KeyA', preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() };
+    (page as unknown as { dispatch: (t: string, e: unknown) => void }).dispatch('keydown', e2);
+    expect(e2.preventDefault).not.toHaveBeenCalled();
+    await settle();
+    expect(picks()).toEqual([]);
   });
 });

@@ -5,14 +5,17 @@
 // is accepted; every request and its args pass a closed check; events carry
 // exactly the keys PROTOCOL.md lists; the engine is reached only through
 // the exports the loader's global.d.ts declares (Module) and MEMFS.
+import { buildInteractiveImport } from '../loader/src/wasm/import-item';
 import { registerSaveHook, SAVE_COMMITTED, type SaveHookHandle } from '../loader/src/wasm/save-flow';
 import { parseBoot } from '../src/cc-config';
 import { focusCanvas, parseKeyPress, pressKey, type KeyPress } from '../src/keys';
+import { installPickKeys, kindOf, libIds, parseIndexArgs, parseItemArgs, parsePrefetchArgs, pickFor, takesText, warmLibrary, type KeyPick, type PickerLibs, type PickKind } from '../src/picker';
 import { normalizePath, openStaged, PROJECT_ROOT, stageLocalSettings, stageProject, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
 import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
 import { driveImport, importable, importTarget } from './import';
 import { dialogUp, dismissPopups, keysBlocked, watchMenus } from './modal';
+import { placeBlob, PlacementWatch } from './place';
 import { FitWatch, sampleDrawing, settleView, surfaceKey } from './view';
 
 declare const __ISLAND_ID__: string;   // define'd by vite.config.ts from PIN.json
@@ -25,11 +28,18 @@ export type IslandEvent =
   | { type: 'ev.help'; topic: string }
   | { type: 'ev.menu'; open: boolean }
   | { type: 'ev.edited'; depth: number }
+  | { type: 'ev.pick'; kind: PickKind; power?: true }
   | { type: 'ev.closing' };
 
 export interface Responder {
   emit(ev: IslandEvent): void;
-  engineReady(win: ToolWindow, engine: { tag: string; kicad: string }, help: { attempts(): number }): void;
+  /**
+   * The engine is up: ev.ready goes out. `libs` is the library source the
+   * picker's ops read (the mirror, or the example library), null for none.
+   */
+  engineReady(win: ToolWindow, engine: { tag: string; kicad: string }, help: { attempts(): number }, libs?: PickerLibs | null): void;
+  /** A request is in flight (received and not yet answered, an import included): the quiet warm-up waits. */
+  busy(): boolean;
   /** A window.open the wrapper refused; after ev.ready each one is reported as ev.state popup. */
   popupBlocked(attempts: number): void;
   /**
@@ -111,6 +121,17 @@ export const timing = {
    * while no dialog is up, no load is parked and no request is in flight.
    */
   editPollMs: 500,
+  /**
+   * place (bridge/place.ts): how often the selection is read while the editor
+   * takes the item (it held the item 50 to 125 ms after the call on the local
+   * pair, 2026-10-07), and how long it may take before the request answers
+   * busy; how often a hanging placement is read, and how long dropping one
+   * before the next place may take.
+   */
+  placePollMs: 25,
+  placeMs: 10_000,
+  placeWatchMs: 100,
+  placeCancelMs: 1_000,
 };
 /** KiCad's Zoom to Fit. */
 const HOME_KEY: KeyPress = { key: 'Home', code: 'Home', ctrl: false, shift: false, alt: false };
@@ -120,7 +141,9 @@ const STEER_EVENTS = ['wheel', 'pointerdown', 'keydown'] as const;
 const SAVE_KEY: KeyPress = { key: 's', code: 'KeyS', ctrl: true, shift: false, alt: false };
 /** KiCad's window chrome as the element registry names it (measured with chrome.show on, 2026-10-01). */
 const CHROME_RE = /^wx(MenuBar|AuiToolBar|ToolBar|StatusBar)$|InfoBar/i;
-const OPS = new Set(['project.open', 'project.import', 'project.save', 'project.forget', 'chrome.show', 'readonly', 'shutdown', 'key.press', 'view.fit', 'sheet.tree', 'sheet.enter', 'layers.get', 'layers.visible', 'layers.active']);
+const OPS = new Set(['project.open', 'project.import', 'project.save', 'project.forget', 'chrome.show', 'readonly', 'shutdown', 'key.press', 'view.fit', 'sheet.tree', 'sheet.enter', 'layers.get', 'layers.visible', 'layers.active', 'lib.index', 'lib.item', 'lib.prefetch', 'place']);
+/** A wx top-level window: the editor's own frame, or another window of KiCad's (its footprint chooser is a frame, not a dialog). */
+const FRAME_TYPE_RE = /Frame/;
 /** A sheet path as the engine reports it: "/" then one UUID and a slash per level. */
 const SHEET_PATH_RE = /^\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/)*$/;
 const EXT: Record<Frame, string> = { sch: '.kicad_sch', pcb: '.kicad_pcb' };
@@ -264,6 +287,14 @@ export function startResponder(opts: {
   let editDepth: number | null = null;
   /** Stops the undo depth poll (ev.edited); set by engineReady when the engine has the export. */
   let stopEdits: (() => void) | null = null;
+  /** The library source the picker's ops read; set by engineReady. */
+  let libs: PickerLibs | null = null;
+  /** Library nicknames to the source's ids (src/picker.ts libIds). */
+  let idOf: ((kind: PickKind, nick: string) => Promise<string | null>) | null = null;
+  /** The placement the place op started, watched until it is committed or cancelled (bridge/place.ts). */
+  let placeWatch: PlacementWatch | null = null;
+  /** The names of the editor's own frames, read at ev.ready: any other visible frame is another window of KiCad's. */
+  let ownFrames = new Set<string>();
 
   /** Rebuilds each event with exactly its protocol keys; saved bytes travel as a transferred copy. */
   const emit = (ev: IslandEvent): void => {
@@ -296,6 +327,9 @@ export function startResponder(opts: {
         return;
       case 'ev.edited':
         port.postMessage({ type: ev.type, depth: ev.depth });
+        return;
+      case 'ev.pick':
+        port.postMessage(ev.power === true ? { type: ev.type, kind: ev.kind, power: true } : { type: ev.type, kind: ev.kind });
         return;
       case 'ev.closing':
         port.postMessage({ type: ev.type });
@@ -330,6 +364,14 @@ export function startResponder(opts: {
   };
   page.addEventListener('message', onConnect);
   page.parent.postMessage({ type: 'cc.hello', proto: 1, nonce, island: __ISLAND_ID__ }, parentOrigin);
+  // KiCad's place keys become ev.pick (PICKER.md): installed now, before the
+  // engine's scripts load, so these capture listeners run before KiCad's own.
+  installPickKeys(page, {
+    frame,
+    open: () => win != null && pickOpen(win),
+    focused: () => { try { return page.document?.activeElement ?? null; } catch { return null; } },
+    onPick: (pick) => emitPick(pick),
+  });
 
   function answerIslandError(data: unknown, err: unknown): void {
     if (!isObj(data) || typeof data.id !== 'number' || !Number.isSafeInteger(data.id)) return;
@@ -355,8 +397,27 @@ export function startResponder(opts: {
     if (shutdownStarted) close();
   }
 
+  /** The host's picker opens: ev.pick, while the bridge is live. */
+  function emitPick(pick: KeyPick): void {
+    if (closed || !ready) return;
+    emit(pick.power === true ? { type: 'ev.pick', kind: pick.kind, power: true } : { type: 'ev.pick', kind: pick.kind });
+  }
+
+  /**
+   * A place key may become ev.pick: nothing of KiCad's own is over its canvas
+   * (no popup menu, no dialog but a progress dialog, as for key.press, and no
+   * other window of KiCad's such as its footprint chooser), and no import runs.
+   */
+  function pickOpen(w: ToolWindow): boolean {
+    if (closed || importing || keysBlocked(w)) return false;
+    try {
+      return !(w.wxElementRegistry?.findAll({ visible: true }) ?? []).some((e) => FRAME_TYPE_RE.test(e.typeName) && !ownFrames.has(e.name));
+    } catch { return false; }
+  }
+
   /** The document and the save hook are dropped and the engine's leave prompt is stopped for good. */
   function stopBridge(): void {
+    placeWatch?.stop();
     stopEdits?.();
     stopEdits = null;
     editDepth = null;
@@ -456,6 +517,7 @@ export function startResponder(opts: {
         displaySettings = null;
         editDepth = null;   // the next document's first read is its baseline
         fitWatch?.disarm();
+        placeWatch?.stop();   // a placement of the previous document is no longer watched
         stopSaveHook();   // a Ctrl+S in the still-shown document emits nothing from here on
         quietForever();
         if (win?.FS != null) removeTree(win.FS, root);
@@ -478,6 +540,10 @@ export function startResponder(opts: {
       case 'layers.get': return noArgs(args) ? layersGet() : fail('bad_args', op);
       case 'layers.visible': return layersVisible(args);
       case 'layers.active': return layersActive(args);
+      case 'lib.index': return libIndex(args);
+      case 'lib.item': return libItem(args);
+      case 'lib.prefetch': return libPrefetch(args);
+      case 'place': return placeItem(args);
     }
     return fail('unknown_op', op);
   }
@@ -502,6 +568,7 @@ export function startResponder(opts: {
     displaySettings = null;
     editDepth = null;
     fitWatch?.disarm();
+    placeWatch?.stop();   // a placement of the previous document is no longer watched
     stopSaveHook();
     removeTree(win.FS, root);   // every open starts from an empty project folder
     staged = stageProject(win, SLUG, files);
@@ -586,6 +653,7 @@ export function startResponder(opts: {
     displaySettings = null;
     editDepth = null;
     fitWatch?.disarm();
+    placeWatch?.stop();   // a placement of the previous document is no longer watched
     stopSaveHook();
     removeTree(FS, root);
     const project = stageProject(w, SLUG, a.files);
@@ -881,6 +949,13 @@ export function startResponder(opts: {
     const w = win;
     if (w == null) return fail('not_ready', op);
     if (keysBlocked(w)) return fail('busy', op);
+    // A place key from the host takes the reader's own key's path (PICKER.md):
+    // KiCad's chooser never opens, ev.pick goes out, and nothing is pressed.
+    const pick = op === 'key.press' ? pickFor(frame, { key: k.key, ctrlKey: k.ctrl, shiftKey: k.shift, altKey: k.alt }) : null;
+    if (pick != null && pickOpen(w) && !takesText(w.document?.activeElement)) {
+      emitPick(pick);
+      return ok();
+    }
     if (op !== 'view.fit') {
       // A host's key may zoom, pan or start a tool: the reader is steering.
       fitWatch?.disarm();
@@ -974,13 +1049,104 @@ export function startResponder(opts: {
     return layerCall(op, 'kicadLayersSetActive', (fn) => fn(args.id));
   }
 
+  /** The picker's library reads: the source, else not_ready (before ev.ready) or an answer of nothing. */
+  async function libIndex(args: unknown): Promise<Answer> {
+    const op = 'lib.index';
+    const a = parseIndexArgs(args);
+    if (a == null) return fail('bad_args', op);
+    if (!ready) return fail('not_ready', op);
+    const read = libs?.getSearchIndex;
+    if (libs == null || typeof read !== 'function') return ok({ text: null });
+    const text = await read.call(libs, a.kind);
+    return ok({ text: typeof text === 'string' ? text : null });
+  }
+
+  /** One item's body as the source holds it: a self-contained symbol library, or the footprint's text. */
+  async function readItem(kind: PickKind, lib: string, name: string): Promise<string | null> {
+    if (libs == null || idOf == null) return null;
+    const id = await idOf(kind, lib);
+    if (id == null) return null;
+    const body = await libs.getItemBody(id, kind, name);
+    return typeof body === 'string' ? body : null;
+  }
+
+  async function libItem(args: unknown): Promise<Answer> {
+    const op = 'lib.item';
+    const a = parseItemArgs(args);
+    if (a == null) return fail('bad_args', op);
+    if (!ready) return fail('not_ready', op);
+    return ok({ body: await readItem(a.kind, a.lib, a.name) });
+  }
+
+  /** Answers at once; the named libraries' bundles warm in the background, an unknown name is passed over. */
+  function libPrefetch(args: unknown): Answer {
+    const op = 'lib.prefetch';
+    const a = parsePrefetchArgs(args);
+    if (a == null) return fail('bad_args', op);
+    if (!ready) return fail('not_ready', op);
+    const source = libs;
+    const ids = idOf;
+    if (source != null && ids != null) {
+      for (const nick of new Set(a.libs)) {
+        void ids(a.kind, nick).then((id) => (id == null ? undefined : warmLibrary(source, id)), () => undefined);
+      }
+    }
+    return ok();
+  }
+
+  /**
+   * place (PICKER.md): the item's body from the source, built into the
+   * clipboard blob (loader/src/wasm/import-item.ts, a derived symbol
+   * flattened), handed to the engine; answered once the item hangs off the
+   * pointer (bridge/place.ts). The checks, in order: the args (bad_args), the
+   * frame's kind and the export (unsupported), a document (not_ready), a load,
+   * a dialog or a popup menu (busy), the item (not_found).
+   */
+  async function placeItem(args: unknown): Promise<Answer> {
+    const op = 'place';
+    const a = parseItemArgs(args);
+    if (a == null) return fail('bad_args', op);
+    if (a.kind !== kindOf(frame)) return fail('unsupported', `a ${a.kind} does not place in a ${frame} frame`);
+    const w = win;
+    if (w == null) return fail('not_ready', op);
+    if (typeof w.Module?.kicadPlaceImportedItem !== 'function') return fail('unsupported', 'kicadPlaceImportedItem');
+    if (typeof w.Module?.kicadCollabGetSelection !== 'function') return fail('unsupported', 'kicadCollabGetSelection');
+    if (staged == null || opened == null) return fail('not_ready', op);
+    if (engineBusy() || keysBlocked(w)) return fail('busy', op);
+    const body = await readItem(a.kind, a.lib, a.name);
+    if (body == null) return fail('not_found', `${a.lib}:${a.name}`);
+    let sexpr: string;
+    try {
+      sexpr = buildInteractiveImport(a.kind, body, a.lib, a.name).sexpr;
+    } catch (err) {
+      return fail('island_error', describeError(err));
+    }
+    // The body may have taken a while: the document and the editor are read again.
+    if (closed) return fail('island_error', 'the frame closed');
+    if (staged == null || opened == null) return fail('not_ready', op);
+    if (engineBusy() || keysBlocked(w)) return fail('busy', op);
+    // The editor places one item at a time: one of ours still hanging is dropped first.
+    if (placeWatch != null && !(await placeWatch.cancel())) return fail('busy', 'the previous item still hangs off the pointer');
+    const t0 = Date.now();
+    const placed = await placeBlob(w, sexpr, { timing, closed: () => closed });
+    if (!placed.ok) return fail(placed.code, placed.message);
+    console.debug('[place]', `${a.lib}:${a.name}`, `${Date.now() - t0} ms`);
+    placeWatch?.start(placed.uuid);
+    return ok();
+  }
+
   let ready = false;
   return {
     emit,
-    engineReady(w, engine, help) {
+    engineReady(w, engine, help, source) {
       if (ready) return;
       ready = true;
       win = w;
+      libs = source ?? null;
+      idOf = libs == null ? null : libIds(libs);
+      // The editor's own frame, so any other window of KiCad's holds the place keys back.
+      try { ownFrames = new Set((w.wxElementRegistry?.findAll({ visible: true }) ?? []).filter((e) => FRAME_TYPE_RE.test(e.typeName)).map((e) => e.name)); } catch { ownFrames = new Set(); }
+      placeWatch = new PlacementWatch(w, { frame, timing, depth: () => undoDepth(w), blocked: () => keysBlocked(w), press: (k) => pressKey(w, k) });
       // Popup menus and dialogs over the canvas: the host hides what it draws there.
       stopMenus = watchMenus(w, (open) => emit({ type: 'ev.menu', open }));
       // A fitted view stays fitted through resizes and a replaced drawing
@@ -1008,6 +1174,9 @@ export function startResponder(opts: {
       const n = help.attempts();
       if (n > 0) emit({ type: 'ev.state', phase: 'booting', detail: popupNote(n) });
       emit({ type: 'ev.ready', caps, engine });
+    },
+    busy() {
+      return inFlight > 0 || importing;
     },
     popupBlocked(attempts) {
       // Before ev.ready the count travels once, in the booting note above.

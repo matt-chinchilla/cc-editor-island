@@ -29,7 +29,8 @@ import { bootHeartbeat } from './boot-heartbeat';
 import { installUnloadQuiet } from './unload-quiet';
 import { installWindowOpenWrapper } from './window-open';
 import { focusCanvas, focusFrameOnPress } from './keys';
-import { islandLibs, warmUpOnEnumerate } from './libs';
+import { islandLibs, warmUpOnEnumerate, type LibsChoice } from './libs';
+import { quietWarmUp } from './picker';
 
 declare const __ISLAND_TAG__: string;      // define'd by vite.config.ts from PIN.json
 declare const __KICAD_VERSION__: string;   // define'd by vite.config.ts
@@ -79,6 +80,8 @@ async function main(): Promise<void> {
   const libsWarmUp = new AbortController();
   window.addEventListener('pagehide', () => libsWarmUp.abort());
   // Hello goes out now, before anything heavy; events queue until the port connects.
+  // The responder also takes KiCad's place keys from here on (ev.pick, src/picker.ts),
+  // so its listeners run before the engine's own.
   const responder = startResponder({ parentOrigin: parent, page: window, onShutdown: () => { libsWarmUp.abort(); return teardown.shutdown(); } });
   const popups = installWindowOpenWrapper(
     window,
@@ -164,8 +167,10 @@ async function main(): Promise<void> {
   // owns the canvas) and #window-container parents every child window.
   const container = document.getElementById('main-window');
   if (container == null) { die('no_container'); return; }
+  let choice: LibsChoice | null = null;
   try {
-    const { source: libsSource, mirror } = await libs;
+    choice = await libs;
+    const { source: libsSource, mirror } = choice;
     await bootKicadTool({
       tool: frameToTool(frame),
       base: engineBase(),
@@ -208,7 +213,12 @@ async function main(): Promise<void> {
   // click above, which must not take focus from the page).
   focusFrameOnPress(window);
   hideScreens();
-  responder.engineReady(window as ToolWindow, { tag: __ISLAND_TAG__, kicad: __KICAD_VERSION__ }, popups);
+  responder.engineReady(window as ToolWindow, { tag: __ISLAND_TAG__, kicad: __KICAD_VERSION__ }, popups, choice?.source ?? null);
+  // The quiet warm-up (PICKER.md): once the frame has been idle for a moment,
+  // the frame's search index and the common libraries of its kind, at low
+  // priority, nothing shown and nothing sent. KiCad's own chooser keeps its
+  // first-enumerate warm-up above.
+  if (choice?.mirror != null) void quietWarmUp({ frame, source: choice.mirror, signal: libsWarmUp.signal, busy: () => responder.busy(), log: libsLog });
 }
 
 void main();

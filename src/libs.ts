@@ -14,6 +14,9 @@
 // warm-up, several bundles at a time; the serialized crossings that follow
 // each wait only for their own bundle, which the warm-up already has in
 // flight. The gate holds nothing, so a crossing is never slower than without it.
+// The fast part picker (PICKER.md) adds the quiet warm-up in src/picker.ts:
+// once the frame has been idle for a moment after ev.ready, the frame's search
+// index and a short list of common libraries, at low priority.
 import { mirrorLibsSource, type MirrorLibsSource } from '../loader/src/wasm/libs/mirror-source';
 import type { LibPresyncProgress, LibsSource } from '../loader/src/wasm/libs/source';
 import { staticLibsSource } from '../loader/src/wasm/libs/static-source';
