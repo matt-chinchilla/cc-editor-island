@@ -366,7 +366,7 @@ html.cc-editor.cc-editor .window-titlebar-close {
   border-radius: 6px !important;
 }
 html.cc-editor.cc-editor .window-titlebar-close:hover { background: var(--vw-hover) !important; color: var(--vw-ink) !important; }  /* never red */
-/* .wx-inert (modal barrier) and .window-resize-handle.* keep the port's behaviour; no rule here on purpose. */
+/* .wx-inert (modal barrier) and .window-resize-handle.* keep the port's behavior; no rule here on purpose. */
 
 /* ------------------------------------------------------------------ canvases */
 html.cc-editor.cc-editor canvas#canvas,

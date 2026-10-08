@@ -57,7 +57,7 @@ export function endOfString(src, i) {
 }
 
 /**
- * Return [start, end) of the balanced parenthesised block that begins at
+ * Return [start, end) of the balanced parenthesized block that begins at
  * `open` (which must index a `(`), respecting quoted strings.
  */
 export function matchParen(src, open) {

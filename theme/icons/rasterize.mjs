@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
-// Rasterises theme/icons/src/*.svg through Playwright's chromium (the owner's rule:
+// Rasterizes theme/icons/src/*.svg through Playwright's chromium (the owner's rule:
 // brand SVG goes through Chrome, never ImageMagick) into the ten PNG names KiCad
 // loads per id: <id>_<size>.png and <id>_dark_<size>.png at 16, 24, 32, 48 and 64.
 // Each variant sets `color` (the ink) and the glyph's accent pair (`--accent`, and
@@ -37,7 +37,7 @@ for (const file of readdirSync('theme/icons/src').filter((f) => f.endsWith('.svg
   const id = file.replace(/\.svg$/, '');
   const svg = readFileSync(join('theme/icons/src', file), 'utf8');
   const pair = ACCENTS[id];
-  if (!pair) throw new Error(`${id}: no accent pair recorded in rasterise.mjs`);
+  if (!pair) throw new Error(`${id}: no accent pair recorded in rasterize.mjs`);
   for (const [variant, { suffix, color }] of VARIANTS.entries()) for (const size of SIZES) {
     const vars = `--accent:${pair.accent[variant]};--hole:${(pair.hole ?? HOLE)[variant]}`;
     const rung = size === 16 ? `svg *{stroke-width:${STROKE_16}}.fine{display:none}` : '';

@@ -6,10 +6,10 @@
 // sweeps again once the fill is complete (compile and engine start report no
 // progress, and a full static bar reads as stalled). No
 // progress sentence, no dialog (owner ruling R15).
-// Every screen carries the "Licences and source" control: a button that opens
-// the licences in place (src/licences.ts), never a link that would navigate
+// Every screen carries the "Licenses and source" control: a button that opens
+// the licenses in place (src/licenses.ts), never a link that would navigate
 // the sandboxed frame away from the editor.
-import { LICENCES_COPY, licencesButton } from './licences';
+import { LICENSES_COPY, licensesButton } from './licenses';
 
 export type ScreenKind = 'preflight' | 'loading' | 'blocked' | 'fatal' | 'toplevel';
 
@@ -17,7 +17,7 @@ export const SCREEN_COPY = {
   toplevel: 'This page is the editor engine. Open it from circuitcenter.ai.',
   blocked: 'This browser cannot run the editor yet.',
   fatal: 'The editor stopped. Reload the page to start again.',
-  licences: LICENCES_COPY.title,
+  licenses: LICENSES_COPY.title,
 } as const;
 
 const LOADER_LABEL = 'Starting the editor';
@@ -83,7 +83,7 @@ function buildLoader(root: HTMLElement): void {
   fill = el('div', 'cc-bar-fill');
   bar.append(fill);
   status.append(mark(), bar);
-  root.append(status, licencesButton());
+  root.append(status, licensesButton());
 }
 
 function buildMessage(root: HTMLElement, kind: 'blocked' | 'fatal' | 'toplevel', detail?: string): void {
@@ -91,7 +91,7 @@ function buildMessage(root: HTMLElement, kind: 'blocked' | 'fatal' | 'toplevel',
   if (kind !== 'toplevel') card.setAttribute('role', 'alert');
   card.append(el('p', 'cc-copy', SCREEN_COPY[kind]));
   if (detail != null && detail !== '') card.append(el('p', 'cc-detail', cleanDetail(detail)));
-  card.append(licencesButton());
+  card.append(licensesButton());
   root.append(card);
 }
 

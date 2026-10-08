@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Chirichella Inc.
 // The repack's inputs: the sha256 of every theme/icons/src/*.svg. PIN.json
 // records them in icons.inputs (a map of path to sha256), and scripts/build.mjs
-// refuses to rasterise and repack unless the sources on disk are exactly those.
+// refuses to rasterize and repack unless the sources on disk are exactly those.
 // The repacked archive itself is a build output: its PNGs come from Playwright's
 // Chromium, whose bytes differ between Chromium builds, so its sha256 is recorded
 // (icons.repackedSha256) but never enforced; the release's SHA256SUMS pins what ships.

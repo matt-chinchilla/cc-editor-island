@@ -54,11 +54,11 @@ function frameForTool(raw: string): Frame | null {
   return null;
 }
 
-/** The runtime is initialised and a KiCad frame is on screen (the open flow's own readiness test). */
-async function engineUp(win: ToolWindow, timeoutMs: number, cancelled: () => boolean): Promise<boolean> {
+/** The runtime is initialized and a KiCad frame is on screen (the open flow's own readiness test). */
+async function engineUp(win: ToolWindow, timeoutMs: number, canceled: () => boolean): Promise<boolean> {
   const deadline = performance.now() + timeoutMs;
   for (;;) {
-    if (cancelled()) return false;
+    if (canceled()) return false;
     const frames = win.wxElementRegistry?.findAll({ visible: true }) ?? [];
     if (win.FS != null && frames.some((e) => /Frame$/.test(e.typeName) || e.name.endsWith('Frame'))) return true;
     if (performance.now() >= deadline) return false;

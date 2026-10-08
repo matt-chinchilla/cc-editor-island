@@ -92,7 +92,7 @@ async function clickWx(page: Page, frame: Frame, label: string): Promise<void> {
   await clickIn(page, el.x, el.y);
 }
 
-/** The centre of the first DOM element under `selector` whose text is `text` (wx-dom.js draws the menu bar and its popups as DOM). */
+/** The center of the first DOM element under `selector` whose text is `text` (wx-dom.js draws the menu bar and its popups as DOM). */
 const domPoint = (frame: Frame, selector: string, text: string): Promise<[number, number] | null> =>
   frame.evaluate(([sel, t]) => {
     const el = [...document.querySelectorAll(sel)].find((e) => e.textContent?.trim() === t);
@@ -386,41 +386,41 @@ test('the loader sweeps in day mode', async ({ page }) => {
   expect(await island.locator('.cc-bar-fill').evaluate((el) => getComputedStyle(el).animationName)).toBe('cc-sweep');
   await page.screenshot({ path: test.info().outputPath('loader-day.png') });
 
-  // "Licences and source" opens in place: the frame never navigates, the loader
+  // "Licenses and source" opens in place: the frame never navigates, the loader
   // keeps running under the overlay, Escape closes it and focus comes back.
   const frameUrl = (): string | undefined => page.frames().find((f) => f.url().startsWith(`${ISLAND}/`))?.url();
   const before = frameUrl();
   expect(before).toBeDefined();
-  const control = island.locator('button.cc-licences');
+  const control = island.locator('button.cc-licenses');
   const dialog = island.locator('[role="dialog"][aria-modal="true"]');
   await control.click();
   await expect(dialog).toBeVisible();
-  await expect(dialog.locator('.cc-licences-doc h1')).toHaveText('Licences and source');
+  await expect(dialog.locator('.cc-licenses-doc h1')).toHaveText('Licenses and source');
   await expect(dialog.locator('script, style')).toHaveCount(0);
-  await expect(dialog.locator('.cc-licences-action', { hasText: 'Close' })).toBeFocused();
+  await expect(dialog.locator('.cc-licenses-action', { hasText: 'Close' })).toBeFocused();
   expect(frameUrl()).toBe(before);
   await dialog.locator('a', { hasText: 'NOTICE.txt' }).click();
-  await expect(dialog.locator('.cc-licences-text')).toBeVisible();
+  await expect(dialog.locator('.cc-licenses-text')).toBeVisible();
   expect(frameUrl()).toBe(before);
-  await dialog.locator('.cc-licences-action', { hasText: 'Back to the licences' }).click();
-  await expect(dialog.locator('.cc-licences-doc h1')).toHaveText('Licences and source');
+  await dialog.locator('.cc-licenses-action', { hasText: 'Back to the licenses' }).click();
+  await expect(dialog.locator('.cc-licenses-doc h1')).toHaveText('Licenses and source');
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
   await expect(control).toBeFocused();
   await expect(island.locator('.cc-loader')).toBeVisible();
   expect(frameUrl()).toBe(before);
-  await page.screenshot({ path: test.info().outputPath('licences-closed-loader.png') });
+  await page.screenshot({ path: test.info().outputPath('licenses-closed-loader.png') });
 
   // Left open across ev.ready, the overlay stays above the editor until closed.
   await control.click();
   await expect(dialog).toBeVisible();
-  await page.screenshot({ path: test.info().outputPath('licences-over-loader.png') });
+  await page.screenshot({ path: test.info().outputPath('licenses-over-loader.png') });
   release();
   await page.waitForFunction(() => (window as unknown as Harness).__events.some((e) => e.type === 'ev.ready'), null, { timeout: 170_000 });
   await expect(island.locator('#screen')).toBeHidden();
   await expect(dialog).toBeVisible();
-  await page.screenshot({ path: test.info().outputPath('licences-over-editor.png') });
-  await dialog.locator('.cc-licences-action', { hasText: 'Close' }).click();
+  await page.screenshot({ path: test.info().outputPath('licenses-over-editor.png') });
+  await dialog.locator('.cc-licenses-action', { hasText: 'Close' }).click();
   await expect(dialog).toHaveCount(0);
   expect(frameUrl()).toBe(before);
   expect((await events(page)).filter((e) => e.type === 'ev.state' && e.phase === 'fatal')).toEqual([]);
@@ -854,7 +854,7 @@ function outlineBox(text: string): { x0: number; y0: number; x1: number; y1: num
   return xs.length === 0 ? null : { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
 }
 
-/** The engine's viewport: its centre (nm), its scale (px per nm) and the drawing's size (px). */
+/** The engine's viewport: its center (nm), its scale (px per nm) and the drawing's size (px). */
 const viewport = async (frame: Frame): Promise<{ cx: number; cy: number; scale: number; w: number; h: number }> =>
   JSON.parse(await frame.evaluate(() => (window as unknown as { Module: { kicadCollabGetViewport(): string } }).Module.kicadCollabGetViewport()));
 
@@ -994,7 +994,7 @@ async function reopens(page: Page, path: string, text: string): Promise<void> {
   expect(state.layers.filter((l) => l.copper).map((l) => l.canonical)).toEqual(expect.arrayContaining(['F.Cu', 'B.Cu']));
 }
 
-test('import: an Eagle board converts through its layer mapping, is the document after, and a second import meets Save Changes? and is cancelled', async ({ page }) => {
+test('import: an Eagle board converts through its layer mapping, is the document after, and a second import meets Save Changes? and is canceled', async ({ page }) => {
   const frame = await boot(page, 'frame=pcb');
   // While the import runs, the frame refuses the host's keys rather than queueing them.
   const pending = importBoard(page, 'test_eagle.brd');
@@ -1042,7 +1042,7 @@ test('import: an Eagle board converts through its layer mapping, is the document
   // "Save Changes?", which the island cancels (never Save, never Discard) and names.
   const t0 = Date.now();
   await expect(importBoard(page, 'test_eagle.brd')).rejects.toThrow(/import_failed: dialog "Save Changes\?"/);
-  measure('import over a modified board', `${((Date.now() - t0) / 1000).toFixed(1)} s to import_failed, Save Changes? cancelled`);
+  measure('import over a modified board', `${((Date.now() - t0) / 1000).toFixed(1)} s to import_failed, Save Changes? canceled`);
   expect(await dialogsUp(frame)).toEqual([]);
 
   await reopens(page, 'test_eagle.kicad_pcb', text);

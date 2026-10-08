@@ -98,7 +98,7 @@ export function keysBlocked(w: ModalWindow): boolean {
  * Closes the popup menus in the frame's document as a press of Escape does:
  * a keydown Escape dispatched on the popup reaches the capture listener
  * wx-dom.js's context menu keeps on the document, which settles the menu as
- * cancelled (-1). A menu holds no edits, so a host save may close it rather
+ * canceled (-1). A menu holds no edits, so a host save may close it rather
  * than refuse. A menu bar's popup (only with KiCad's menus shown) takes no
  * Escape and stays. Answers whether anything was dismissed.
  */

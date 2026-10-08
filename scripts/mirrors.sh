@@ -12,7 +12,7 @@
 #   bash scripts/mirrors.sh             fork what is missing and push the four tags
 #
 # pcbjam, kicad-source-mirror and wxWidgets hold the served build's source (the
-# licence page names their tags); pcbjam-shared is mirrored for completeness.
+# license page names their tags); pcbjam-shared is mirrored for completeness.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

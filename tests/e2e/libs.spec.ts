@@ -66,7 +66,7 @@ async function boot(page: Page, frameName: 'sch' | 'pcb', fixture = 'glasgow'): 
   return frame;
 }
 
-/** The centre of the first DOM element under `selector` whose text is `text` (wx-dom.js draws the menu bar and its popups as DOM). */
+/** The center of the first DOM element under `selector` whose text is `text` (wx-dom.js draws the menu bar and its popups as DOM). */
 const domPoint = (frame: Frame, selector: string, text: string): Promise<[number, number] | null> =>
   frame.evaluate(([sel, t]) => {
     const el = [...document.querySelectorAll(sel)].find((e) => e.textContent?.trim() === t);

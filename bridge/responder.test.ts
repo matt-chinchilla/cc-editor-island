@@ -124,17 +124,17 @@ function fakeEngine() {
   const clicks: string[] = [];
   const showModal = (m: FakeModal): FakeModal => { modals.push(m); return m; };
   const hideModal = (m: FakeModal): void => { const i = modals.indexOf(m); if (i >= 0) modals.splice(i, 1); };
-  const btnCentre = (m: FakeModal, i: number) => ({ x: m.x + 30 + 60 * i, y: m.y + m.h - 15 });
+  const btnCenter = (m: FakeModal, i: number) => ({ x: m.x + 30 + 60 * i, y: m.y + m.h - 15 });
   const modalElements = () => modals.flatMap((m) => [
     { id: m.id, parentId: 'frame', typeName: 'wxDialog', name: 'dialog', label: '', visible: true, screenX: m.x, screenY: m.y, width: m.w, height: m.h, centerX: m.x + Math.floor(m.w / 2), centerY: m.y + Math.floor(m.h / 2) },
-    ...m.buttons.map((b, i) => ({ id: `${m.id}.b${i}`, parentId: m.id, typeName: 'wxButton', name: 'button', label: b.label, visible: true, centerX: btnCentre(m, i).x, centerY: btnCentre(m, i).y })),
+    ...m.buttons.map((b, i) => ({ id: `${m.id}.b${i}`, parentId: m.id, typeName: 'wxButton', name: 'button', label: b.label, visible: true, centerX: btnCenter(m, i).x, centerY: btnCenter(m, i).y })),
     ...(m.texts ?? []).map((t, i) => ({ id: `${m.id}.t${i}`, parentId: m.id, typeName: 'wxStaticText', name: 'staticText', label: t, visible: true })),
     ...(m.gauge ? [{ id: `${m.id}.g`, parentId: m.id, typeName: 'wxGauge', name: 'gauge', label: '', visible: true }] : []),
     ...(m.pane ? [{ id: `${m.id}.p`, parentId: m.id, typeName: 'wxGenericCollapsiblePane', name: 'collapsiblePane', label: '', visible: true }] : []),
   ]);
   const domButtons = () => modals.flatMap((m) => m.buttons.map((b, i) => ({
     textContent: b.label.replace(/&(.)/g, '$1'),
-    getBoundingClientRect: () => ({ left: btnCentre(m, i).x - 25, top: btnCentre(m, i).y - 9, width: 50, height: 18 }),
+    getBoundingClientRect: () => ({ left: btnCenter(m, i).x - 25, top: btnCenter(m, i).y - 9, width: 50, height: 18 }),
     click: () => { clicks.push(`${m.title}:${b.label.replace(/&(.)/g, '$1')}`); b.on?.(); },
   })));
   const windowDivs = () => modals.map((m) => ({
@@ -1768,7 +1768,7 @@ describe('project.import', () => {
     expect(eng.modals).toEqual([]);
   });
 
-  it('an import past timing.importMs is import_failed, with the progress reporter cancelled and every dialog closed first', async () => {
+  it('an import past timing.importMs is import_failed, with the progress reporter canceled and every dialog closed first', async () => {
     const eng = fakeEngine();
     let busy = false;
     (eng.Module as { kicadOpenFileBusy: () => boolean }).kicadOpenFileBusy = () => busy;

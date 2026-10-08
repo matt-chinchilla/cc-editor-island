@@ -13,7 +13,7 @@
 //       pristine copy's date (PIN.json pcbjam.pristineTaken, or its mtime when
 //       git does not hold it unchanged);
 //   (c) every copied file keeps its pristine counterpart's leading comment
-//       block verbatim (PCBJam's files carry no licence header at the pin, so
+//       block verbatim (PCBJam's files carry no license header at the pin, so
 //       the leading comment is the only header there is to keep); a file in
 //       loader/src with no pristine counterpart is ours and must say so with
 //       its SPDX line;
@@ -34,28 +34,28 @@ const GH = 'https://github.com/matt-chinchilla';
  * Every dependency the pinned recipe's versions.sh names. `prefixes` claim its
  * NAME= variables (EMSDK_TARBALL_SHA256 belongs to emscripten, OCC_URL to OCCT).
  * `recipe` says what the recipe at the pin does with it, read from
- * upstream/scripts/deps and upstream/wasm/cmake; `licence` is the grant we
+ * upstream/scripts/deps and upstream/wasm/cmake; `license` is the grant we
  * take it under.
  */
 export const DEPS = [
-  { key: 'kicad', name: 'KiCad', prefixes: ['KICAD'], recipe: 'the application itself, built from the kicad-source-mirror commit below', licence: 'GPL-3.0-or-later, with the third party parts KiCad\'s LICENSE.README lists (reproduced below)' },
-  { key: 'emscripten', name: 'Emscripten', prefixes: ['EMSCRIPTEN', 'EMSDK'], recipe: 'the compiler toolchain; its runtime is linked into the WebAssembly and its JavaScript glue', licence: 'MIT (Emscripten is offered under the MIT License or the University of Illinois/NCSA Open Source License; we take it under MIT)' },
-  { key: 'wxwidgets', name: 'wxWidgets', prefixes: ['WXWIDGETS'], recipe: 'built from PCBJam\'s wxWidgets fork at the commit below', licence: 'wxWindows Library Licence 3.1 for the toolkit; the WebAssembly port files, derived from ahilss/wxWidgets-wasm, under the GNU LGPL version 2 without the wxWindows exception' },
-  { key: 'boost', name: 'Boost', prefixes: ['BOOST'], recipe: 'built from source', licence: 'BSL-1.0 (Boost Software License 1.0)' },
-  { key: 'cairo', name: 'cairo', prefixes: ['CAIRO'], recipe: 'built from source', licence: 'LGPL-2.1 or MPL-1.1, at the recipient\'s choice' },
-  { key: 'pixman', name: 'pixman', prefixes: ['PIXMAN'], recipe: 'built from source', licence: 'MIT' },
-  { key: 'freetype', name: 'FreeType', prefixes: ['FREETYPE'], recipe: 'built from source', licence: 'FTL (the FreeType License; FreeType is also offered under GPL-2.0-or-later, we take it under the FTL)' },
-  { key: 'harfbuzz', name: 'HarfBuzz', prefixes: ['HARFBUZZ'], recipe: 'built from source', licence: 'MIT (the "Old MIT" wording)' },
-  { key: 'zstd', name: 'Zstandard', prefixes: ['ZSTD'], recipe: 'built from source', licence: 'BSD-3-Clause (zstd is also offered under GPL-2.0-only; we take it under BSD)' },
-  { key: 'protobuf', name: 'Protocol Buffers', prefixes: ['PROTOBUF'], recipe: 'built from source', licence: 'BSD-3-Clause' },
-  { key: 'glm', name: 'GLM', prefixes: ['GLM'], recipe: 'header only library', licence: 'MIT (GLM is also offered under the Happy Bunny License; we take it under MIT)' },
-  { key: 'occt', name: 'Open CASCADE Technology (OCCT)', prefixes: ['OCC'], recipe: 'built from source', licence: 'LGPL-2.1 with the Open CASCADE exception' },
-  { key: 'ngspice', name: 'ngspice', prefixes: ['NGSPICE'], recipe: 'built from source', licence: 'BSD (the modified BSD licence ngspice ships under)' },
-  { key: 'rapidjson', name: 'RapidJSON', prefixes: ['RAPIDJSON'], recipe: 'header only, required by the OCCT glTF writer', licence: 'MIT', added: true },
-  { key: 'curl', name: 'curl', prefixes: ['CURL'], recipe: 'headers only; curl calls are stubbed in the WebAssembly build', licence: 'curl (an MIT style licence)', added: true },
-  { key: 'libgit2', name: 'libgit2', prefixes: ['LIBGIT2'], recipe: 'headers only; git functions do not run in the browser', licence: 'GPL-2.0 with the libgit2 linking exception', added: true },
-  { key: 'python', name: 'Python', prefixes: ['PYTHON'], recipe: 'a build time interpreter only; Python scripting is disabled in the WebAssembly build and nothing of Python is linked', licence: 'PSF-2.0 (Python Software Foundation License)', added: true },
-  { key: 'swig', name: 'SWIG', prefixes: ['SWIG'], recipe: 'named only as the minimum version KiCad\'s CMakeLists.txt asks for; the WebAssembly recipe does not run it', licence: 'GPL-3.0-or-later for SWIG itself; nothing of SWIG is linked', added: true },
+  { key: 'kicad', name: 'KiCad', prefixes: ['KICAD'], recipe: 'the application itself, built from the kicad-source-mirror commit below', license: 'GPL-3.0-or-later, with the third party parts KiCad\'s LICENSE.README lists (reproduced below)' },
+  { key: 'emscripten', name: 'Emscripten', prefixes: ['EMSCRIPTEN', 'EMSDK'], recipe: 'the compiler toolchain; its runtime is linked into the WebAssembly and its JavaScript glue', license: 'MIT (Emscripten is offered under the MIT License or the University of Illinois/NCSA Open Source License; we take it under MIT)' },
+  { key: 'wxwidgets', name: 'wxWidgets', prefixes: ['WXWIDGETS'], recipe: 'built from PCBJam\'s wxWidgets fork at the commit below', license: 'wxWindows Library Licence 3.1 for the toolkit; the WebAssembly port files, derived from ahilss/wxWidgets-wasm, under the GNU LGPL version 2 without the wxWindows exception' },
+  { key: 'boost', name: 'Boost', prefixes: ['BOOST'], recipe: 'built from source', license: 'BSL-1.0 (Boost Software License 1.0)' },
+  { key: 'cairo', name: 'cairo', prefixes: ['CAIRO'], recipe: 'built from source', license: 'LGPL-2.1 or MPL-1.1, at the recipient\'s choice' },
+  { key: 'pixman', name: 'pixman', prefixes: ['PIXMAN'], recipe: 'built from source', license: 'MIT' },
+  { key: 'freetype', name: 'FreeType', prefixes: ['FREETYPE'], recipe: 'built from source', license: 'FTL (the FreeType License; FreeType is also offered under GPL-2.0-or-later, we take it under the FTL)' },
+  { key: 'harfbuzz', name: 'HarfBuzz', prefixes: ['HARFBUZZ'], recipe: 'built from source', license: 'MIT (the "Old MIT" wording)' },
+  { key: 'zstd', name: 'Zstandard', prefixes: ['ZSTD'], recipe: 'built from source', license: 'BSD-3-Clause (zstd is also offered under GPL-2.0-only; we take it under BSD)' },
+  { key: 'protobuf', name: 'Protocol Buffers', prefixes: ['PROTOBUF'], recipe: 'built from source', license: 'BSD-3-Clause' },
+  { key: 'glm', name: 'GLM', prefixes: ['GLM'], recipe: 'header only library', license: 'MIT (GLM is also offered under the Happy Bunny License; we take it under MIT)' },
+  { key: 'occt', name: 'Open CASCADE Technology (OCCT)', prefixes: ['OCC'], recipe: 'built from source', license: 'LGPL-2.1 with the Open CASCADE exception' },
+  { key: 'ngspice', name: 'ngspice', prefixes: ['NGSPICE'], recipe: 'built from source', license: 'BSD (the modified BSD license ngspice ships under)' },
+  { key: 'rapidjson', name: 'RapidJSON', prefixes: ['RAPIDJSON'], recipe: 'header only, required by the OCCT glTF writer', license: 'MIT', added: true },
+  { key: 'curl', name: 'curl', prefixes: ['CURL'], recipe: 'headers only; curl calls are stubbed in the WebAssembly build', license: 'curl (an MIT style license)', added: true },
+  { key: 'libgit2', name: 'libgit2', prefixes: ['LIBGIT2'], recipe: 'headers only; git functions do not run in the browser', license: 'GPL-2.0 with the libgit2 linking exception', added: true },
+  { key: 'python', name: 'Python', prefixes: ['PYTHON'], recipe: 'a build time interpreter only; Python scripting is disabled in the WebAssembly build and nothing of Python is linked', license: 'PSF-2.0 (Python Software Foundation License)', added: true },
+  { key: 'swig', name: 'SWIG', prefixes: ['SWIG'], recipe: 'named only as the minimum version KiCad\'s CMakeLists.txt asks for; the WebAssembly recipe does not run it', license: 'GPL-3.0-or-later for SWIG itself; nothing of SWIG is linked', added: true },
 ];
 
 // ---------------------------------------------------------------- inputs
@@ -239,9 +239,9 @@ export function render({ versions, modified }, pin, texts) {
   own.push(['Circuit Center editor', `
 <p>This is the Circuit Center editor, release <code>${esc(id)}</code>: PCBJam's build of KiCad for the browser at PCBJam tag <code>${esc(pin.pcbjam.tag)}</code>, with a loader, a message responder and a theme by ${esc(BRAND)}.</p>
 <p>Copyright (c) ${YEAR} ${esc(OWNER)} for the files ${esc(BRAND)} wrote. KiCad, PCBJam, wxWidgets and the libraries listed below are copyright their own authors.</p>
-<p>This program is free software. The editor as a whole is conveyed to you under the GNU General Public License, version 3, and you may redistribute it and modify it under those terms. The files ${esc(BRAND)} wrote may also be used under any later version of that licence.</p>
-<p>There is no warranty for this program, to the extent permitted by applicable law. It is provided as is, without warranty of any kind, either expressed or implied, including the implied warranties of merchantability and fitness for a particular purpose. Sections 15 and 16 of the licence say this in full.</p>
-<p>The licence is served beside this page: <a href="LICENSE.txt">LICENSE.txt</a>. A plain text copy of this page is in <a href="NOTICE.txt">NOTICE.txt</a>.</p>`]);
+<p>This program is free software. The editor as a whole is conveyed to you under the GNU General Public License, version 3, and you may redistribute it and modify it under those terms. The files ${esc(BRAND)} wrote may also be used under any later version of that license.</p>
+<p>There is no warranty for this program, to the extent permitted by applicable law. It is provided as is, without warranty of any kind, either expressed or implied, including the implied warranties of merchantability and fitness for a particular purpose. Sections 15 and 16 of the license say this in full.</p>
+<p>The license is served beside this page: <a href="LICENSE.txt">LICENSE.txt</a>. A plain text copy of this page is in <a href="NOTICE.txt">NOTICE.txt</a>.</p>`]);
 
   own.push(['Where the source is', `
 <p>The complete corresponding source of this release is available at no charge from the places below, and stays there for as long as this release is served (GNU GPL version 3, section 6(d)).</p>
@@ -256,7 +256,7 @@ ${mirrors.map((m) => `<li>${esc(m.what)}: the tag <code>cc/${esc(id)}</code> in 
 <table><thead><tr><th>File</th><th>sha256</th><th>Built from</th></tr></thead><tbody>
 ${engineFiles.map(([name, f]) => `<tr><td data-label="File"><code>${esc(name)}</code></td><td data-label="sha256"><code class="hash">${esc(f.sha256)}</code></td><td data-label="Built from"><code class="hash">${esc(f.source)}</code></td></tr>`).join('\n')}
 </tbody></table>
-<p>The icon archive <code>images.tar.gz</code> is served repacked: ${esc(pin.icons.replacedEntries)} of its ${esc(pin.icons.entries)} entries are toolbar glyphs ${esc(BRAND)} redrew, every other entry is PCBJam's byte for byte. The repacked archive's sha256 is <code>${esc(pin.icons.repackedSha256)}</code>. Its preferred form for modification is <code>theme/icons/src</code> with <code>theme/icons/rasterise.mjs</code> and <code>theme/icons/repack.mjs</code> in the island repository.</p>`]);
+<p>The icon archive <code>images.tar.gz</code> is served repacked: ${esc(pin.icons.replacedEntries)} of its ${esc(pin.icons.entries)} entries are toolbar glyphs ${esc(BRAND)} redrew, every other entry is PCBJam's byte for byte. The repacked archive's sha256 is <code>${esc(pin.icons.repackedSha256)}</code>. Its preferred form for modification is <code>theme/icons/src</code> with <code>theme/icons/rasterize.mjs</code> and <code>theme/icons/repack.mjs</code> in the island repository.</p>`]);
 
   own.push(['Files we changed', `
 <p>The loader is PCBJam's code, copied at the pin. The unchanged copies are kept in <code>loader/pristine</code> of the island repository. These copied files differ from PCBJam's; each carries the notices below, quoted from the file:</p>
@@ -264,10 +264,10 @@ ${engineFiles.map(([name, f]) => `<tr><td data-label="File"><code>${esc(name)}</
 ${modified.map((f) => `<li><code>${esc(f.path)}</code><ul class="notes">${f.notices.map((n) => `<li class="note">Modified by ${esc(BRAND)} on ${esc(n.date)}: ${esc(n.text)}</li>`).join('')}</ul></li>`).join('\n')}
 </ul>`]);
 
-  own.push(['Libraries and their licences', `
-<p>Every dependency named by <code>scripts/common/versions.sh</code> in the pinned recipe, with the licence it comes under. ${added.length ? `The recipe names ${esc(andList(added))} beyond the list our design names; they are here with their own licences.` : ''}</p>
-<table><thead><tr><th>Dependency</th><th>Version</th><th>In the recipe</th><th>Licence</th></tr></thead><tbody>
-${deps.map((d) => `<tr><td data-label="Dependency">${esc(d.name)}</td><td data-label="Version">${esc(d.v.text)}${d.v.sha ? `<br><span class="small">sha256 <code class="hash">${esc(d.v.sha)}</code></span>` : ''}</td><td data-label="In the recipe">${esc(d.recipe)}</td><td data-label="Licence">${esc(d.licence)}</td></tr>`).join('\n')}
+  own.push(['Libraries and their licenses', `
+<p>Every dependency named by <code>scripts/common/versions.sh</code> in the pinned recipe, with the license it comes under. ${added.length ? `The recipe names ${esc(andList(added))} beyond the list our design names; they are here with their own licenses.` : ''}</p>
+<table><thead><tr><th>Dependency</th><th>Version</th><th>In the recipe</th><th>License</th></tr></thead><tbody>
+${deps.map((d) => `<tr><td data-label="Dependency">${esc(d.name)}</td><td data-label="Version">${esc(d.v.text)}${d.v.sha ? `<br><span class="small">sha256 <code class="hash">${esc(d.v.sha)}</code></span>` : ''}</td><td data-label="In the recipe">${esc(d.recipe)}</td><td data-label="License">${esc(d.license)}</td></tr>`).join('\n')}
 </tbody></table>
 <p>The kicad-source-mirror commit the engine was built from is <code>${esc(pin.pcbjam.kicad)}</code>, the gitlink at PCBJam's commit; the commit versions.sh names for KiCad is the recipe's own record and may be older. The wxWidgets fork is at <code>${esc(pin.pcbjam.wxwidgets)}</code>.</p>`]);
 
@@ -275,14 +275,14 @@ ${deps.map((d) => `<tr><td data-label="Dependency">${esc(d.name)}</td><td data-l
 <p>The six toolbar glyphs ${esc(BRAND)} redrew for the icon archive follow the Phosphor Icons Light style. Phosphor Icons is released under the MIT License; its notice follows as its authors wrote it.</p>`]);
 
   const theirs = [
-    ['Phosphor Icons licence', texts.phosphor, 'notices/phosphor-LICENSE'],
+    ['Phosphor Icons license', texts.phosphor, 'notices/phosphor-LICENSE'],
     ["PCBJam's notices, reproduced as theirs", texts.pcbjam, `site/src/content/legal/licenses.md at PCBJam commit ${pin.pcbjam.root}`],
     ["KiCad's LICENSE.README", texts.kicad, `LICENSE.README at kicad-source-mirror commit ${pin.pcbjam.kicad}`],
   ];
   const theirsIntro = {
-    "PCBJam's notices, reproduced as theirs": `<p>PCBJam's licences page at the pinned commit, reproduced unchanged. Its offer of source, its links and its contact address are PCBJam's and describe PCBJam's service, not this release; for this release use the places under "Where the source is" above.</p>`,
-    "KiCad's LICENSE.README": `<p>KiCad's own statement of its licences, reproduced unchanged.</p>`,
-    'Phosphor Icons licence': '',
+    "PCBJam's notices, reproduced as theirs": `<p>PCBJam's licenses page at the pinned commit, reproduced unchanged. Its offer of source, its links and its contact address are PCBJam's and describe PCBJam's service, not this release; for this release use the places under "Where the source is" above.</p>`,
+    "KiCad's LICENSE.README": `<p>KiCad's own statement of its licenses, reproduced unchanged.</p>`,
+    'Phosphor Icons license': '',
   };
   for (const [h] of theirs) own.push([`${h} (introduction)`, theirsIntro[h]]);
 
@@ -297,7 +297,7 @@ ${deps.map((d) => `<tr><td data-label="Dependency">${esc(d.name)}</td><td data-l
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Licences and source</title>
+<title>Licenses and source</title>
 <style>
 :root { color-scheme: light dark; --paper: #fbfbf8; --ink: #1a1f23; --muted: #5a636b; --rule: #d9dde2; --well: #f1f3f5; }
 @media (prefers-color-scheme: dark) { :root { --paper: #15191c; --ink: #e3e7ea; --muted: #9aa3ab; --rule: #2c3338; --well: #1d2226; } }
@@ -326,7 +326,7 @@ pre { background: var(--well); padding: 12px; white-space: pre-wrap; overflow-wr
 </head>
 <body>
 <main>
-<h1>Licences and source</h1>
+<h1>Licenses and source</h1>
 <p class="lede">Circuit Center editor, release <code>${esc(id)}</code></p>
 ${ownSections.map(([h, body]) => section(h, body)).join('\n')}
 ${theirs.map(([h, text, from]) => section(h, `${theirsIntro[h] ? `\n${theirsIntro[h]}` : ''}\n<p class="small">From <code>${esc(from)}</code>.</p>\n<pre>${esc(text)}</pre>`)).join('\n')}
@@ -340,7 +340,7 @@ ${theirs.map(([h, text, from]) => section(h, `${theirsIntro[h] ? `\n${theirsIntr
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&')
     .split('\n').map((l) => l.trimEnd()).filter((l) => l.trim()).join('\n');
   const notice = [
-    `Licences and source: Circuit Center editor, release ${id}`,
+    `Licenses and source: Circuit Center editor, release ${id}`,
     ...ownSections.map(([h, body]) => `\n== ${h} ==\n${para(body)}`),
     ...theirs.map(([h, text, from]) => `\n== ${h} ==\n${theirsIntro[h] ? `${para(theirsIntro[h])}\n` : ''}From ${from}.\n\n${text.trimEnd()}`),
     '',
@@ -351,9 +351,9 @@ ${theirs.map(([h, text, from]) => section(h, `${theirsIntro[h] ? `\n${theirsIntr
 /** Our prose renders no en or em dash and speaks of no download (owner rulings). */
 function checkOwnProse(html) {
   const dash = html.match(/.{0,40}[\u2013\u2014].{0,40}/);
-  if (dash) fail(`our own licences prose carries a dash: ${dash[0]}`);
+  if (dash) fail(`our own licenses prose carries a dash: ${dash[0]}`);
   const dl = html.match(/.{0,40}download.{0,40}/i);
-  if (dl) fail(`our own licences prose speaks of a download: ${dl[0]}`);
+  if (dl) fail(`our own licenses prose speaks of a download: ${dl[0]}`);
 }
 
 /** The page loads nothing, runs nothing and links only beside itself. */

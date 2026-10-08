@@ -51,10 +51,10 @@ export function sourceLibs({ symbolsSrc, footprintsSrc }) {
 }
 
 /** LICENSE.md: each repository's own LICENSE.md, in full, under a heading naming it. */
-export function licenceText({ symbolsSrc, footprintsSrc, provenance }) {
+export function licenseText({ symbolsSrc, footprintsSrc, provenance }) {
   const part = (title, src, from) => {
     const file = join(src, 'LICENSE.md');
-    if (!existsSync(file)) throw new Error(`${file} is missing; the mirror ships KiCad's library licence beside the libraries`);
+    if (!existsSync(file)) throw new Error(`${file} is missing; the mirror ships KiCad's library license beside the libraries`);
     const text = readFileSync(file, 'utf8');
     return `# ${title}\n\n${from}\n\n${text.endsWith('\n') ? text : `${text}\n`}`;
   };
@@ -83,7 +83,7 @@ export async function buildMirror({ symbolsSrc, footprintsSrc, out, tag, only = 
     const wanted = new Set(only);
     libs = libs.filter((l) => wanted.has(l.id));
   }
-  const licence = licenceText({ symbolsSrc, footprintsSrc, provenance: provenance ?? { symbols: `At tag ${tag}.`, footprints: `At tag ${tag}.` } });
+  const license = licenseText({ symbolsSrc, footprintsSrc, provenance: provenance ?? { symbols: `At tag ${tag}.`, footprints: `At tag ${tag}.` } });
 
   mkdirSync(out, { recursive: true });
   const final = join(out, tag);
@@ -139,7 +139,7 @@ export async function buildMirror({ symbolsSrc, footprintsSrc, out, tag, only = 
   await put(FP_INDEX, JSON.stringify({ schema: SCHEMA, tag, libs: fpIndexSorted }));
   await put(SYM_INDEX, symIndexText(tag, symRows));
   await put(FP_SEARCH, fpSearchText(tag, fpRows));
-  await put(LICENSE, licence);
+  await put(LICENSE, license);
   const sums = [...stored.keys()].sort(compareNames).map((name) => `${stored.get(name)}  ${name}\n`).join('');
   await put(SUMS, sums);
 

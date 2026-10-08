@@ -300,7 +300,7 @@ export function startResponder(opts: {
   let libs: PickerLibs | null = null;
   /** Library nicknames to the source's ids (src/picker.ts libIds). */
   let idOf: ((kind: PickKind, nick: string) => Promise<string | null>) | null = null;
-  /** The placement the place op started, watched until it is committed or cancelled (bridge/place.ts). */
+  /** The placement the place op started, watched until it is committed or canceled (bridge/place.ts). */
   let placeWatch: PlacementWatch | null = null;
   /** The names of the editor's own frames, read at ev.ready: any other visible frame is another window of KiCad's. */
   let ownFrames = new Set<string>();

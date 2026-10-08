@@ -22,7 +22,7 @@ footprint loaded by name, Update PCB from Schematic); that is answered from the 
 /libs/<tag>/sym-index.json   the picker's symbol search index (below, PICKER.md)
 /libs/<tag>/fp-search.json   the picker's footprint search index (below, PICKER.md)
 /libs/<tag>/<id>.bin         one bundle per library (below)
-/libs/<tag>/LICENSE.md       KiCad's library licence, both repositories' files
+/libs/<tag>/LICENSE.md       KiCad's library license, both repositories' files
 /libs/<tag>/SHA256SUMS       sha256 of every file above, as stored
 ```
 

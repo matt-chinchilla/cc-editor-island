@@ -70,7 +70,7 @@ echo "source: $OUT/$SRC ($HEAD_SHA)"
 
 # ---------------------------------------------------------------- the dependency archives
 # Every versions.sh row pinned by a sha256 has its archive attached, because
-# the licence page says so. Rows that carry their own <NAME>_URL take it from
+# the license page says so. Rows that carry their own <NAME>_URL take it from
 # versions.sh; for the rest the recipe composes the address in a build script,
 # copied below from the pinned commit (the file each one comes from is named).
 # A sha256 pin that neither covers fails the release until it is added here.

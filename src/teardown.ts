@@ -18,7 +18,7 @@
 // rejects every waiting park while the document is still alive: each parked activation
 // resumes through the scheduler's own turnstile with that error, unwinds and
 // finishes, and its stack is freed. Then the scheduler stops, the pthreads are
-// terminated, the timers and frames the page can still reach are cancelled,
+// terminated, the timers and frames the page can still reach are canceled,
 // the WebGL contexts are lost, the engine globals are dropped and the stage
 // is cleared. Removing the frame after the answer frees its realm. So does
 // removing it without the op, by a shorter path: on pagehide in a frame being
@@ -33,7 +33,7 @@
 // A trapped (terminal) instance keeps its parks: the scheduler refuses to
 // resume into a damaged module by design, and so does this.
 
-/** The error every parked activation resumes with; recognised to keep it off the console. */
+/** The error every parked activation resumes with; recognized to keep it off the console. */
 export const SHUTDOWN_ERROR = 'IslandShutdown';
 /** How long shutdown() waits for the parked activations to unwind. */
 export const UNWIND_TIMEOUT_MS = 3000;

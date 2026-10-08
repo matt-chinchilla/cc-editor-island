@@ -40,7 +40,7 @@ function fakeWindow() {
   let timer = 0;
   let frame = 0;
   const cleared: number[] = [];
-  const cancelled: number[] = [];
+  const canceled: number[] = [];
   const main = { replaceChildren: vi.fn() };
   const container = { replaceChildren: vi.fn() };
   const loseContext = vi.fn();
@@ -51,7 +51,7 @@ function fakeWindow() {
     clearTimeout: (id: number) => { cleared.push(id); },
     clearInterval: (id: number) => { cleared.push(id); },
     requestAnimationFrame: () => ++frame,
-    cancelAnimationFrame: (id: number) => { cancelled.push(id); },
+    cancelAnimationFrame: (id: number) => { canceled.push(id); },
     document: { getElementById: (id: string) => (id === 'main-window' ? main : id === 'window-container' ? container : null) },
     PThread: { terminateAllThreads: vi.fn() },
     GL: { contexts: { 1: { GLctx: { getExtension: (n: string) => (n === 'WEBGL_lose_context' ? { loseContext } : null) } }, 2: null } },
@@ -60,7 +60,7 @@ function fakeWindow() {
     wxElementRegistry: {},
     kicadWebOpenTool: () => true,
   };
-  return { win: win as unknown as Window & { __wxScheduler?: WxScheduler; dispatch: (t: string, e: unknown) => void } & Record<string, unknown>, cleared, cancelled, main, container, loseContext, bump: (n: number) => { timer += n; frame += n; } };
+  return { win: win as unknown as Window & { __wxScheduler?: WxScheduler; dispatch: (t: string, e: unknown) => void } & Record<string, unknown>, cleared, canceled, main, container, loseContext, bump: (n: number) => { timer += n; frame += n; } };
 }
 
 /** V8's own collector, exposed for the retention check (the node modules load by name: the type check has no node types). */
@@ -167,7 +167,7 @@ describe('installEngineTeardown', () => {
   });
 
   it('releases the rest: pthreads, WebGL contexts, timers and frames, the engine globals and the stage', async () => {
-    const { win, cleared, cancelled, main, container, loseContext, bump } = fakeWindow();
+    const { win, cleared, canceled, main, container, loseContext, bump } = fakeWindow();
     bump(30);
     const t = installEngineTeardown(win);
     win.__wxScheduler = fakeScheduler() as unknown as WxScheduler;
@@ -175,7 +175,7 @@ describe('installEngineTeardown', () => {
     expect((win.PThread as { terminateAllThreads: () => void }).terminateAllThreads).toHaveBeenCalledTimes(1);
     expect(loseContext).toHaveBeenCalledTimes(1);
     for (const id of [1, 15, 30]) expect(cleared).toContain(id);
-    for (const id of [1, 15, 30]) expect(cancelled).toContain(id);
+    for (const id of [1, 15, 30]) expect(canceled).toContain(id);
     for (const k of ['Module', 'FS', 'wxElementRegistry', 'kicadWebOpenTool']) expect(win[k]).toBeUndefined();
     expect(main.replaceChildren).toHaveBeenCalledTimes(1);
     expect(container.replaceChildren).toHaveBeenCalledTimes(1);

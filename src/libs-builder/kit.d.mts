@@ -21,6 +21,6 @@ export function symbolFile(blocks: string[]): string;
 export const R0603: string;
 export const USB_C_LIKE: string;
 export const ODD: string;
-export const SYM_LICENCE: string;
-export const FP_LICENCE: string;
+export const SYM_LICENSE: string;
+export const FP_LICENSE: string;
 export function fixtureSources(root: string, extra?: 'cycle' | 'orphan' | 'future' | null): { symbolsSrc: string; footprintsSrc: string };

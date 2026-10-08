@@ -71,7 +71,7 @@ function parseLedger(text) {
   return { lines, keys };
 }
 
-/** A flat object as Python's json.dumps writes it (the table's original serialiser): ", " and ": ", ASCII only. */
+/** A flat object as Python's json.dumps writes it (the table's original serializer): ", " and ": ", ASCII only. */
 function pyDumps(obj) {
   const str = (v) => JSON.stringify(v).replace(/[\u007f-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
   return `{${Object.entries(obj).map(([k, v]) => `${str(k)}: ${str(v)}`).join(', ')}}`;

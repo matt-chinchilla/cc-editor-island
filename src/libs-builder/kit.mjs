@@ -133,8 +133,8 @@ export const ODD = fpFile('Odd', [
   pad('"Ω1"', 'smd', '"F.Cu"'),
 ]);
 
-export const SYM_LICENCE = 'Symbols licence text, CC BY-SA 4.0.\n';
-export const FP_LICENCE = 'Footprints licence text, CC BY-SA 4.0.\n';
+export const SYM_LICENSE = 'Symbols license text, CC BY-SA 4.0.\n';
+export const FP_LICENSE = 'Footprints license text, CC BY-SA 4.0.\n';
 
 /**
  * Write the fixture checkouts under `root`: root/kicad-symbols and
@@ -146,7 +146,7 @@ export function fixtureSources(root, extra = null) {
   const symbolsSrc = join(root, 'kicad-symbols');
   const footprintsSrc = join(root, 'kicad-footprints');
   const symbols = {
-    'LICENSE.md': SYM_LICENCE,
+    'LICENSE.md': SYM_LICENSE,
     'README.md': 'not a library\n',
     'Simulation_SPICE.sp': '* not a library\n',
     'sym-lib-table': '(sym_lib_table\n\t(version 7)\n'
@@ -173,7 +173,7 @@ export function fixtureSources(root, extra = null) {
   }
   if (extra === 'orphan') symbols['Orphan.kicad_symdir/X.kicad_sym'] = symbolFile([derivedBlock('X', 'Nope')]);
   const footprints = {
-    'LICENSE.md': FP_LICENCE,
+    'LICENSE.md': FP_LICENSE,
     'fp-lib-table': '(fp_lib_table\n\t(version 7)\n'
       + '\t(lib (name "Resistor_SMD") (type "KiCad") (uri "${KICAD10_FOOTPRINT_DIR}/Resistor_SMD.pretty") (options "") (descr "Resistors, \\"SMD\\""))\n'
       + '\t(lib (name "Connector") (type "KiCad") (uri "${KICAD10_FOOTPRINT_DIR}/Connector.pretty") (options "") (descr ""))\n'

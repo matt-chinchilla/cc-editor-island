@@ -11,8 +11,8 @@ import { decodeBundle, encodeBundle } from '../../scripts/libs/bundle.mjs';
 import { buildMirror, gz, verifyMirror } from '../../scripts/libs/mirror.mjs';
 import { parseSymbolLib } from '../../scripts/libs/kicad-symdir.mjs';
 import {
-  baseBlock, derivedBlock, FP_LICENCE, fixtureSources, gunzip, listDir, ODD, R0603, readBytes, readStoredJson, readStoredText,
-  removeDir, sha256, SYM_LICENCE, symbolFile, tempDir, USB_C_LIKE, writeBytes,
+  baseBlock, derivedBlock, FP_LICENSE, fixtureSources, gunzip, listDir, ODD, R0603, readBytes, readStoredJson, readStoredText,
+  removeDir, sha256, SYM_LICENSE, symbolFile, tempDir, USB_C_LIKE, writeBytes,
 } from './kit.mjs';
 
 const text = (b: Uint8Array) => new TextDecoder().decode(b);
@@ -124,9 +124,9 @@ describe('the built mirror', () => {
     });
   });
 
-  it('ships both repositories\' licences under a heading each', () => {
-    const licence = readStoredText(mirror, 'LICENSE.md');
-    expect(licence).toBe(`# kicad-symbols\n\nAt tag ${TAG}.\n\n${SYM_LICENCE}\n# kicad-footprints\n\nAt tag ${TAG}.\n\n${FP_LICENCE}`);
+  it('ships both repositories\' licenses under a heading each', () => {
+    const license = readStoredText(mirror, 'LICENSE.md');
+    expect(license).toBe(`# kicad-symbols\n\nAt tag ${TAG}.\n\n${SYM_LICENSE}\n# kicad-footprints\n\nAt tag ${TAG}.\n\n${FP_LICENSE}`);
   });
 
   it('lists every other file in SHA256SUMS with the sha256 of its stored bytes', () => {

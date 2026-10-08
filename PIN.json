@@ -8,7 +8,7 @@
     "shared": "7791275bdfbf54e1500e303121dacaa2c3fd7d00",
     "pristineTaken": "2026-09-30"
   },
-  "licenceWording": {
+  "licenseWording": {
     "LICENSE": "the unmodified GPLv3 text",
     "README": "KiCad is GPL-3.0. This project follows the same license.",
     "fileHeaders": "none under web/standalone/src at this tag"

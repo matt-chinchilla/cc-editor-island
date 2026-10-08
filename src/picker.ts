@@ -138,7 +138,7 @@ export interface PickKeysOptions {
  * Takes the frame's place keys from KiCad: capture-phase listeners on the
  * window, installed before the engine's scripts load so they run before
  * KiCad's own. A keydown that `pickFor` names, while `open()` holds and no
- * text field has the focus, is cancelled and stopped (KiCad's chooser never
+ * text field has the focus, is canceled and stopped (KiCad's chooser never
  * opens) and `onPick` is called once per press (a held key's repeats are
  * swallowed too, unreported); the matching keypress and keyup are swallowed
  * as well, so KiCad never sees half a key. Answers the remover.

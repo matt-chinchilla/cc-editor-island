@@ -7,9 +7,9 @@ It holds PCBJam's KiCad in WebAssembly engine, pinned at PCBJam tag v0.2.3 (root
 
 Since stage 1c the frame boots canvas only (KiCad's menus, toolbars and panes hidden; `chrome.show` brings them back), and the protocol carries seven ops for the host's own controls: `key.press`, `view.fit`, `sheet.tree`, `sheet.enter`, `layers.get`, `layers.visible` and `layers.active` (`PROTOCOL.md`). The fast part picker (`PICKER.md`) adds four more, `lib.index`, `lib.item`, `lib.prefetch` and `place`, and the event `ev.pick`: KiCad's place keys open the host's picker, which places a part without KiCad enumerating a library.
 
-## Licence
+## License
 
-This repository is GPL-3.0-or-later (see `LICENSE`). KiCad and PCBJam are GPL-3.0; the island follows the same licence. Files copied from PCBJam keep their original headers, and any we changed say so. `PROTOCOL.md` alone is MIT, so a host page can speak the protocol under any licence.
+This repository is GPL-3.0-or-later (see `LICENSE`). KiCad and PCBJam are GPL-3.0; the island follows the same license. Files copied from PCBJam keep their original headers, and any we changed say so. `PROTOCOL.md` alone is MIT, so a host page can speak the protocol under any license.
 
 ## Build
 
@@ -17,14 +17,14 @@ A fresh clone builds with Node (22 is what the island is built with) and network
 
 ```bash
 npm ci                              # the pinned dependencies from package-lock.json
-npx playwright install chromium     # the browser the icon rasteriser uses (add firefox for the full e2e)
+npx playwright install chromium     # the browser the icon rasterizer uses (add firefox for the full e2e)
 npm run fetch-engine                # fetch PCBJam's engine files for the pin and verify each sha256 against PIN.json
 npm run build                       # build dist/r/<islandId>/, dist/island.json and dist/current
 ```
 
 Then `npm test` runs the unit tests (vitest), `npm run typecheck` the type check, and `npm run e2e` the browser tests over the local pair (Playwright, Chromium and Firefox).
 
-`npm run build` refuses unless every engine file hashes to its row in `PIN.json`, the stock icon archive hashes to `PIN.json` `icons.stockArchiveSha256`, and every glyph source in `theme/icons/src` hashes to its row in `icons.inputs`. It then rasterises the glyphs through Playwright's Chromium (`theme/icons/rasterise.mjs`) and repacks the icon archive (`theme/icons/repack.mjs`) on every build. The repacked archive's sha256 is an output, not a pin: PNG bytes differ between Chromium builds, so the build records it in `icons.repackedSha256` (a clone on another machine may see `PIN.json` change there) and never refuses on it. The release's `SHA256SUMS` pins the bytes that ship. After a reviewed glyph change, `node theme/icons/inputs.mjs --pin` records the new sources.
+`npm run build` refuses unless every engine file hashes to its row in `PIN.json`, the stock icon archive hashes to `PIN.json` `icons.stockArchiveSha256`, and every glyph source in `theme/icons/src` hashes to its row in `icons.inputs`. It then rasterizes the glyphs through Playwright's Chromium (`theme/icons/rasterize.mjs`) and repacks the icon archive (`theme/icons/repack.mjs`) on every build. The repacked archive's sha256 is an output, not a pin: PNG bytes differ between Chromium builds, so the build records it in `icons.repackedSha256` (a clone on another machine may see `PIN.json` change there) and never refuses on it. The release's `SHA256SUMS` pins the bytes that ship. After a reviewed glyph change, `node theme/icons/inputs.mjs --pin` records the new sources.
 
 `loader/` (our copy of PCBJam's loader, `loader/pristine` beside it) and `notices/` are committed, so a build needs neither `upstream/` nor the GitHub CLI. `npm run sync-upstream` checks PCBJam out at the pin into `upstream/`; it is a step for bumping the pin only, and it needs `gh` signed in. A pin bump must keep the engine's `kicadCollabTestUndoDepth` export: `ev.edited` reads it, and an engine without it sends no `ev.edited` and no error (the e2e checks that `ev.ready` `caps` lists it).
 

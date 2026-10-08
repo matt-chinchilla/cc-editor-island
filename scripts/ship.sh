@@ -4,7 +4,7 @@
 #
 # Ships one built island to prod. Refuses without the GitHub release whose
 # SHA256SUMS match the files about to ship, and without the three mirror tags
-# the licence page names (spec section 13). rsync into a versioned directory,
+# the license page names (spec section 13). rsync into a versioned directory,
 # copy island.json, then flip `current` with a rename; keep two releases.
 #
 #   bash scripts/ship.sh --dry-run <islandId>   run every check, print the ship as "DRY: ..."
@@ -90,7 +90,7 @@ elif [ "$DRY" = 1 ] && [ -f "release/$ID/SHA256SUMS" ]; then
   check_sums "release/$ID/SHA256SUMS" "the local release/$ID/SHA256SUMS"
 fi
 
-# The three mirror tags the licence page promises, at the commits PIN.json pins
+# The three mirror tags the license page promises, at the commits PIN.json pins
 # when this is the pinned island.
 PIN_ID=$(node -p "require('./PIN.json').islandId")
 declare -A WANT=()

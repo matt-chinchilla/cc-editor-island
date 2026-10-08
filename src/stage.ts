@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
-// The handoff lands here: every path is normalised again on this side, and
+// The handoff lands here: every path is normalized again on this side, and
 // files are written only under <MEMFS_PROJECTS_DIR>/<id>/ (the directory the
 // save hook reports paths against), never near the seeded config under
 // /home/kicad/.config.

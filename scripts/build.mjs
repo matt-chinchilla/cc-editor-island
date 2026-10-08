@@ -46,7 +46,7 @@ mkdirSync(join(rel, 'wasm', tool, toolTag), { recursive: true });
 
 // 1. The engine: gz only, level 9; the icon archive raw (the boot requires it).
 // The icon archive always ships repacked (theme/icons/repack.mjs), rebuilt on every
-// build. The trust anchors are the inputs, checked before anything is rasterised:
+// build. The trust anchors are the inputs, checked before anything is rasterized:
 // the stock archive must hash to PIN.json.icons.stockArchiveSha256 and every
 // theme/icons/src/*.svg to its row in PIN.json.icons.inputs (theme/icons/inputs.mjs).
 // The PNGs come from Playwright's Chromium, whose bytes differ between Chromium
@@ -54,8 +54,8 @@ mkdirSync(join(rel, 'wasm', tool, toolTag), { recursive: true });
 // PIN.json.icons.repackedSha256 and the build reports whether it moved, never
 // refuses on it. The release's SHA256SUMS pins the bytes that ship.
 const repacked = join('theme', 'icons', 'out', 'images.tar.gz');
-console.log('icons: inputs verified; rasterising the glyphs and repacking the icon archive');
-execSync('node theme/icons/rasterise.mjs', { stdio: 'inherit' });
+console.log('icons: inputs verified; rasterizing the glyphs and repacking the icon archive');
+execSync('node theme/icons/rasterize.mjs', { stdio: 'inherit' });
 execSync('node theme/icons/repack.mjs', { stdio: 'inherit' });
 const repackedIcons = readFileSync(repacked);
 const repackedSha = createHash('sha256').update(repackedIcons).digest('hex');
@@ -75,7 +75,7 @@ execSync('npx vite build', { stdio: 'inherit' });
 
 // 2b. The notices: licenses.html, LICENSE.txt and NOTICE.txt beside the page. The census
 // inside exits 1 (and so stops the build before current moves) when versions.sh names a
-// dependency with no licence entry or a changed copied file lacks its dated notice.
+// dependency with no license entry or a changed copied file lacks its dated notice.
 execSync(`node scripts/notices.mjs ${rel}`, { stdio: 'inherit' });
 
 // 3. island.json, twice: inside the release and at the root for the no-cache route.

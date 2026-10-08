@@ -72,7 +72,7 @@ html.cc-editor body {
   from { transform: translateX(-100%); }
   to { transform: translateX(280%); }
 }
-.cc-screen-loading .cc-licences {
+.cc-screen-loading .cc-licenses {
   position: absolute;
   bottom: 16px;
   left: 0;
@@ -106,7 +106,7 @@ html.cc-editor body {
 .cc-screen-fatal .cc-copy,
 .cc-screen-blocked .cc-copy { color: var(--vw-alert-ink, #c0392b); }
 
-.cc-licences {
+.cc-licenses {
   appearance: none;
   background: none;
   border: 0;
@@ -119,15 +119,15 @@ html.cc-editor body {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.cc-licences:focus-visible {
+.cc-licenses:focus-visible {
   outline: 2px solid var(--vw-focus, #0a4a2e);
   outline-offset: 2px;
   border-radius: 2px;
 }
 
-/* ---------------------------------------------------------------- the licences overlay */
+/* ---------------------------------------------------------------- the licenses overlay */
 /* Above the island's screens and above the editor's own windows. */
-.cc-licences-overlay {
+.cc-licenses-overlay {
   position: fixed;
   inset: 0;
   z-index: 2147483600;
@@ -136,21 +136,21 @@ html.cc-editor body {
   background: var(--vw-paper, #fbfbf8);
   color: var(--vw-ink, #1a1f23);
 }
-.cc-licences-bar {
+.cc-licenses-bar {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--vw-seam, rgba(26, 31, 35, 0.1));
 }
-.cc-licences-title {
+.cc-licenses-title {
   flex: 1 1 auto;
   margin: 0;
   font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.015em;
 }
-.cc-licences-action {
+.cc-licenses-action {
   appearance: none;
   font: inherit;
   font-size: 13px;
@@ -161,13 +161,13 @@ html.cc-editor body {
   color: var(--vw-ink, #1a1f23);
   cursor: pointer;
 }
-.cc-licences-action[hidden] { display: none; }
-.cc-licences-action:focus-visible,
-.cc-licences-doc a:focus-visible {
+.cc-licenses-action[hidden] { display: none; }
+.cc-licenses-action:focus-visible,
+.cc-licenses-doc a:focus-visible {
   outline: 2px solid var(--vw-focus, #0a4a2e);
   outline-offset: 2px;
 }
-.cc-licences-doc {
+.cc-licenses-doc {
   flex: 1 1 auto;
   overflow: auto;
   padding: 16px 16px 48px;
@@ -176,25 +176,25 @@ html.cc-editor body {
   -webkit-user-select: text;
   user-select: text;
 }
-.cc-licences-doc:focus { outline: none; }
-.cc-licences-doc > * { max-width: 860px; margin-left: auto; margin-right: auto; }
-.cc-licences-doc main { display: block; }
-.cc-licences-doc h1 { font-size: 1.4rem; letter-spacing: -0.022em; margin: 0 0 4px; }
-.cc-licences-doc h2 { font-size: 1.05rem; letter-spacing: -0.015em; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--vw-seam, rgba(26, 31, 35, 0.1)); }
-.cc-licences-doc a { color: var(--vw-link, #0a4a2e); }
-.cc-licences-doc code { font-family: var(--vw-mono, ui-monospace, monospace); font-size: 0.9em; overflow-wrap: anywhere; }
-.cc-licences-doc table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
-.cc-licences-doc th,
-.cc-licences-doc td { text-align: left; vertical-align: top; padding: 6px 8px; border-bottom: 1px solid var(--vw-seam, rgba(26, 31, 35, 0.1)); }
-.cc-licences-doc pre,
-.cc-licences-text {
+.cc-licenses-doc:focus { outline: none; }
+.cc-licenses-doc > * { max-width: 860px; margin-left: auto; margin-right: auto; }
+.cc-licenses-doc main { display: block; }
+.cc-licenses-doc h1 { font-size: 1.4rem; letter-spacing: -0.022em; margin: 0 0 4px; }
+.cc-licenses-doc h2 { font-size: 1.05rem; letter-spacing: -0.015em; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--vw-seam, rgba(26, 31, 35, 0.1)); }
+.cc-licenses-doc a { color: var(--vw-link, #0a4a2e); }
+.cc-licenses-doc code { font-family: var(--vw-mono, ui-monospace, monospace); font-size: 0.9em; overflow-wrap: anywhere; }
+.cc-licenses-doc table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
+.cc-licenses-doc th,
+.cc-licenses-doc td { text-align: left; vertical-align: top; padding: 6px 8px; border-bottom: 1px solid var(--vw-seam, rgba(26, 31, 35, 0.1)); }
+.cc-licenses-doc pre,
+.cc-licenses-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: var(--vw-mono, ui-monospace, monospace);
   font-size: 12px;
   line-height: 1.5;
 }
-.cc-licences-note { color: var(--vw-ink-3, #676c71); }
+.cc-licenses-note { color: var(--vw-ink-3, #676c71); }
 
 @media (prefers-reduced-motion: reduce) {
   .cc-bar:not(.is-determinate) .cc-bar-fill {

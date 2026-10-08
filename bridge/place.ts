@@ -9,7 +9,7 @@
 // other. Then the placement is watched until the click commits it (the undo
 // depth rises) or the reader cancels it: KiCad's schematic placement tool
 // drops the item on Escape but stays armed, and its next click would open
-// KiCad's own chooser (measured 2026-10-07), so a cancelled schematic placement
+// KiCad's own chooser (measured 2026-10-07), so a canceled schematic placement
 // gets a second Escape, which leaves the tool. A board's placement (the move
 // tool) ends with its Escape.
 import type { KeyPress } from '../src/keys';
@@ -109,7 +109,7 @@ export async function placeBlob(w: PlaceWindow, sexpr: string, opts: { timing: P
 
 /**
  * The placement the island started, from the answer to its end: committed
- * (the undo depth moved), or cancelled (its item left the selection with the
+ * (the undo depth moved), or canceled (its item left the selection with the
  * depth unchanged, read twice in a row), after which a schematic gets the
  * second Escape that leaves KiCad's placement tool.
  */
@@ -152,7 +152,7 @@ export class PlacementWatch {
     return (selection(this.w) ?? []).includes(c.uuid);
   }
 
-  /** One read: the end of a committed placement, or the Escape a cancelled schematic placement still needs. */
+  /** One read: the end of a committed placement, or the Escape a canceled schematic placement still needs. */
   tick(): void {
     const c = this.current;
     if (c == null) return;
@@ -176,7 +176,7 @@ export class PlacementWatch {
     if (c == null) return true;
     if (!this.hanging()) {
       this.tick();
-      this.tick();   // a placement already cancelled gets its second Escape now
+      this.tick();   // a placement already canceled gets its second Escape now
       this.stop();
       return true;
     }

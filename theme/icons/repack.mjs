@@ -21,7 +21,7 @@ if (stockSha !== recorded) throw new Error(`${stockPath}: sha256 ${stockSha} dif
 
 const pngDir = join('theme', 'icons', 'png');
 const pngs = new Map(readdirSync(pngDir).filter((f) => f.endsWith('.png')).map((f) => [f, readFileSync(join(pngDir, f))]));
-if (pngs.size === 0) throw new Error(`${pngDir} is empty; run node theme/icons/rasterise.mjs first`);
+if (pngs.size === 0) throw new Error(`${pngDir} is empty; run node theme/icons/rasterize.mjs first`);
 
 // The tar walker. Headers are 512 bytes: name 0..100, size 124..136 (octal), checksum
 // 148..156, typeflag 156, ustar magic 257..263, prefix 345..500. Data is padded to 512.

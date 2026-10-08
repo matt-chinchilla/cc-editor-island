@@ -15,7 +15,7 @@
 //   10 ms of the open resolving; OK closes it. Its lines also reach the
 //   frame's console as "[wxLog][LEVEL] text", where the island reads them in full.
 // - Dialog buttons are DOM <button> elements (wx-dom.js): a click() on one is
-//   what a press is, so no pointer is synthesised.
+//   what a press is, so no pointer is synthesized.
 // - Module.kicadOpenFile resolves true on an import and false on a refusal
 //   ("File format is not supported", or Cancel on "Save Changes?").
 import { normalizePath } from '../src/stage';
@@ -93,7 +93,7 @@ const button = (v: DialogView, label: string): WxElement | undefined => buttonsO
 
 /**
  * Presses a registry button: the DOM <button> wx-dom.js made for it (its text,
- * and its centre within 3 px of the registry's) gets a click(), which wx-dom
+ * and its center within 3 px of the registry's) gets a click(), which wx-dom
  * turns into the button's own event. Answers whether one was found.
  */
 export function pressButton(w: ImportWindow, b: WxElement): boolean {
@@ -113,7 +113,7 @@ export function pressButton(w: ImportWindow, b: WxElement): boolean {
 /**
  * Closes a dialog without accepting anything it asks: Cancel, No or Close when
  * it has one, else its only button (a message box's OK), else the close box
- * of its title bar (wx closes a modal dialog as cancelled). Never Discard,
+ * of its title bar (wx closes a modal dialog as canceled). Never Discard,
  * never Save. Answers whether anything was pressed.
  */
 export function closeDialog(w: ImportWindow, v: DialogView): boolean {
@@ -273,7 +273,7 @@ export async function driveImport(w: ImportWindow, abs: string, opts: { deadline
     }
 
     // Expired: every dialog is closed (the progress reporter's Cancel stops the
-    // load), and a dialog that cancelling raises is closed too, before the answer.
+    // load), and a dialog that canceling raises is closed too, before the answer.
     const stopBy = Date.now() + t.importCloseMs;
     const tried = new Map<string, number>();
     while (!opts.closed() && Date.now() < stopBy) {

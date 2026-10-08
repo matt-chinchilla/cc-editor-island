@@ -17,7 +17,7 @@
 // painted picture, and while the reader has not steered, a resize or a
 // replaced drawing surface is fitted again.
 
-/** The engine's view: its centre (nm), its scale (pixels per nm) and the drawing's size (px). */
+/** The engine's view: its center (nm), its scale (pixels per nm) and the drawing's size (px). */
 export interface Viewport { cx: number; cy: number; scale: number; w: number; h: number }
 
 /** The view's waits, in ms (the responder's timing holds them; the unit tests shorten them). */
@@ -103,7 +103,7 @@ export function classifyPixels(px: ArrayLike<number>): Sample {
   let clear = 0;
   for (let i = 0; i < n; i++) {
     if (px[i * 4 + 3] < 250) clear++;
-    // Quantised to 5 bits a channel: the signature and the commonest color ignore one-step noise.
+    // Quantized to 5 bits a channel: the signature and the commonest color ignore one-step noise.
     const k = ((px[i * 4] >> 3) << 10) | ((px[i * 4 + 1] >> 3) << 5) | (px[i * 4 + 2] >> 3);
     counts.set(k, (counts.get(k) ?? 0) + 1);
   }
