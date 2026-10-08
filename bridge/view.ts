@@ -84,12 +84,12 @@ export function surfaceKey(doc: unknown): string {
   return `${s.id ?? ''}:${s.width}x${s.height}${lost ? ':lost' : ''}`;
 }
 
-/** A small readback of a picture: `blank` when it shows nothing but one colour, `sig` changes when the picture does. */
+/** A small readback of a picture: `blank` when it shows nothing but one color, `sig` changes when the picture does. */
 export interface Sample { blank: boolean; sig: string }
 
 const SAMPLE_W = 64;
 const SAMPLE_H = 40;
-/** A pixel counts as drawn when it differs from the picture's commonest colour by more than this (sum over r, g, b). */
+/** A pixel counts as drawn when it differs from the picture's commonest color by more than this (sum over r, g, b). */
 const DRAWN_DIFF = 24;
 /** A picture is blank when fewer than this share of its pixels are drawn, or this share or more are transparent. */
 const DRAWN_SHARE = 0.02;
@@ -103,7 +103,7 @@ export function classifyPixels(px: ArrayLike<number>): Sample {
   let clear = 0;
   for (let i = 0; i < n; i++) {
     if (px[i * 4 + 3] < 250) clear++;
-    // Quantised to 5 bits a channel: the signature and the commonest colour ignore one-step noise.
+    // Quantised to 5 bits a channel: the signature and the commonest color ignore one-step noise.
     const k = ((px[i * 4] >> 3) << 10) | ((px[i * 4 + 1] >> 3) << 5) | (px[i * 4 + 2] >> 3);
     counts.set(k, (counts.get(k) ?? 0) + 1);
   }
@@ -170,7 +170,7 @@ export type SettleResult = 'painted' | 'fitted' | 'unsupported' | 'timeout' | 'c
 /**
  * Fits the board once the drawing's size and surface have held for
  * viewStableMs, then waits until it is painted: the view holds, and two
- * readbacks in a row agree and show more than one colour (without a readback,
+ * readbacks in a row agree and show more than one color (without a readback,
  * the view holding after the fit is taken as painted: 'fitted'). A size that
  * changes meanwhile starts it over. Bounded by viewSettleMs. 'unsupported'
  * when the engine reports no viewport.

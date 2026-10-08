@@ -17,7 +17,7 @@ function fakeView(w = 1280, h = 800) {
   return { vp, win, fits, fit };
 }
 
-/** RGBA pixels: `n` of one colour, then `m` of another. */
+/** RGBA pixels: `n` of one color, then `m` of another. */
 function pixels(n: number, a: number[], m = 0, b: number[] = a): Uint8Array {
   const out = new Uint8Array((n + m) * 4);
   for (let i = 0; i < n + m; i++) out.set(i < n ? a : b, i * 4);
@@ -37,7 +37,7 @@ describe('readViewport', () => {
 
 describe('classifyPixels', () => {
   const BG = [0, 16, 35, 255];
-  it('a picture of one colour, or a transparent one, is blank; a drawn board is not', () => {
+  it('a picture of one color, or a transparent one, is blank; a drawn board is not', () => {
     expect(classifyPixels(pixels(2560, BG)).blank).toBe(true);
     expect(classifyPixels(pixels(2560, [0, 0, 0, 0])).blank).toBe(true);
     // The wx window fill the frame shows where no GL canvas is (measured on the site: 212, 208, 200).

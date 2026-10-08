@@ -733,7 +733,7 @@ test('sheets and layers answer from the engine, and fit refits the view', async 
 // which over the palette's black board turns the viewer's green pour olive;
 // the island stages <stem>.kicad_prl with every opacity at 1 when the host
 // sent none.
-test('pours: an opened board paints its pours opaque, in the palette colour the viewer draws', async ({ page }) => {
+test('pours: an opened board paints its pours opaque, in the palette color the viewer draws', async ({ page }) => {
   const frame = await boot(page, 'fixture=glasgow&frame=pcb', 'glasgow.kicad_pcb');
   expect(await request(page, 'view.fit')).toEqual({});
   // Glasgow's GND pour on In1.Cu covers the board under the front copper.
@@ -884,7 +884,7 @@ const rgbOf = (css: string): number[] => {
 };
 
 /**
- * Colours only one of the two palettes draws on a board: the circuitcenter
+ * Colors only one of the two palettes draws on a board: the circuitcenter
  * palette's front and back copper, via hole wall, board edge and front
  * silkscreen, read from the theme file; and KiCad's built-in default as it
  * shows over its own background (the board outline area, the ratsnest, a
@@ -898,9 +898,9 @@ const PALETTE_TELLS = {
 
 /**
  * The drawing as the frame shows it, read back whole from the surface the
- * engine draws into (its GL contexts keep their drawing buffer): the colour
- * at the four corners, how many distinct colours, and how many pixels show
- * a colour only the circuitcenter palette draws, or only KiCad's default.
+ * engine draws into (its GL contexts keep their drawing buffer): the color
+ * at the four corners, how many distinct colors, and how many pixels show
+ * a color only the circuitcenter palette draws, or only KiCad's default.
  */
 const drawing = (frame: Frame) => frame.evaluate((tells) => {
   const gls = [...document.querySelectorAll('canvas.gl-canvas')] as HTMLCanvasElement[];
@@ -913,15 +913,15 @@ const drawing = (frame: Frame) => frame.evaluate((tells) => {
   const px = ctx.getImageData(0, 0, c.width, c.height).data;
   const at = (x: number, y: number): string => { const i = (y * c.width + x) * 4; return `${px[i]},${px[i + 1]},${px[i + 2]},${px[i + 3]}`; };
   const near = (i: number, [r, g, b]: number[]): boolean => Math.abs(px[i] - r) <= 1 && Math.abs(px[i + 1] - g) <= 1 && Math.abs(px[i + 2] - b) <= 1;
-  const colours = new Set<number>();
+  const colors = new Set<number>();
   let circuitcenter = 0;
   let kicadDefault = 0;
   for (let i = 0; i < px.length; i += 4) {
-    colours.add((px[i] << 16) | (px[i + 1] << 8) | px[i + 2]);
+    colors.add((px[i] << 16) | (px[i + 1] << 8) | px[i + 2]);
     if (tells.circuitcenter.some((t) => near(i, t))) circuitcenter++;
     if (tells.kicadDefault.some((t) => near(i, t))) kicadDefault++;
   }
-  return { surface: src.id, w: c.width, h: c.height, corners: [at(3, 3), at(c.width - 4, 3), at(3, c.height - 4), at(c.width - 4, c.height - 4)], colours: colours.size, circuitcenter, kicadDefault };
+  return { surface: src.id, w: c.width, h: c.height, corners: [at(3, 3), at(c.width - 4, 3), at(3, c.height - 4), at(c.width - 4, c.height - 4)], colors: colors.size, circuitcenter, kicadDefault };
 }, PALETTE_TELLS);
 
 /** The circuitcenter palette's board background (theme/colors/circuitcenter.json), opaque. */
@@ -929,15 +929,15 @@ const BOARD_BG = [...rgbOf(PALETTE.board.background), 255].join(',');
 
 /** `top` drawn at `alpha` over `under`, as the drawing shows it: [r, g, b]. */
 const over = (top: number[], alpha: number, under: number[]): number[] => top.map((c, i) => Math.round(c * alpha + under[i] * (1 - alpha)));
-/** A palette copper colour drawn opaque over the board background, as the viewer draws a pour. */
+/** A palette copper color drawn opaque over the board background, as the viewer draws a pour. */
 const pourOverBlack = (layer: string): number[] => over(rgbOf(PALETTE.board.copper[layer]), 1, rgbOf(PALETTE.board.background));
 
 /**
- * The colour most of the drawing shows besides the board background, read
+ * The color most of the drawing shows besides the board background, read
  * back whole from the surface the engine draws into: on a board under a pour,
  * the top pour (its tracks, pads and text are a small share of the pixels).
  */
-const pourColour = (frame: Frame): Promise<number[]> => frame.evaluate((bg) => {
+const pourColor = (frame: Frame): Promise<number[]> => frame.evaluate((bg) => {
   const gls = [...document.querySelectorAll('canvas.gl-canvas')] as HTMLCanvasElement[];
   const src = gls.filter((c) => c.style.display !== 'none' && c.width > 0).sort((a, b) => b.width * b.height - a.width * a.height)[0] ?? (document.getElementById('canvas') as HTMLCanvasElement);
   const c = document.createElement('canvas');
@@ -956,13 +956,13 @@ const pourColour = (frame: Frame): Promise<number[]> => frame.evaluate((bg) => {
   return top == null ? [] : [top[0] >> 16, (top[0] >> 8) & 255, top[0] & 255];
 }, rgbOf(PALETTE.board.background));
 
-/** The largest per-channel difference between two colours (Infinity when one is missing). */
+/** The largest per-channel difference between two colors (Infinity when one is missing). */
 const channelDelta = (a: number[], b: number[]): number => (a.length === 3 && b.length === 3 ? Math.max(...a.map((v, i) => Math.abs(v - b[i]))) : Infinity);
 
 /** Waits until the drawing's top pour is within 12 per channel of `want`, and quotes it. */
 async function expectPour(frame: Frame, want: number[], label: string): Promise<void> {
-  await expect.poll(async () => channelDelta(await pourColour(frame), want), { timeout: 30_000, intervals: [500, 1_000] }).toBeLessThanOrEqual(12);
-  measure('pour', `${label}: ${(await pourColour(frame)).join(',')} (palette ${want.join(',')})`);
+  await expect.poll(async () => channelDelta(await pourColor(frame), want), { timeout: 30_000, intervals: [500, 1_000] }).toBeLessThanOrEqual(12);
+  measure('pour', `${label}: ${(await pourColor(frame)).join(',')} (palette ${want.join(',')})`);
 }
 
 /**
@@ -972,14 +972,14 @@ async function expectPour(frame: Frame, want: number[], label: string): Promise<
  */
 async function expectFittedBoard(frame: Frame, text: string, fill = 0.5): Promise<void> {
   const d = await drawing(frame);
-  expect(d.colours).toBeGreaterThan(8);
+  expect(d.colors).toBeGreaterThan(8);
   expect(d.corners).toEqual([BOARD_BG, BOARD_BG, BOARD_BG, BOARD_BG]);
   expect(d.circuitcenter).toBeGreaterThan(0);
   expect(d.kicadDefault).toBe(0);
   const v = await outlineInView(frame, text);
   expect(v.inside).toBe(true);
   expect(v.fill).toBeGreaterThan(fill);
-  measure('fitted', `${d.surface} ${d.w}x${d.h}, ${d.colours} colours, outline ${(v.fill * 100).toFixed(0)}% of the view`);
+  measure('fitted', `${d.surface} ${d.w}x${d.h}, ${d.colors} colors, outline ${(v.fill * 100).toFixed(0)}% of the view`);
 }
 
 const dialogsUp = async (frame: Frame): Promise<string[]> => (await visibleWx(frame, {})).filter((e) => /Dialog/.test(e.typeName)).map((e) => e.typeName);

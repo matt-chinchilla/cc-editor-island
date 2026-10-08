@@ -6,7 +6,7 @@
  * outranks the port's dark sheet whatever the injection order. Ship it in the iframe's own
  * <head> before main() so wx measures its widget clones with the native stack already set.
  *
- * Rule of the sheet: colour, font family, border, radius, shadow and padding only where the
+ * Rule of the sheet: color, font family, border, radius, shadow and padding only where the
  * box does not grow. No transition and no filter: anything that moves moves by transform and
  * opacity only. Every widget keeps its sizer-written left/top/width/height. Nothing here
  * changes a size, a font size or a line-height.
@@ -128,7 +128,7 @@ html.cc-editor.cc-editor #main-window { background: transparent !important; }
 
 /* ------------------------------------------------------------------ menubar: div[data-wx-menu-bar] > button.wx-menu-title
  * Opaque card-solid with a hairline under it so it stacks under our topbar as one instrument.
- * The hover colour the port writes inline on mouseenter loses to these !important rules. */
+ * The hover color the port writes inline on mouseenter loses to these !important rules. */
 html.cc-editor.cc-editor [data-wx-menu-bar] {
   background: var(--vw-card-solid) !important;
   border-bottom: 1px solid var(--vw-seam) !important;
@@ -147,10 +147,10 @@ html.cc-editor.cc-editor .wx-menu-title[aria-expanded="true"] {
 }
 
 /* ------------------------------------------------------------------ menu popups: body > div.wx-menu-popup (> div rows, no row class)
- * A menu floats over content. On desktop it is the glass tint laid over the solid card colour:
+ * A menu floats over content. On desktop it is the glass tint laid over the solid card color:
  * opaque, the same ink contrast as the old blurred glass, and no filter. Its box is content-sized by the browser,
  * so padding here is free. Rows: 6px 12px inside the port's 2px 14px 2px 6px would grow the
- * row, so we keep the port's padding and change only colour, radius and the separator. */
+ * row, so we keep the port's padding and change only color, radius and the separator. */
 html.cc-editor.cc-editor .wx-menu-popup {
   background: var(--vw-card) !important;
   border: 1px solid var(--vw-card-border) !important;
@@ -173,7 +173,7 @@ html.cc-editor.cc-editor .wx-menu-popup > div {
   font-weight: 500 !important;
 }
 /* Hover: lit ink on lit bg with the inset lit ring, replacing navy on white.
- * KNOWN GAP: disabled rows carry only an inline colour (#808080) and no attribute, so this
+ * KNOWN GAP: disabled rows carry only an inline color (#808080) and no attribute, so this
  * hover also inks them. Engineering item 8 adds data-wx-disabled; until then the :not() below is inert. */
 html.cc-editor.cc-editor .wx-menu-popup > div:hover:not([data-wx-disabled]) {
   background: var(--vw-lit-bg) !important;

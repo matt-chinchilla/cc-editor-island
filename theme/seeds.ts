@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
-// The Lab Sheet seeds: the three canvas colour themes, the toolbar layouts, the
+// The Lab Sheet seeds: the three canvas color themes, the toolbar layouts, the
 // hotkeys and the kicad_common.json keys the island writes before main().
 import palette from './colors/circuitcenter.json?raw';
 import light from './colors/circuitcenter-light.json?raw';
