@@ -13,7 +13,7 @@ import { installPickKeys, kindOf, libIds, parseIndexArgs, parseItemArgs, parsePr
 import { normalizePath, openStaged, PROJECT_ROOT, stageLocalSettings, stageProject, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
 import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
-import { driveImport, importable, importTarget } from './import';
+import { ALTIUM_PROJECT, ALTIUM_SHEET, DOCUMENT_EXTENSION as EXT, driveImport, hasExtension, importable, importCall, importTarget } from './import';
 import { dialogUp, dismissPopups, keysBlocked, watchMenus } from './modal';
 import { placeBlob, PlacementWatch } from './place';
 import { FitWatch, sampleDrawing, settleView, surfaceKey } from './view';
@@ -55,6 +55,8 @@ type Answer = { ok: true; result: Record<string, unknown> } | { ok: false; code:
 
 /** The engine window with the save callback slot the fork calls (save-flow.ts's SaveHookWindow). */
 type CollabWindow = ToolWindow & { kicadCollab?: { onSave?: (absPath: string) => void } };
+/** A project.import that passed its checks: the source, the files, and an Altium project's sheets and project file (sch frame). */
+type CheckedImport = { w: ToolWindow; FS: EmscriptenFS; open: string; files: Array<{ path: string; bytes: Uint8Array }>; altium?: { project: string; sheets: string[] } };
 
 /** MEMFS's errno for a busy directory (the engine's working directory). */
 const EBUSY = 10;
@@ -155,7 +157,6 @@ export const PICKER_CAP = 'picker';
 const FRAME_TYPE_RE = /Frame/;
 /** A sheet path as the engine reports it: "/" then one UUID and a slash per level. */
 const SHEET_PATH_RE = /^\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/)*$/;
-const EXT: Record<Frame, string> = { sch: '.kicad_sch', pcb: '.kicad_pcb' };
 
 const popupNote = (n: number): string => `${n} popup attempts blocked`;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -630,30 +631,38 @@ export function startResponder(opts: {
   }
 
   /**
-   * project.import's checks, in order: the args (bad_args), the frame's kind
-   * (a sch frame answers unsupported), the engine (not_ready, unsupported
-   * without the open or the board save), then busy while a load is parked or a
-   * dialog or a popup menu is up (nothing is changed). Answers the checked
-   * request, or the refusal.
+   * project.import's checks, in order: the args (bad_args: an `open` of the
+   * frame's own importable kinds; `sheets` and `project`, an Altium project's,
+   * only in a sch frame, only together, `open` one of the sheets), the engine
+   * (not_ready; unsupported without the frame's import call, and in a pcb frame
+   * the board save), then busy while a load is parked or a dialog or a popup
+   * menu is up (nothing is changed). Answers the checked request, or the refusal.
    */
-  function importCheck(a: unknown): Answer | { w: ToolWindow; FS: EmscriptenFS; open: string; files: Array<{ path: string; bytes: Uint8Array }> } {
+  function importCheck(a: unknown): Answer | CheckedImport {
     const op = 'project.import';
-    if (!isObj(a) || !onlyKeys(a, ['name', 'files', 'open', 'format'])) return fail('bad_args', op);
+    if (!isObj(a) || !onlyKeys(a, ['name', 'files', 'open', 'format', 'sheets', 'project'])) return fail('bad_args', op);
     if (typeof a.name !== 'string' || a.name.length > MAX_NAME || !Array.isArray(a.files) || a.files.length > MAX_FILES) return fail('bad_args', op);
-    if (typeof a.open !== 'string' || !importable(a.open)) return fail('bad_args', op);
+    if (typeof a.open !== 'string' || !importable(a.open, frame)) return fail('bad_args', op);
     if (a.format !== undefined && (typeof a.format !== 'string' || a.format.length > MAX_FORMAT)) return fail('bad_args', op);
+    let altium: CheckedImport['altium'];
+    if (a.sheets !== undefined || a.project !== undefined) {
+      if (frame !== 'sch' || !Array.isArray(a.sheets) || a.sheets.length === 0 || a.sheets.length > MAX_FILES) return fail('bad_args', op);
+      const sheets = a.sheets as unknown[];
+      if (!sheets.every((s): s is string => typeof s === 'string' && hasExtension(s, ALTIUM_SHEET)) || !sheets.includes(a.open)) return fail('bad_args', op);
+      if (typeof a.project !== 'string' || !hasExtension(a.project, ALTIUM_PROJECT)) return fail('bad_args', op);
+      altium = { project: a.project, sheets };
+    }
     const files: Array<{ path: string; bytes: Uint8Array }> = [];
     for (const f of a.files as unknown[]) {
       if (!isObj(f) || !onlyKeys(f, ['path', 'bytes']) || typeof f.path !== 'string' || !(f.bytes instanceof Uint8Array)) return fail('bad_args', op);
       files.push({ path: f.path, bytes: f.bytes });
     }
-    if (frame !== 'pcb') return fail('unsupported', 'project.import needs a pcb frame');
     const w = win;
     if (w?.FS == null) return fail('not_ready', op);
-    if (typeof w.Module?.kicadOpenFile !== 'function') return fail('unsupported', 'kicadOpenFile');
-    if (typeof w.Module?.kicadSaveBoard !== 'function') return fail('unsupported', 'kicadSaveBoard');
+    const needs = frame === 'pcb' ? ['kicadOpenFile', 'kicadSaveBoard'] as const : ['kicadImportSchematic'] as const;
+    for (const name of needs) if (typeof (w.Module as Record<string, unknown> | undefined)?.[name] !== 'function') return fail('unsupported', name);
     if (engineBusy() || keysBlocked(w)) return fail('busy', op);
-    return { w, FS: w.FS, open: a.open, files };
+    return { w, FS: w.FS, open: a.open, files, altium };
   }
 
   /** Starts a checked import off the request chain; its answer is sent when it ends. */
@@ -670,12 +679,14 @@ export function startResponder(opts: {
   }
 
   /**
-   * A foreign board, converted (PROTOCOL.md project.import): staged as
-   * project.open stages, opened through the engine's own open with its dialogs
-   * answered (bridge/import.ts), then saved through the engine as
-   * <stem>.kicad_pcb beside the source, which becomes the frame's document.
+   * A foreign board or schematic, converted (PROTOCOL.md project.import):
+   * staged as project.open stages, imported through the engine's own importer
+   * with its dialogs answered (bridge/import.ts: kicadOpenFile for a board,
+   * kicadImportSchematic for a schematic or an Altium project), then saved
+   * through the engine as <stem>.kicad_pcb or <stem>.kicad_sch (an Altium
+   * project's root: <project stem>.kicad_sch), which becomes the frame's document.
    */
-  async function projectImport(a: { w: ToolWindow; FS: EmscriptenFS; open: string; files: Array<{ path: string; bytes: Uint8Array }> }): Promise<Answer> {
+  async function projectImport(a: CheckedImport): Promise<Answer> {
     const { w, FS } = a;
     const deadline = Date.now() + timing.importMs;
     emit({ type: 'ev.state', phase: 'staging' });
@@ -690,32 +701,47 @@ export function startResponder(opts: {
     removeTree(FS, root);
     const project = stageProject(w, SLUG, a.files);
     staged = project;
-    const source = normalizePath(a.open);
-    if (source == null || !project.written.includes(source)) return fail('open_failed', a.open);
-    // KiCad's open loads the project named after the source, its settings included.
-    displaySettings = stageLocalSettings(w, project, source);
-    const target = importTarget(source);
-    if (target == null) return fail('open_failed', `no path for the converted board of ${source}`);
+    const written = (p: string): string | null => { const n = normalizePath(p); return n != null && project.written.includes(n) ? n : null; };
+    const source = written(a.open);
+    if (source == null) return fail('open_failed', a.open);
+    let altium: { project: string; sheets: string[] } | undefined;
+    if (a.altium != null) {
+      const sheets: string[] = [];
+      for (const p of a.altium.sheets) {
+        const n = written(p);
+        if (n == null) return fail('open_failed', p);
+        sheets.push(n);
+      }
+      const pro = written(a.altium.project);
+      if (pro == null) return fail('open_failed', a.altium.project);
+      altium = { project: pro, sheets };
+    }
+    const target = importTarget(altium?.project ?? source, frame);
+    const kind = frame === 'pcb' ? 'board' : 'schematic';
+    if (target == null) return fail('open_failed', `no path for the converted ${kind} of ${source}`);
+    // KiCad loads the project named after the file it opens (a board's source;
+    // a schematic's converted root), its display settings included.
+    displaySettings = stageLocalSettings(w, project, frame === 'pcb' ? source : target);
     emit({ type: 'ev.state', phase: 'opening' });
-    const drove = await driveImport(w, `${root}/${source}`, { deadline, timing, closed: () => closed, engineBusy });
+    const drove = await driveImport(w, importCall(frame, root, source, altium), { deadline, timing, closed: () => closed, engineBusy });
     if (closed) return fail('import_failed', 'the frame closed');
     if (!drove.ok) {
       await settleChrome(w);   // a load that ran may have shown the menu bar
       return fail('import_failed', drove.message);
     }
     // A new document: the leave prompt guards it again, until the save below
-    // hands the host its bytes (saveBoard quiets it for SAVE_QUIET_MS).
+    // hands the host its bytes (each save quiets it for SAVE_QUIET_MS).
     quietClear();
-    const left = deadline - Date.now();
-    const saved = left > 0 ? await saveBoard(w, FS, target, Math.min(timing.applyMs, left)) : fail('save_failed', target);
+    const saved = await saveConverted(w, FS, target, deadline - Date.now());
     if (closed) return fail('import_failed', 'the frame closed');
-    if (!saved.ok) {
+    if (!saved) {
+      stopSaveHook();
       await settleChrome(w);
-      return fail('import_failed', `the converted board was not saved (${target})`);
+      return fail('import_failed', `the converted ${kind} was not saved (${target})`);
     }
     opened = target;
-    startSaveHook(w);   // from here on the converted board is the document, as after project.open
-    editDepth = editBaseline(w);   // the converted board's depth: ev.edited's baseline, never sent
+    if (saveHook == null) startSaveHook(w);   // from here on the converted file is the document, as after project.open
+    editDepth = editBaseline(w);   // the converted document's depth: ev.edited's baseline, never sent
     const chrome = await settleChrome(w);
     // The importer's dialogs took wx's keyboard focus and left it off the
     // drawing (e2e 2026-10-02: key.press F1 no longer zoomed): the boot's own
@@ -739,6 +765,20 @@ export function startResponder(opts: {
     console.debug('[import] view', view, `${Date.now() - t0} ms`);
     if (view !== 'unsupported') fitWatch?.arm(view === 'painted' || view === 'fitted');
     return ok({ opened: target, dropped: project.dropped, warnings: drove.warnings, chrome });
+  }
+
+  /**
+   * The converted document's first save, which hands the host its bytes, within
+   * what is left of the import's time (`left` ms): a board through
+   * kicadSaveBoard; a schematic through KiCad's own Save with the save hook
+   * live, every sheet file and the project file reported, the root among them.
+   */
+  async function saveConverted(w: ToolWindow, FS: EmscriptenFS, target: string, left: number): Promise<boolean> {
+    if (left <= 0) return false;
+    if (frame === 'pcb') return (await saveBoard(w, FS, target, Math.min(timing.applyMs, left))).ok;
+    startSaveHook(w);
+    const saved = await saveSchematic(w, target);
+    return saved.ok && Array.isArray(saved.result.saved) && saved.result.saved.includes(target);
   }
 
   /** Any of KiCad's window chrome is on screen. */

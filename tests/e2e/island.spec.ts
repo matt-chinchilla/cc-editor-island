@@ -1083,7 +1083,7 @@ test('import: an EasyEDA Pro project (.zip) and an EasyEDA Standard board (.json
   }
 });
 
-test('import: a file no importer reads is import_failed with KiCad\'s message box closed, and a schematic frame refuses the op', async ({ page }) => {
+test('import: a file no importer reads is import_failed with KiCad\'s message box closed, and a schematic frame refuses a board', async ({ page }) => {
   const frame = await boot(page, 'frame=pcb');
   await expect(importBoard(page, 'notes.brd', 'this is not a board\n')).rejects.toThrow(/import_failed: .*File format is not supported/);
   expect(await dialogsUp(frame)).toEqual([]);
@@ -1091,7 +1091,67 @@ test('import: a file no importer reads is import_failed with KiCad\'s message bo
   // The host's keys work again at once.
   expect(await request(page, 'view.fit')).toEqual({});
   await boot(page, 'frame=sch');
-  await expect(importBoard(page, 'test_eagle.brd')).rejects.toThrow('unsupported: project.import needs a pcb frame');
+  await expect(importBoard(page, 'test_eagle.brd')).rejects.toThrow('bad_args: project.import');
+});
+
+// Altium (island v0.2.3-cc8): KiCad's qa samples at the engine's pin, in
+// tests/fixtures/altium (served at /fixtures/altium/): the HiFive1 board, and
+// the eDP adapter project (its .PrjPcb, two .SchDoc sheets and its .PcbDoc).
+
+/**
+ * project.import of files of tests/fixtures/altium, each staged under its own
+ * name (`as` renames one, the host's .kicad_pro), with `args`' open, sheets
+ * and project. Rejects with "code: message". The seconds run from the request
+ * to the answer, the fetches excluded.
+ */
+async function importAltium(page: Page, names: readonly string[], args: { open: string; sheets?: string[]; project?: string }, extra: Array<{ from: string; as: string }> = []): Promise<{ result: ImportResult; seconds: number }> {
+  const [result, ms] = await page.evaluate(async ([ns, a, x]) => {
+    const get = async (url: string): Promise<Uint8Array> => new Uint8Array(await (await fetch(url)).arrayBuffer());
+    const files = [
+      ...await Promise.all(ns.map(async (n) => ({ path: n, bytes: await get(`/fixtures/altium/${encodeURIComponent(n)}`) }))),
+      ...await Promise.all(x.map(async (e) => ({ path: e.as, bytes: await get(`/fixtures/${e.from}`) }))),
+    ];
+    const t0 = performance.now();
+    const r = await (window as unknown as Harness).__bridge.request('project.import', { name: a.project ?? a.open, files, ...a });
+    return [r, performance.now() - t0] as const;
+  }, [names, args, extra] as const);
+  return { result: result as unknown as ImportResult, seconds: ms / 1000 };
+}
+
+test('import: an Altium board (HiFive1) converts in the pcb frame and saves HiFive1.B01.kicad_pcb', async ({ page }) => {
+  const frame = await boot(page, 'frame=pcb');
+  const { result, seconds } = await importAltium(page, ['HiFive1.B01.PcbDoc'], { open: 'HiFive1.B01.PcbDoc' });
+  measure('import altium board', `${seconds.toFixed(1)} s (HiFive1.B01.PcbDoc, 2.4 MB), warnings: ${JSON.stringify(result.warnings)}`);
+  expect(result.opened).toBe('HiFive1.B01.kicad_pcb');
+  expect(result.dropped).toEqual([]);
+  expect(Array.isArray(result.warnings)).toBe(true);
+  expect(result.warnings.every((l) => typeof l === 'string' && l.length <= 200)).toBe(true);
+  expect(await dialogsUp(frame)).toEqual([]);
+  const text = await savedText(page, 'HiFive1.B01.kicad_pcb');
+  const facts = boardFacts(text);
+  expect(facts.head).toBe('kicad_pcb');
+  expect(facts.footprints).toBeGreaterThan(100);
+});
+
+test('import: an Altium project (eDP adapter) converts in the sch frame: both sheets under the root, the kicad_pro saved', async ({ page }) => {
+  const frame = await boot(page, 'frame=sch');
+  const sheets = ['it6251_core.SchDoc', 'power.SchDoc'];
+  // As the site stages it: the sheets, the .PrjPcb, and a .kicad_pro of KiCad's template named after the project.
+  const { result, seconds } = await importAltium(page, [...sheets, 'eDP_adapter_dvt1.PrjPcb'], { open: 'it6251_core.SchDoc', sheets, project: 'eDP_adapter_dvt1.PrjPcb' }, [{ from: 'blank/blank.kicad_pro', as: 'eDP_adapter_dvt1.kicad_pro' }]);
+  measure('import altium project', `${seconds.toFixed(1)} s (eDP_adapter_dvt1.PrjPcb, 2 sheets, 0.8 MB), warnings: ${JSON.stringify(result.warnings)}`);
+  expect(result.opened).toBe('eDP_adapter_dvt1.kicad_sch');
+  expect(result.dropped).toEqual([]);
+  expect(Array.isArray(result.warnings)).toBe(true);
+  expect(await dialogsUp(frame)).toEqual([]);
+  const saved = new Set((await events(page)).filter((e) => e.type === 'ev.saved').map((e) => e.path));
+  for (const p of ['eDP_adapter_dvt1.kicad_sch', 'it6251_core.kicad_sch', 'power.kicad_sch', 'eDP_adapter_dvt1.kicad_pro']) expect(saved).toContain(p);
+  for (const p of ['eDP_adapter_dvt1.kicad_sch', 'it6251_core.kicad_sch', 'power.kicad_sch']) expect(readSexpr(await savedText(page, p))[0]).toBe('kicad_sch');
+  // KiCad's project import put both sheets below the root.
+  const tree = await request(page, 'sheet.tree') as { sheets: Array<{ path: string; depth: number; file: string }> };
+  const below = tree.sheets.filter((s) => s.path !== '/');
+  expect(below).toHaveLength(2);
+  expect(below.every((s) => s.depth >= 1)).toBe(true);
+  expect(below.map((s) => s.file.slice(s.file.lastIndexOf('/') + 1)).sort()).toEqual(['it6251_core.kicad_sch', 'power.kicad_sch']);
 });
 
 test('import: a converted board paints its pours opaque once filled, and the host\'s own display settings stand', async ({ page }) => {
