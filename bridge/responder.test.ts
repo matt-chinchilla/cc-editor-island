@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Chirichella Inc.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memfsProjectDir } from '../loader/src/wasm/constants';
-import { IMPORT_ISSUES_LINE, importCall, importTarget, importable, reportLines, tapEngineLog } from './import';
+import { emptySheet, importCall, importTarget, importable, reportLines, SCHEMATIC_ISSUES_LINE, tapEngineLog } from './import';
 import { describeError, startResponder, timing } from './responder';
 import { isQuiet, resetUnloadQuietForTest } from '../src/unload-quiet';
 
@@ -1572,11 +1572,19 @@ describe('project.import', () => {
   ];
   const EDP_ARGS = { name: 'eDP', files: EDP, open: 'eDP/it6251_core.SchDoc', sheets: ['eDP/power.SchDoc', 'eDP/it6251_core.SchDoc'], project: 'eDP/eDP_adapter_dvt1.PrjPcb', format: 'altium' };
 
-  it('a sch frame imports an Altium project through kicadImportSchematic: project_file and sch0.. absolute and sorted, the root saved as <project stem>.kicad_sch with its sheets and project file', async () => {
+  it('a sch frame opens KiCad\'s empty sheet at the target first (the import names the root after the loaded project), then imports the Altium project through kicadImportSchematic: project_file and sch0.. absolute and sorted, the root saved as <project stem>.kicad_sch with its sheets and project file', async () => {
     const eng = fakeEngine();
     const call = schImport(eng, { root: 'eDP/eDP_adapter_dvt1.kicad_sch', sheets: ['eDP/it6251_core.kicad_sch', 'eDP/power.kicad_sch'] });
+    const stub = `${ROOT}/eDP/eDP_adapter_dvt1.kicad_sch`;
+    let atOpen: string | null = null;
+    eng.Module.kicadOpenFile.mockImplementation((p: string) => { eng.opened.push(p); const f = eng.files.get(p); atOpen = f == null ? null : new TextDecoder().decode(f); });
     const { send, got } = importer('?frame=sch', eng);
     const answer = await send('project.import', EDP_ARGS);
+    // The stub: KiCad's empty sheet, written at the target and opened through project.open's own open, before the import.
+    expect(eng.opened).toEqual([stub]);
+    expect(atOpen).toMatch(/^\(kicad_sch\n\t\(version 20231120\)/);
+    expect(atOpen).toBe(emptySheet(/\(uuid "([0-9a-f-]{36})"\)/.exec(atOpen!)![1]));
+    expect(eng.Module.kicadOpenFile.mock.invocationCallOrder[0]).toBeLessThan(call.mock.invocationCallOrder[0]);
     expect(call).toHaveBeenCalledTimes(1);
     const [path, type, props] = call.mock.calls[0];
     expect(path).toBe('');
@@ -1596,12 +1604,41 @@ describe('project.import', () => {
     expect(eng.ctrlS).toHaveBeenCalledTimes(2);
   });
 
-  it('a lone schematic imports with KiCad\'s type for its extension and no properties, saved as <stem>.kicad_sch beside it', async () => {
+  it('a lone schematic opens the empty sheet at <stem>.kicad_sch beside it (no .kicad_pro staged: KiCad\'s defaults, as for a board), then imports with KiCad\'s type for its extension and no properties', async () => {
     const eng = fakeEngine();
     const call = schImport(eng, { root: 'sheets/core.kicad_sch' });
     const { send } = importer('?frame=sch', eng);
     expect(await send('project.import', { name: 'x', files: [{ path: 'sheets/core.SchDoc', bytes: b('cfb') }], open: 'sheets/core.SchDoc' })).toEqual({ id: 1, ok: true, result: { opened: 'sheets/core.kicad_sch', dropped: [], warnings: [], chrome: false } });
+    expect(eng.opened).toEqual([`${ROOT}/sheets/core.kicad_sch`]);
     expect(call.mock.calls).toEqual([[`${ROOT}/sheets/core.SchDoc`, 'Altium', '{}']]);
+  });
+
+  it('a stub open that does not settle (a KiCad dialog holds the load) answers open_failed naming the target, and nothing is imported', async () => {
+    const eng = fakeEngine();
+    const call = schImport(eng, { root: 'x.kicad_sch' });
+    eng.Module.kicadOpenFile.mockImplementation((p: string) => {
+      eng.opened.push(p);
+      (eng.Module as Record<string, unknown>).kicadOpenFileBusy = () => true;
+      eng.showModal({ id: 'ask', title: 'Confirmation', x: 406, y: 334, w: 468, h: 132, texts: ['This file was created by a newer version of KiCad.'], buttons: [{ label: '&Yes' }, { label: '&No' }] });
+    });
+    const { send } = importer('?frame=sch', eng);
+    expect(await send('project.import', { name: 'x', files: [{ path: 'x.SchDoc', bytes: b('cfb') }], open: 'x.SchDoc' })).toEqual({ id: 1, ok: false, error: { code: 'open_failed', message: 'x.kicad_sch' } });
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it('a board import treats a "Report" box as any other dialog: only a schematic import\'s issues report is pressed', async () => {
+    const eng = fakeEngine();
+    let busy = false;
+    (eng.Module as { kicadOpenFileBusy: () => boolean }).kicadOpenFileBusy = () => busy;
+    eng.Module.kicadOpenFile.mockImplementation(() => {
+      busy = true;
+      return new Promise<boolean>((resolve) => {
+        const rep: FakeModal = eng.showModal({ id: 'rep', title: 'Report', x: 310, y: 190, w: 660, h: 420, html: true, buttons: [{ label: '&OK', on: () => { eng.hideModal(rep); busy = false; resolve(true); } }] });
+      });
+    });
+    const { send } = importer(undefined, eng);
+    expect(await send('project.import', { name: 'a', files: [brd], open: brd.path })).toEqual({ id: 1, ok: false, error: { code: 'import_failed', message: 'dialog "Report"' } });
+    expect(eng.clicks).toEqual(['Report:OK']);
   });
 
   it('the import call: each extension names KiCad\'s own importer type, and an Altium project lists its sheets as KiCad\'s project import does', () => {
@@ -1694,7 +1731,7 @@ describe('project.import', () => {
     const eng = fakeEngine();
     schImport(eng, { root: 'x.kicad_sch', report: true });
     const { send } = importer('?frame=sch', eng);
-    expect(await send('project.import', { name: 'x', files: [{ path: 'x.SchDoc', bytes: b('cfb') }], open: 'x.SchDoc' })).toEqual({ id: 1, ok: true, result: { opened: 'x.kicad_sch', dropped: [], warnings: [IMPORT_ISSUES_LINE], chrome: false } });
+    expect(await send('project.import', { name: 'x', files: [{ path: 'x.SchDoc', bytes: b('cfb') }], open: 'x.SchDoc' })).toEqual({ id: 1, ok: true, result: { opened: 'x.kicad_sch', dropped: [], warnings: [SCHEMATIC_ISSUES_LINE], chrome: false } });
     expect(eng.clicks).toEqual(['Report:OK']);
     expect(eng.modals).toEqual([]);
   });

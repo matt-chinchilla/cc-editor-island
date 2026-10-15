@@ -13,7 +13,7 @@ import { installPickKeys, kindOf, libIds, parseIndexArgs, parseItemArgs, parsePr
 import { normalizePath, openStaged, PROJECT_ROOT, stageLocalSettings, stageProject, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
 import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
-import { ALTIUM_PROJECT, ALTIUM_SHEET, DOCUMENT_EXTENSION as EXT, driveImport, hasExtension, importable, importCall, importTarget } from './import';
+import { ALTIUM_PROJECT, ALTIUM_SHEET, DOCUMENT_EXTENSION as EXT, driveImport, emptySheet, hasExtension, importable, importCall, importTarget } from './import';
 import { dialogUp, dismissPopups, keysBlocked, watchMenus } from './modal';
 import { placeBlob, PlacementWatch } from './place';
 import { FitWatch, sampleDrawing, settleView, surfaceKey } from './view';
@@ -723,6 +723,8 @@ export function startResponder(opts: {
     // a schematic's converted root), its display settings included.
     displaySettings = stageLocalSettings(w, project, frame === 'pcb' ? source : target);
     emit({ type: 'ev.state', phase: 'opening' });
+    if (frame === 'sch' && !(await openStub(w, FS, project, target, deadline))) return fail('open_failed', target);
+    if (closed) return fail('import_failed', 'the frame closed');
     const drove = await driveImport(w, importCall(frame, root, source, altium), { deadline, timing, closed: () => closed, engineBusy });
     if (closed) return fail('import_failed', 'the frame closed');
     if (!drove.ok) {
@@ -765,6 +767,30 @@ export function startResponder(opts: {
     console.debug('[import] view', view, `${Date.now() - t0} ms`);
     if (view !== 'unsupported') fitWatch?.arm(view === 'painted' || view === 'fitted');
     return ok({ opened: target, dropped: project.dropped, warnings: drove.warnings, chrome });
+  }
+
+  /**
+   * A schematic import's first step: KiCad's import names the converted root
+   * after the project loaded (Prj(), files-io.cpp importFile at the pin), and
+   * a blank frame has none. So KiCad's empty sheet is written at the target (a
+   * staged file of that name is replaced) and opened through project.open's
+   * own open, which loads <target stem>.kicad_pro beside it (the host's, or
+   * KiCad's defaults when none was staged, as for a board). Answers whether
+   * the load settled within the import's time with nothing of KiCad's left up.
+   */
+  async function openStub(w: ToolWindow, FS: EmscriptenFS, project: StagedProject, target: string, deadline: number): Promise<boolean> {
+    try {
+      const slash = target.lastIndexOf('/');
+      if (slash > 0) FS.mkdirTree(`${root}/${target.slice(0, slash)}`);
+      FS.writeFile(`${root}/${target}`, new TextEncoder().encode(emptySheet(crypto.randomUUID())));
+    } catch {
+      return false;
+    }
+    if (!project.written.includes(target)) project.written.push(target);
+    const how = await withTimeout(openStaged(w, project, target, (m) => console.debug('[import] stub', m)), Math.max(0, deadline - Date.now()));
+    if (closed || how === 'failed' || how === 'timeout') return false;
+    // A load parked on a KiCad dialog would take the import's call into it.
+    return !engineBusy() && !keysBlocked(w);
   }
 
   /**

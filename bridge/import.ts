@@ -28,7 +28,7 @@
 //   modal inside the call: titled "Report", an HTML box over a lone OK. wxHTML
 //   draws the lines on a canvas, so neither the DOM nor the element registry
 //   holds their text, and the importer never wxLogs them: the island presses OK
-//   and says only that KiCad reported issues (IMPORT_ISSUES_LINE).
+//   and says only that KiCad reported issues (SCHEMATIC_ISSUES_LINE).
 // - An IO_ERROR or an exception shows KiCad's error box ("Error", the message
 //   over a details pane and OK): the import fails, named by its text.
 // - The call resolves true only when a converted sheet holds items.
@@ -66,8 +66,20 @@ export const DOCUMENT_EXTENSION: Readonly<Record<Frame, string>> = Object.freeze
 /** The answer's warnings: at most this many lines, each at most WARNING_CHARS characters. */
 export const MAX_WARNINGS = 40;
 export const WARNING_CHARS = 200;
-/** The warning an import answers when KiCad showed its issues report ("Report"), whose lines the island cannot read. */
-export const IMPORT_ISSUES_LINE = 'KiCad\'s importer reported issues during the conversion. Review the converted design.';
+/** The warning a schematic import answers when KiCad showed its issues report ("Report"), whose lines the island cannot read. */
+export const SCHEMATIC_ISSUES_LINE = 'KiCad reported issues while importing the schematic; the converted sheets may be incomplete.';
+
+/**
+ * KiCad's empty sheet (tests/fixtures/blank/blank.kicad_sch, with `uuid`),
+ * which a schematic import opens at its target first: KiCad's import names
+ * the converted root after the project loaded, and an open loads
+ * <stem>.kicad_pro beside the file. The format version is KiCad 8's on
+ * purpose: an older file opens without a prompt (the libs e2e opens this one),
+ * a newer one than the engine's raises KiCad's newer-file prompt.
+ */
+export function emptySheet(uuid: string): string {
+  return `(kicad_sch\n\t(version 20231120)\n\t(generator "eeschema")\n\t(generator_version "8.0")\n\t(uuid "${uuid}")\n\t(paper "A4")\n\t(lib_symbols)\n\t(sheet_instances\n\t\t(path "/"\n\t\t\t(page "1")\n\t\t)\n\t)\n)\n`;
+}
 
 /** The import's waits, in ms (the responder's timing holds them; measured above). */
 export interface ImportTiming {
@@ -223,14 +235,15 @@ const ISSUES_TITLE = 'Report';
  * failure even with a details pane), a wxLog report (OK: a collapsible details
  * pane, or a message box titled "<app> Information", "... Warning" or "...
  * Error" with OK alone), a schematic importer's issues report (OK alone, under
- * an HTML box or titled "Report"), or anything else.
+ * an HTML box or titled "Report"; only when `schematic`, the board importers
+ * show none), or anything else.
  */
-export function classify(v: DialogView, title: string): DialogKind {
+export function classify(v: DialogView, title: string, schematic = false): DialogKind {
   if (isProgressDialog(v)) return 'progress';
   if (button(v, 'Auto-Match Layers') != null) return 'layers';
   if (title === ERROR_TITLE) return 'other';
   const okAlone = buttonsOf(v).length === 1 && button(v, 'OK') != null;
-  if (okAlone && (title === ISSUES_TITLE || v.parts.some((e) => /HtmlWindow/i.test(e.typeName)))) return 'issues';
+  if (schematic && okAlone && (title === ISSUES_TITLE || v.parts.some((e) => /HtmlWindow/i.test(e.typeName)))) return 'issues';
   if (v.parts.some((e) => /CollapsiblePane/.test(e.typeName))) return 'report';
   if (/\S (Information|Warning|Error)$/.test(title) && okAlone) return 'report';
   return 'other';
@@ -295,7 +308,7 @@ export type DriveResult = { ok: true; warnings: string[] } | { ok: false; messag
  * kicadImportSchematic for a schematic) and answers its dialogs until the
  * import is over and nothing has shown for timing.importQuietMs, or until
  * `deadline`. On success the warnings are the log report's lines, and
- * IMPORT_ISSUES_LINE when an issues report ("Report") showed; any other
+ * SCHEMATIC_ISSUES_LINE when a schematic's issues report ("Report") showed; any other
  * dialog fails the import, named, and is closed; so is every dialog on expiry.
  * `closed()` ends the drive at once (the frame is going away).
  */
@@ -308,7 +321,7 @@ export async function driveImport(w: ImportWindow, call: ImportCall, opts: { dea
   let opened: 'pending' | 'refused' | 'imported' | 'rejected' = 'pending';
   let failure: string | null = null;
   const reported: string[] = [];
-  /** An issues report ("Report") was pressed: its lines are on a canvas, so one line of the island's says so. */
+  /** A schematic's issues report ("Report") was pressed: its lines are on a canvas, so one line of the island's says so. */
   let issues = false;
   /** Per dialog id: when the island last pressed in it, and the layer mapping's two steps. */
   const pressed = new Map<string, { at: number; auto?: number; ok?: number }>();
@@ -325,7 +338,7 @@ export async function driveImport(w: ImportWindow, call: ImportCall, opts: { dea
       let shown = false;
       for (const v of visibleDialogs(w)) {
         const title = dialogTitle(w, v);
-        const kind = classify(v, title);
+        const kind = classify(v, title, call.name === 'kicadImportSchematic');
         if (kind === 'progress') continue;
         shown = true;
         // wx's ids are addresses: a later dialog may reuse one, so the kind is part of the key.
@@ -360,7 +373,7 @@ export async function driveImport(w: ImportWindow, call: ImportCall, opts: { dea
         if (now - quietSince >= t.importQuietMs) {
           if (failure != null) return { ok: false, message: failure };
           const lines = reportLines(tap.lines().length > 0 ? tap.lines() : reported);
-          if (opened === 'imported') return { ok: true, warnings: issues ? reportLines([IMPORT_ISSUES_LINE, ...lines]) : lines };
+          if (opened === 'imported') return { ok: true, warnings: issues ? reportLines([SCHEMATIC_ISSUES_LINE, ...lines]) : lines };
           // A refusal: the first line the engine logged says why, when it logged one.
           const why = opened === 'rejected' ? 'the engine\'s open failed' : 'the engine could not import the file';
           return { ok: false, message: (lines.length > 0 ? `${why}: ${lines[0]}` : why).slice(0, WARNING_CHARS) };
