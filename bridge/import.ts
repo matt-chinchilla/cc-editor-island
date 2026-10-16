@@ -308,7 +308,26 @@ export function tapEngineLog(w: ImportWindow): { lines(): string[]; stop(): void
   };
 }
 
-export type DriveResult = { ok: true; warnings: string[] } | { ok: false; message: string };
+/** `stopped`: the engine call trapped or left its load guard held, so the engine is dead (nothing more may enter it). */
+export type DriveResult = { ok: true; warnings: string[] } | { ok: false; message: string; stopped?: true };
+
+/**
+ * A WebAssembly trap: the engine's code stopped mid-call (RuntimeError:
+ * unreachable, a memory access out of bounds; JSPI's SuspendError). A trap
+ * runs no C++ destructor, so the load's guard and its progress dialog are left
+ * behind, and the instance's state is not to be trusted. Duck-typed by name
+ * too, for an error that crossed a realm.
+ */
+export function isEngineTrap(err: unknown): boolean {
+  if (typeof WebAssembly !== 'undefined' && typeof WebAssembly.RuntimeError === 'function' && err instanceof WebAssembly.RuntimeError) return true;
+  const name = err != null && typeof err === 'object' ? (err as { name?: unknown }).name : undefined;
+  return name === 'RuntimeError' || name === 'SuspendError';
+}
+
+/** An engine error in one line: "RuntimeError: unreachable". */
+function errorLine(err: unknown): string {
+  try { return String(err).replace(/\s+/g, ' ').trim() || 'unknown error'; } catch { return 'unknown error'; }
+}
 
 /**
  * Runs the import's engine call (`call`: kicadOpenFile for a board,
@@ -317,6 +336,10 @@ export type DriveResult = { ok: true; warnings: string[] } | { ok: false; messag
  * `deadline`. On success the warnings are the log report's lines, and
  * SCHEMATIC_ISSUES_LINE when a schematic's issues report ("Report") showed; any other
  * dialog fails the import, named, and is closed; so is every dialog on expiry.
+ * A call that rejects as a trap, or that leaves the load guard held, ends the
+ * drive at once with `stopped` and no dialog touched: the engine is dead, so
+ * nothing more enters it (measured 2026-10-16: the Altium board's KIID trap
+ * held its guard forever, and the drive used to wait out its whole bound).
  * `closed()` ends the drive at once (the frame is going away).
  */
 export async function driveImport(w: ImportWindow, call: ImportCall, opts: { deadline: number; timing: ImportTiming; closed: () => boolean; engineBusy: () => boolean }): Promise<DriveResult> {
@@ -328,7 +351,8 @@ export async function driveImport(w: ImportWindow, call: ImportCall, opts: { dea
   if (start == null || typeof mod?.[call.name] !== 'function') return { ok: false, message: `${call.name} is missing` };
   const tap = tapEngineLog(w);
   /** The call's answer: pending until its Promise settles. */
-  let opened: 'pending' | 'refused' | 'imported' | 'rejected' = 'pending';
+  // Asserted, not annotated: it is set in the call's callbacks, so the checks below must not narrow it to 'pending'.
+  let opened = 'pending' as 'pending' | 'refused' | 'imported' | 'rejected';
   let failure: string | null = null;
   const reported: string[] = [];
   /** A schematic's issues report ("Report") was pressed: its lines are on a canvas, so one line of the island's says so. */
@@ -338,11 +362,16 @@ export async function driveImport(w: ImportWindow, call: ImportCall, opts: { dea
   try {
     let ret: unknown;
     try { ret = start(); } catch (err) { return { ok: false, message: `${call.name} threw: ${String(err)}`.slice(0, WARNING_CHARS) }; }
-    Promise.resolve(ret).then((v) => { opened = v === true ? 'imported' : 'refused'; }, () => { opened = 'rejected'; });
+    /** What the call rejected with. */
+    let rejection: unknown = null;
+    Promise.resolve(ret).then((v) => { opened = v === true ? 'imported' : 'refused'; }, (err: unknown) => { rejection = err; opened = 'rejected'; });
 
     let quietSince: number | null = null;
     for (;;) {
       if (opts.closed()) return { ok: false, message: 'the frame closed' };
+      if (opened === 'rejected' && (isEngineTrap(rejection) || opts.engineBusy())) {
+        return { ok: false, message: `the engine stopped: ${errorLine(rejection)}`.slice(0, WARNING_CHARS), stopped: true };
+      }
       const now = Date.now();
       if (now >= opts.deadline) break;
       let shown = false;
@@ -384,8 +413,9 @@ export async function driveImport(w: ImportWindow, call: ImportCall, opts: { dea
           if (failure != null) return { ok: false, message: failure };
           const lines = reportLines(tap.lines().length > 0 ? tap.lines() : reported);
           if (opened === 'imported') return { ok: true, warnings: issues ? reportLines([SCHEMATIC_ISSUES_LINE, ...lines]) : lines };
-          // A refusal: the first line the engine logged says why, when it logged one.
-          const why = opened === 'rejected' ? 'the engine\'s open failed' : 'the engine could not import the file';
+          // A refusal: the first line the engine logged says why, when it logged one;
+          // a rejection that left the engine idle (no trap) is named by its error.
+          const why = opened === 'rejected' ? `the engine's open failed (${errorLine(rejection)})` : 'the engine could not import the file';
           return { ok: false, message: (lines.length > 0 ? `${why}: ${lines[0]}` : why).slice(0, WARNING_CHARS) };
         }
       } else {

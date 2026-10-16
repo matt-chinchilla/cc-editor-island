@@ -1600,9 +1600,9 @@ describe('sheets, layers and fit', () => {
 
 describe('project.import', () => {
   /** A connected responder over a booted engine; `send` answers the request's own reply, `got` holds everything. */
-  function importer(search = '?frame=pcb&theme=day', eng = fakeEngine()) {
+  function importer(search = '?frame=pcb&theme=day', eng = fakeEngine(), onEngineStopped?: (why: string) => void) {
     const { page, parent } = fakePage(search);
-    const r = startResponder({ parentOrigin: PARENT, page });
+    const r = startResponder({ parentOrigin: PARENT, page, onEngineStopped });
     const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
     r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
     let id = 0;
@@ -1804,6 +1804,61 @@ describe('project.import', () => {
       expect(await send('project.import', { name: 'b', files: [{ path: `b.${ext}`, bytes: b('cfb') }], open: `b.${ext}` })).toEqual({ id: ++id, ok: true, result: { opened: 'b.kicad_pcb', dropped: [], warnings: [], chrome: false } });
     }
     expect(eng.opened).toEqual([`${ROOT}/HiFive1.B01.PcbDoc`, `${ROOT}/b.CMPcbDoc`, `${ROOT}/b.cspcbdoc`, `${ROOT}/b.SWPcbDoc`]);
+  });
+
+  it('a trapped import call (it rejects with a RuntimeError, its load guard and "Load PCB" left behind) answers import_failed at once naming it, enters the engine no more, then stops the frame', async () => {
+    const eng = fakeEngine();
+    // As measured on engine run 4 (2026-10-16): the open shows its progress
+    // dialog, then traps; no destructor runs, so the busy guard holds for good,
+    // and the engine's mutators (kicadSetChrome) queue behind it forever.
+    let busy = false;
+    (eng.Module as { kicadOpenFileBusy: () => boolean }).kicadOpenFileBusy = () => busy;
+    eng.Module.kicadOpenFile.mockImplementation(() => {
+      busy = true;
+      eng.showModal({ id: 'load', title: 'Load PCB', x: 474, y: 334, w: 332, h: 131, gauge: true, texts: ['Elapsed time:'], buttons: [{ label: '&Cancel' }] });
+      return Promise.reject(new WebAssembly.RuntimeError('unreachable'));
+    });
+    eng.Module.kicadSetChrome.mockImplementation((() => new Promise(() => undefined)) as unknown as (on: boolean) => boolean);
+    const terminalize = vi.fn();
+    (eng.win as unknown as Record<string, unknown>).__wxScheduler = { terminalize };
+    // As src/main.ts's die(): the fatal state goes out on the same port, after the answer.
+    const stops: string[] = [];
+    let emit: ((ev: { type: 'ev.state'; phase: string; detail: string }) => void) | null = null;
+    const { r, send, got } = importer(undefined, eng, (why) => { stops.push(why); emit?.({ type: 'ev.state', phase: 'fatal', detail: 'crash' }); });
+    emit = (ev) => r.emit(ev);
+    const t0 = Date.now();
+    const answer = await send('project.import', { name: 'HiFive', files: [{ path: 'HiFive1.B01.PcbDoc', bytes: b('cfb') }], open: 'HiFive1.B01.PcbDoc' }, 1_000);
+    expect(answer).toEqual({ id: 1, ok: false, error: { code: 'import_failed', message: 'the engine stopped: RuntimeError: unreachable' } });
+    expect(Date.now() - t0).toBeLessThan(1_000);   // never the 60 s bound, never the chrome settle's 30 s
+    expect(eng.Module.kicadSetChrome).not.toHaveBeenCalled();
+    expect(eng.Module.kicadSaveBoard).not.toHaveBeenCalled();
+    expect(terminalize).toHaveBeenCalledWith('island import', 'the engine stopped: RuntimeError: unreachable');
+    expect(stops).toEqual(['the engine stopped: RuntimeError: unreachable']);
+    await settle(20);
+    const answerAt = got.findIndex((m) => m.id === 1);
+    const fatalAt = got.findIndex((m) => m.type === 'ev.state' && m.phase === 'fatal');
+    expect(answerAt).toBeGreaterThanOrEqual(0);
+    expect(fatalAt).toBeGreaterThan(answerAt);
+    // Every later request but shutdown answers at once, and nothing reaches the engine.
+    expect(await send('view.fit', undefined, 500)).toEqual({ id: 2, ok: false, error: { code: 'not_ready', message: 'the engine stopped' } });
+    expect(await send('project.import', { name: 'b', files: [{ path: 'b.PcbDoc', bytes: b('cfb') }], open: 'b.PcbDoc' }, 500)).toEqual({ id: 3, ok: false, error: { code: 'not_ready', message: 'the engine stopped' } });
+    expect(eng.Module.kicadOpenFile).toHaveBeenCalledTimes(1);
+    expect(stops).toHaveLength(1);
+    expect(await send('shutdown', undefined, 500)).toEqual({ id: 4, ok: true, result: {} });
+  });
+
+  it('a rejected import call that left the engine idle (no trap) is the engine\'s open failure, named by its error, and the frame goes on', async () => {
+    const eng = fakeEngine();
+    (eng.Module as { kicadOpenFileBusy: () => boolean }).kicadOpenFileBusy = () => false;
+    eng.Module.kicadOpenFile.mockImplementation(() => Promise.reject(new Error('the C++ exception escaped')));
+    const terminalize = vi.fn();
+    (eng.win as unknown as Record<string, unknown>).__wxScheduler = { terminalize };
+    const stops: string[] = [];
+    const { send } = importer(undefined, eng, (why) => stops.push(why));
+    expect(await send('project.import', { name: 'b', files: [{ path: 'b.PcbDoc', bytes: b('cfb') }], open: 'b.PcbDoc' })).toEqual({ id: 1, ok: false, error: { code: 'import_failed', message: 'the engine\'s open failed (Error: the C++ exception escaped)' } });
+    expect(terminalize).not.toHaveBeenCalled();
+    expect(stops).toEqual([]);
+    expect(await send('view.fit')).toMatchObject({ id: 2, ok: true });
   });
 
   it('each frame imports only its own kind: a board, sheets or a project in the wrong frame, or sheets and a project out of step, answer bad_args, and nothing is staged', async () => {

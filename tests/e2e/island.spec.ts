@@ -1136,6 +1136,62 @@ test('import: an Altium board (HiFive1) converts in the pcb frame and saves HiFi
   expect(facts.footprints).toBeGreaterThan(100);
 });
 
+test('import: the eDP adapter\'s Altium board converts in the pcb frame and saves eDP_adapter_dvt1.kicad_pcb with its 115 footprints', async ({ page }) => {
+  // The board of the site's whole-project path (board first, then the sheets). Measured 2026-10-16 on engine
+  // run 5: 4.1 to 4.2 s, 1,675,474 bytes, 115 footprints, Chromium and Firefox alike.
+  const frame = await boot(page, 'frame=pcb');
+  const { result, seconds } = await importAltium(page, ['eDP_adapter_dvt1.PcbDoc'], { open: 'eDP_adapter_dvt1.PcbDoc' });
+  measure('import altium board', `${seconds.toFixed(1)} s (eDP_adapter_dvt1.PcbDoc, 2.1 MB), warnings: ${JSON.stringify(result.warnings)}`);
+  expect(result.opened).toBe('eDP_adapter_dvt1.kicad_pcb');
+  expect(result.dropped).toEqual([]);
+  expect(result.warnings.every((l) => typeof l === 'string' && l.length <= 200)).toBe(true);
+  expect(seconds).toBeLessThan(20);
+  expect(await dialogsUp(frame)).toEqual([]);
+  const facts = boardFacts(await savedText(page, 'eDP_adapter_dvt1.kicad_pcb'));
+  expect(facts.head).toBe('kicad_pcb');
+  expect(facts.footprints).toBe(115);
+});
+
+/**
+ * project.import of the first 64 KB of an Altium fixture (cut in the page, never
+ * a committed file): the request's rejection text and the seconds it took.
+ */
+async function importTruncated(page: Page, name: string, bytes = 65_536): Promise<{ error: string; seconds: number }> {
+  const [error, ms] = await page.evaluate(async ([n, len]) => {
+    const all = new Uint8Array(await (await fetch(`/fixtures/altium/${encodeURIComponent(n)}`)).arrayBuffer());
+    const t0 = performance.now();
+    try {
+      await (window as unknown as Harness).__bridge.request('project.import', { name: n, files: [{ path: n, bytes: all.slice(0, len) }], open: n });
+      return ['answered ok', performance.now() - t0] as const;
+    } catch (err) {
+      return [String(err), performance.now() - t0] as const;
+    }
+  }, [name, bytes] as const);
+  return { error, seconds: ms / 1000 };
+}
+
+test('import: a truncated Altium board and a truncated Altium sheet answer import_failed with KiCad\'s own sentence within seconds, never at the time limit', async ({ page }) => {
+  // Plan Review Focus 4, measured 2026-10-16 on engine run 5: KiCad's Altium readers refuse a cut file with
+  // their "File corrupted" IO_ERROR in an Error box (no trap), the board in 2.2 s and the sheet in 2.5 s on
+  // both browsers; the frame closes the box, holds no dialog after, and takes the next request.
+  let frame = await boot(page, 'frame=pcb');
+  const board = await importTruncated(page, 'HiFive1.B01.PcbDoc');
+  measure('import truncated board', `${board.seconds.toFixed(2)} s (HiFive1.B01.PcbDoc, first 64 KB of 2.4 MB): ${board.error}`);
+  expect(board.error).toMatch(/import_failed: dialog "Error": Error loading PCB '[^']*HiFive1\.B01\.PcbDoc'\. IO_ERROR: File corrupted/);
+  expect(board.seconds).toBeLessThan(10);
+  expect(await dialogsUp(frame)).toEqual([]);
+  expect(await request(page, 'view.fit')).toEqual({});
+
+  frame = await boot(page, 'frame=sch');
+  const sheet = await importTruncated(page, 'power.SchDoc');
+  measure('import truncated sheet', `${sheet.seconds.toFixed(2)} s (power.SchDoc, first 64 KB of 199 KB): ${sheet.error}`);
+  expect(sheet.error).toMatch(/import_failed: dialog "Error": Error loading schematic '[^']*power\.SchDoc'\. IO_ERROR: File corrupted/);
+  expect(sheet.seconds).toBeLessThan(10);
+  expect(await dialogsUp(frame)).toEqual([]);
+  expect(await request(page, 'view.fit')).toEqual({});
+  expect((await events(page)).filter((e) => e.type === 'ev.state' && e.phase === 'fatal')).toEqual([]);
+});
+
 /** What a converted sheet file holds: its top form, its format version, its placed symbols, its sheet symbols and every instance path it names. */
 function sheetFacts(text: string) {
   const root = readSexpr(text);

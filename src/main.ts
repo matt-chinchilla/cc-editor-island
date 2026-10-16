@@ -82,7 +82,13 @@ async function main(): Promise<void> {
   // Hello goes out now, before anything heavy; events queue until the port connects.
   // The responder also takes KiCad's place keys from here on (ev.pick, src/picker.ts),
   // so its listeners run before the engine's own.
-  const responder = startResponder({ parentOrigin: parent, page: window, onShutdown: () => { libsWarmUp.abort(); return teardown.shutdown(); } });
+  const responder = startResponder({
+    parentOrigin: parent,
+    page: window,
+    onShutdown: () => { libsWarmUp.abort(); return teardown.shutdown(); },
+    // An import's call trapped (its answer is already out): the engine is dead, as after an abort.
+    onEngineStopped: (why) => die('crash', why),
+  });
   const popups = installWindowOpenWrapper(
     window,
     (topic) => responder.emit({ type: 'ev.help', topic }),

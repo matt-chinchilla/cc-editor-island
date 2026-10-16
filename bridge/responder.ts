@@ -262,8 +262,14 @@ export function startResponder(opts: {
   page: Window;
   /** The engine's teardown, run by the shutdown op before it answers (src/teardown.ts). */
   onShutdown?: () => Promise<void>;
+  /**
+   * An import's engine call stopped the engine (a trap, bridge/import.ts
+   * isEngineTrap): called once, after that import's answer went out, with the
+   * answer's message. src/main.ts shows the fatal screen and emits ev.state fatal.
+   */
+  onEngineStopped?: (why: string) => void;
 }): Responder {
-  const { parentOrigin, page, onShutdown } = opts;
+  const { parentOrigin, page, onShutdown, onEngineStopped } = opts;
   const nonce = randomNonce();
   const root = `${PROJECT_ROOT}/${SLUG}`;
   let port: MessagePort | null = null;
@@ -298,6 +304,14 @@ export function startResponder(opts: {
 
   /** Set by the shutdown op or close(): from then on nothing is answered or emitted. */
   let closed = false;
+  /**
+   * Why the engine stopped (an import's call trapped): from then on every
+   * request but shutdown and the library reads answers not_ready at once, and
+   * nothing enters the engine. Null while it runs.
+   */
+  let stopped: string | null = null;
+  /** onEngineStopped was called (once). */
+  let stopSignaled = false;
   /** A project.import is running: every request but shutdown answers busy until it answers. */
   let importing = false;
   /** A shutdown request passed its checks: the port closes once it is answered. */
@@ -449,6 +463,8 @@ export function startResponder(opts: {
     // An import runs off the request chain (it may take a minute): what arrives
     // meanwhile is answered at once, busy, except a shutdown, which ends it.
     if (importing && op !== 'shutdown') return reply(id, fail('busy', op));
+    // A stopped engine is never entered again: the host reloads the frame.
+    if (stopped != null && op !== 'shutdown') return reply(id, fail('not_ready', 'the engine stopped'));
     if (op === 'project.import') return startImport(id, data.args);
     try {
       reply(id, await run(op, data.args));
@@ -703,7 +719,24 @@ export function startResponder(opts: {
       .then((a) => {
         importing = false;
         reply(id, a);
+        // The answer first, then the frame's fatal state (the host reloads on it).
+        if (stopped != null && !stopSignaled) {
+          stopSignaled = true;
+          try { onEngineStopped?.(stopped); } catch (err) { console.debug('[import] onEngineStopped', err); }
+        }
       });
+  }
+
+  /**
+   * The engine stopped inside an import's call (a trap): remembered, so no
+   * request enters it again, and the scheduler's terminal gate is latched as
+   * boot's onAbort latches it (no parked activation resumes into the damaged
+   * module; src/teardown.ts's shutdown skips the unwinding of a terminal one).
+   */
+  function stopEngine(w: ToolWindow, why: string): void {
+    stopped = why;
+    const s = (w as { __wxScheduler?: { terminalize?: (site: string, e?: unknown) => void } }).__wxScheduler;
+    try { s?.terminalize?.('island import', why); } catch (err) { console.debug('[import] terminalize', err); }
   }
 
   /**
@@ -759,6 +792,12 @@ export function startResponder(opts: {
     const drove = await driveImport(w, importCall(frame, root, source, altium), { deadline, timing, closed: () => closed, engineBusy });
     if (closed) return fail('import_failed', 'the frame closed');
     if (!drove.ok) {
+      // A stopped engine is not called again, not even to settle the chrome
+      // (its mutators would queue behind the held load guard for good).
+      if (drove.stopped === true) {
+        stopEngine(w, drove.message);
+        return fail('import_failed', drove.message);
+      }
       await settleChrome(w);   // a load that ran may have shown the menu bar
       return fail('import_failed', drove.message);
     }
