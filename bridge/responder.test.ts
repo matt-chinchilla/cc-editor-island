@@ -4,6 +4,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { memfsProjectDir } from '../loader/src/wasm/constants';
 import { emptySheet, importCall, importTarget, importable, reportLines, SCHEMATIC_ISSUES_LINE, tapEngineLog } from './import';
 import { describeError, startResponder, timing } from './responder';
+import { createFatalGate, type FatalGate } from '../src/fatal';
 import { isQuiet, resetUnloadQuietForTest } from '../src/unload-quiet';
 
 const PARENT = 'http://circuitcenter.localhost';
@@ -1806,7 +1807,20 @@ describe('project.import', () => {
     expect(eng.opened).toEqual([`${ROOT}/HiFive1.B01.PcbDoc`, `${ROOT}/b.CMPcbDoc`, `${ROOT}/b.cspcbdoc`, `${ROOT}/b.SWPcbDoc`]);
   });
 
-  it('a trapped import call (it rejects with a RuntimeError, its load guard and "Load PCB" left behind) answers import_failed at once naming it, enters the engine no more, then stops the frame', async () => {
+  /**
+   * A responder wired to the frame's real fatal gate as src/main.ts wires it:
+   * onEngineStopped is the gate's importStopped, and a fatal is emitted on the port.
+   */
+  function gated(eng = fakeEngine()) {
+    const shown: Array<string | undefined> = [];
+    let gate: FatalGate | null = null;
+    const io = importer(undefined, eng, (why) => gate?.importStopped(why));
+    gate = createFatalGate({ started: () => false, show: (code) => shown.push(code), emit: (code) => io.r.emit({ type: 'ev.state', phase: 'fatal', detail: code }), oom: () => false, log: () => undefined });
+    const fatals = () => io.got.filter((m) => m.type === 'ev.state' && m.phase === 'fatal');
+    return { ...io, gate, shown, fatals };
+  }
+
+  it('a trapped import call (it rejects with a RuntimeError, its load guard and "Load PCB" left behind) answers import_failed at once naming it, enters the engine no more, and stops the frame with no ev.state fatal', async () => {
     const eng = fakeEngine();
     // As measured on engine run 4 (2026-10-16): the open shows its progress
     // dialog, then traps; no destructor runs, so the busy guard holds for good,
@@ -1821,11 +1835,7 @@ describe('project.import', () => {
     eng.Module.kicadSetChrome.mockImplementation((() => new Promise(() => undefined)) as unknown as (on: boolean) => boolean);
     const terminalize = vi.fn();
     (eng.win as unknown as Record<string, unknown>).__wxScheduler = { terminalize };
-    // As src/main.ts's die(): the fatal state goes out on the same port, after the answer.
-    const stops: string[] = [];
-    let emit: ((ev: { type: 'ev.state'; phase: string; detail: string }) => void) | null = null;
-    const { r, send, got } = importer(undefined, eng, (why) => { stops.push(why); emit?.({ type: 'ev.state', phase: 'fatal', detail: 'crash' }); });
-    emit = (ev) => r.emit(ev);
+    const { send, gate, shown, fatals } = gated(eng);
     const t0 = Date.now();
     const answer = await send('project.import', { name: 'HiFive', files: [{ path: 'HiFive1.B01.PcbDoc', bytes: b('cfb') }], open: 'HiFive1.B01.PcbDoc' }, 1_000);
     expect(answer).toEqual({ id: 1, ok: false, error: { code: 'import_failed', message: 'the engine stopped: RuntimeError: unreachable' } });
@@ -1833,18 +1843,30 @@ describe('project.import', () => {
     expect(eng.Module.kicadSetChrome).not.toHaveBeenCalled();
     expect(eng.Module.kicadSaveBoard).not.toHaveBeenCalled();
     expect(terminalize).toHaveBeenCalledWith('island import', 'the engine stopped: RuntimeError: unreachable');
-    expect(stops).toEqual(['the engine stopped: RuntimeError: unreachable']);
+    // The frame shows its fatal screen, and sends no ev.state fatal: the answer and the
+    // not_ready gate tell the host, which may be mid hand-off (re-review 2026-10-16).
+    expect(shown).toEqual(['crash']);
+    expect(gate.isFatal()).toBe(true);
+    // The dead engine's later uncaught trap sends none either: the frame is latched.
+    gate.uncaught('RuntimeError: unreachable');
     await settle(20);
-    const answerAt = got.findIndex((m) => m.id === 1);
-    const fatalAt = got.findIndex((m) => m.type === 'ev.state' && m.phase === 'fatal');
-    expect(answerAt).toBeGreaterThanOrEqual(0);
-    expect(fatalAt).toBeGreaterThan(answerAt);
+    expect(fatals()).toEqual([]);
     // Every later request but shutdown answers at once, and nothing reaches the engine.
     expect(await send('view.fit', undefined, 500)).toEqual({ id: 2, ok: false, error: { code: 'not_ready', message: 'the engine stopped' } });
     expect(await send('project.import', { name: 'b', files: [{ path: 'b.PcbDoc', bytes: b('cfb') }], open: 'b.PcbDoc' }, 500)).toEqual({ id: 3, ok: false, error: { code: 'not_ready', message: 'the engine stopped' } });
     expect(eng.Module.kicadOpenFile).toHaveBeenCalledTimes(1);
-    expect(stops).toHaveLength(1);
+    expect(shown).toEqual(['crash']);
+    expect(fatals()).toEqual([]);
     expect(await send('shutdown', undefined, 500)).toEqual({ id: 4, ok: true, result: {} });
+  });
+
+  it('a crash outside an import still sends ev.state fatal crash on the port', async () => {
+    const { send, gate, shown, fatals } = gated();
+    expect(await send('view.fit')).toMatchObject({ id: 1, ok: true });
+    gate.uncaught('RuntimeError: memory access out of bounds');
+    await settle(20);
+    expect(shown).toEqual(['crash']);
+    expect(fatals()).toEqual([{ type: 'ev.state', phase: 'fatal', detail: 'crash' }]);
   });
 
   it('a rejected import call that left the engine idle (no trap) is the engine\'s open failure, named by its error, and the frame goes on', async () => {

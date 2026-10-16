@@ -265,7 +265,9 @@ export function startResponder(opts: {
   /**
    * An import's engine call stopped the engine (a trap, bridge/import.ts
    * isEngineTrap): called once, after that import's answer went out, with the
-   * answer's message. src/main.ts shows the fatal screen and emits ev.state fatal.
+   * answer's message. src/main.ts shows the fatal screen and emits NO ev.state
+   * fatal (src/fatal.ts importStopped): the answer and the not_ready gate tell the
+   * host, and a host mid hand-off must not be interrupted.
    */
   onEngineStopped?: (why: string) => void;
 }): Responder {
@@ -719,7 +721,7 @@ export function startResponder(opts: {
       .then((a) => {
         importing = false;
         reply(id, a);
-        // The answer first, then the frame's fatal state (the host reloads on it).
+        // The answer first, then the frame's fatal screen (no event; the host closes or reboots the frame).
         if (stopped != null && !stopSignaled) {
           stopSignaled = true;
           try { onEngineStopped?.(stopped); } catch (err) { console.debug('[import] onEngineStopped', err); }

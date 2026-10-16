@@ -20,6 +20,7 @@ import { startResponder } from '../bridge/responder';
 import { seedsFor } from '../theme/seeds';
 import { engineBase } from './assets';
 import { parentOriginFor, parseBoot } from './cc-config';
+import { createFatalGate } from './fatal';
 import { cleanDetail, hideScreens, showScreen } from './screens';
 import { statusFatal } from './status';
 import { FRAME_TOKEN, frameToTool, type Frame } from './types';
@@ -38,13 +39,6 @@ declare const __LIBS_TAG__: string;        // define'd by vite.config.ts from PI
 
 /** How long the engine may take, after its scripts ran, to show its editor frame. */
 const ENGINE_UP_TIMEOUT_MS = 180_000;
-/**
- * The fatal details the island emits and renders: its own closed words. Engine
- * and loader text (error messages, status lines) goes to the console only.
- */
-type FatalCode = 'memory' | 'crash' | 'boot_failed' | 'engine_timeout' | 'no_container' | 'webgl_lost';
-/** Uncaught errors that mean the wasm instance is gone (the loader's fatal-screen set). */
-const TERMINAL = /RuntimeError|\babort(ed)?\b|\bindex out of bounds|indirect call signature|memory access out of bounds|unreachable executed|null function or function signature/i;
 
 /** kicadWebOpenTool receives a tool name, sometimes a path, sometimes with .exe. */
 function frameForTool(raw: string): Frame | null {
@@ -86,8 +80,9 @@ async function main(): Promise<void> {
     parentOrigin: parent,
     page: window,
     onShutdown: () => { libsWarmUp.abort(); return teardown.shutdown(); },
-    // An import's call trapped (its answer is already out): the engine is dead, as after an abort.
-    onEngineStopped: (why) => die('crash', why),
+    // An import's call trapped (its answer is already out): the fatal screen, and no
+    // ev.state fatal (src/fatal.ts), so a host mid hand-off is not interrupted.
+    onEngineStopped: (why) => gate.importStopped(why),
   });
   const popups = installWindowOpenWrapper(
     window,
@@ -95,24 +90,20 @@ async function main(): Promise<void> {
     (attempts) => responder.popupBlocked(attempts),
   );
 
-  let fatal = false;
-  const die = (code: FatalCode, raw?: string): void => {
-    if (fatal || teardown.started()) return;
-    fatal = true;
-    if (raw != null && raw !== '') console.error('[editor] fatal', raw);
-    showScreen('fatal', code);
-    responder.emit({ type: 'ev.state', phase: 'fatal', detail: code });
-  };
+  const gate = createFatalGate({
+    started: () => teardown.started(),
+    show: (code) => showScreen('fatal', code),
+    emit: (code) => responder.emit({ type: 'ev.state', phase: 'fatal', detail: code }),
+    oom: looksLikeOom,
+    log: (raw) => console.error('[editor] fatal', raw),
+  });
+  const die = gate.die;
   const loaderStatus = (text: string): void => {
     const code = statusFatal(text);
     if (code != null) die(code, text);
     else console.debug('[status]', text);
   };
-  const onUncaught = (text: string): void => {
-    if (teardown.started()) return;
-    if (looksLikeOom(text)) die('memory', text);
-    else if (TERMINAL.test(text)) die('crash', text);
-  };
+  const onUncaught = (text: string): void => gate.uncaught(text);
   window.addEventListener('error', (e) => isShutdownError(e.error) || onUncaught(e.error instanceof Error ? e.error.message : String(e.message ?? '')));
   window.addEventListener('unhandledrejection', (e) => isShutdownError(e.reason) || onUncaught(e.reason instanceof Error ? e.reason.message : String(e.reason ?? '')));
   let closed = false;
@@ -131,8 +122,7 @@ async function main(): Promise<void> {
     // The teardown's unwinding destroys the editor's frame too: that is no Quit.
     if (teardown.started()) return;
     closing();
-    if (fatal) return;
-    fatal = true;
+    if (!gate.latch()) return;
     showScreen('fatal');
   });
   // After the quit latch (it must still see an unload) and before the engine's
@@ -195,7 +185,7 @@ async function main(): Promise<void> {
       // code; its text is still only logged.
       onStatus: (text) => loaderStatus(text),
       onProgress: (loaded, total) => {
-        if (fatal || teardown.started() || !(total > 0)) return;
+        if (gate.isFatal() || teardown.started() || !(total > 0)) return;
         showScreen('loading', undefined, loaded / total);
         const detail = heartbeat(loaded, total, performance.now());
         if (detail != null) responder.emit({ type: 'ev.state', phase: 'booting', detail });
@@ -206,7 +196,7 @@ async function main(): Promise<void> {
   } catch (err) {
     die('boot_failed', err instanceof Error ? err.message : String(err));
   }
-  if (fatal || teardown.started()) return;
+  if (gate.isFatal() || teardown.started()) return;
   // The editor wears the viewer (spec D16): KiCad's menu bar, toolbars, panes
   // and status bar never show; the page owns the chrome. kicadSetChrome is
   // synchronous and resizes the GL canvas before it returns (spike 2026-10-01).
