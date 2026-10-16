@@ -2,6 +2,8 @@ export {};
 // Modified by Circuit Center on 2026-09-30: EmscriptenFS declares readdir, stat,
 // isDir and rmdir (Emscripten's FS has them; the responder removes the
 // project folder with them).
+// Modified by Circuit Center on 2026-10-15: KicadImportExports declares the
+// engine exports project.import calls, kicadImportSchematic among them.
 
 declare global {
   interface EmscriptenFS {
@@ -45,6 +47,22 @@ declare global {
       label: string,
       options?: Record<string, unknown>,
     ): WxElementInfo[];
+  }
+
+  /**
+   * The engine exports project.import calls (bridge/import.ts), declared where
+   * the bridge reads them; Module itself stays `any`. kicadImportSchematic is
+   * our engine build's (island v0.2.3-cc8): KiCad's File > Import of a
+   * non-KiCad schematic, or of an Altium project when `path` is "" and
+   * `propsJson` names project_file and sch0, sch1, ...; it parks like
+   * kicadOpenFile (kicadOpenFileBusy covers both) and resolves true only when
+   * a converted sheet holds items.
+   */
+  interface KicadImportExports {
+    kicadOpenFile?: (path: string) => unknown;
+    kicadOpenFileBusy?: () => boolean;
+    kicadSaveBoard?: (path: string) => unknown;
+    kicadImportSchematic?: (path: string, typeName: string, propsJson: string) => unknown;
   }
 
   interface Window {

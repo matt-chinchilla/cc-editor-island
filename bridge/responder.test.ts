@@ -1535,7 +1535,7 @@ describe('project.import', () => {
    * sheets are the engine's: written here so the frame's Ctrl+S saves them, and
    * named by the sheet tree.
    */
-  function schImport(eng: ReturnType<typeof fakeEngine>, o: { root: string; sheets?: string[]; report?: boolean; result?: boolean }) {
+  function schImport(eng: ReturnType<typeof fakeEngine>, o: { root: string; sheets?: string[]; report?: boolean | { title: string; html: boolean }; result?: boolean }) {
     let busy = false;
     (eng.Module as Record<string, unknown>).kicadOpenFileBusy = () => busy;
     const call = vi.fn((_path: string, _type: string, _props: string) => {
@@ -1552,7 +1552,8 @@ describe('project.import', () => {
             ...sheets.map((s, i) => ({ depth: 1, file: `${ROOT}/${s}`, name: s.slice(s.lastIndexOf('/') + 1, -'.kicad_sch'.length), page: String(i + 2), parent: '/', path: `/0000000${i}/` })),
           ] }));
           if (!o.report) { done(true); return; }
-          const rep: FakeModal = eng.showModal({ id: 'rep', title: 'Report', x: 310, y: 190, w: 660, h: 420, html: true, buttons: [{ label: '&OK', on: () => { eng.hideModal(rep); done(true); } }] });
+          const look = o.report === true ? { title: 'Report', html: true } : o.report;
+          const rep: FakeModal = eng.showModal({ id: 'rep', title: look.title, x: 310, y: 190, w: 660, h: 420, html: look.html, buttons: [{ label: '&OK', on: () => { eng.hideModal(rep); done(true); } }] });
         };
         const progress: FakeModal = eng.showModal({ id: 'load', title: 'Import Schematic', x: 474, y: 334, w: 332, h: 131, gauge: true, texts: ['Elapsed time:'], buttons: [{ label: '&Cancel', on: () => finish(false) }] });
         setTimeout(() => finish(o.result ?? true), 10);
@@ -1648,7 +1649,7 @@ describe('project.import', () => {
     for (const [file, type] of types) expect(importCall('sch', R, file)).toEqual({ name: 'kicadImportSchematic', args: [`/p/${file}`, type, '{}'] });
     // A std::set of wxString: duplicates once, in code point order (upper case before lower, an astral letter after U+FFFD).
     const call = importCall('sch', R, 'b/z.SchDoc', { project: 'p.PrjPcb', sheets: ['b/z.SchDoc', 'b/\u{1D400}.SchDoc', 'b/�.SchDoc', 'b/A.SchDoc', 'a/m.SchDoc', 'b/z.SchDoc'] });
-    expect(call.name).toBe('kicadImportSchematic');
+    if (call.name !== 'kicadImportSchematic') throw new Error(`not a schematic import: ${call.name}`);
     expect(call.args.slice(0, 2)).toEqual(['', 'Altium']);
     expect(JSON.parse(call.args[2])).toEqual({ project_file: '/p/p.PrjPcb', sch0: '/p/a/m.SchDoc', sch1: '/p/b/A.SchDoc', sch2: '/p/b/z.SchDoc', sch3: '/p/b/�.SchDoc', sch4: '/p/b/\u{1D400}.SchDoc' });
     // Each frame's own kinds, and the converted file's path.
@@ -1734,6 +1735,52 @@ describe('project.import', () => {
     expect(await send('project.import', { name: 'x', files: [{ path: 'x.SchDoc', bytes: b('cfb') }], open: 'x.SchDoc' })).toEqual({ id: 1, ok: true, result: { opened: 'x.kicad_sch', dropped: [], warnings: [SCHEMATIC_ISSUES_LINE], chrome: false } });
     expect(eng.clicks).toEqual(['Report:OK']);
     expect(eng.modals).toEqual([]);
+  });
+
+  it('the issues report is recognized by either half alone: its "Report" title over a lone OK, or its HTML box over a lone OK', async () => {
+    for (const look of [{ title: 'Report', html: false }, { title: 'Import issues', html: true }]) {
+      const eng = fakeEngine();
+      schImport(eng, { root: 'x.kicad_sch', report: look });
+      const { send } = importer('?frame=sch', eng);
+      expect(await send('project.import', { name: 'x', files: [{ path: 'x.SchDoc', bytes: b('cfb') }], open: 'x.SchDoc' })).toEqual({ id: 1, ok: true, result: { opened: 'x.kicad_sch', dropped: [], warnings: [SCHEMATIC_ISSUES_LINE], chrome: false } });
+      expect(eng.clicks).toEqual([`${look.title}:OK`]);
+    }
+    // Neither half: a lone OK under another title and no HTML box is any other dialog, and fails the import.
+    const eng = fakeEngine();
+    schImport(eng, { root: 'x.kicad_sch', report: { title: 'Notice', html: false } });
+    const { send } = importer('?frame=sch', eng);
+    expect(await send('project.import', { name: 'x', files: [{ path: 'x.SchDoc', bytes: b('cfb') }], open: 'x.SchDoc' })).toEqual({ id: 1, ok: false, error: { code: 'import_failed', message: 'dialog "Notice"' } });
+  });
+
+  it('a board import keeps its rules for KiCad\'s "Error" box with a details pane: pressed as a log report, the refusal answered as before', async () => {
+    const eng = fakeEngine();
+    let busy = false;
+    (eng.Module as { kicadOpenFileBusy: () => boolean }).kicadOpenFileBusy = () => busy;
+    eng.Module.kicadOpenFile.mockImplementation(() => {
+      busy = true;
+      return new Promise<boolean>((resolve) => {
+        const box: FakeModal = eng.showModal({ id: 'err', title: 'Error', x: 406, y: 334, w: 468, h: 160, pane: true, texts: ['Error loading PCB.'], buttons: [{ label: '&OK', on: () => { eng.hideModal(box); busy = false; resolve(false); } }] });
+      });
+    });
+    const { send } = importer(undefined, eng);
+    expect(await send('project.import', { name: 'a', files: [brd], open: brd.path })).toEqual({ id: 1, ok: false, error: { code: 'import_failed', message: 'the engine could not import the file: Error loading PCB.' } });
+    expect(eng.clicks).toEqual(['Error:OK']);
+  });
+
+  it('a failed stub open settles KiCad\'s chrome before it answers, as project.open\'s failure does', async () => {
+    const eng = fakeEngine();
+    schImport(eng, { root: 'x.kicad_sch' });
+    eng.Module.kicadOpenFile.mockImplementation((p: string) => {
+      eng.opened.push(p);
+      eng.chrome.push({ typeName: 'wxMenuBar', visible: true });   // the load showed the menu bar
+      (eng.Module as Record<string, unknown>).kicadOpenFileBusy = () => true;
+      eng.showModal({ id: 'ask', title: 'Confirmation', x: 406, y: 334, w: 468, h: 132, texts: ['Reload?'], buttons: [{ label: '&Yes' }, { label: '&No' }] });
+    });
+    const { send } = importer('?frame=sch', eng);
+    eng.Module.kicadSetChrome.mockClear();
+    expect(await send('project.import', { name: 'x', files: [{ path: 'x.SchDoc', bytes: b('cfb') }], open: 'x.SchDoc' })).toEqual({ id: 1, ok: false, error: { code: 'open_failed', message: 'x.kicad_sch' } });
+    expect(eng.Module.kicadSetChrome).toHaveBeenCalledWith(false);
+    expect(eng.chrome).toEqual([]);
   });
 
   it('KiCad\'s error box during a schematic import (an IO_ERROR or an exception) fails it with the box\'s text, closed with its OK, even with a details pane', async () => {

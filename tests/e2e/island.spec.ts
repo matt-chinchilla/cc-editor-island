@@ -1119,6 +1119,10 @@ async function importAltium(page: Page, names: readonly string[], args: { open: 
 }
 
 test('import: an Altium board (HiFive1) converts in the pcb frame and saves HiFive1.B01.kicad_pcb', async ({ page }) => {
+  // Expected to fail on engine v0.2.3-cc8 (measured 2026-10-15, PROTOCOL.md "Altium on engine"): KiCad's
+  // load parks for good right after the layer mapping, so the import answers at its 60 s bound. Kept running
+  // so the day the engine converts the board this spec turns red and the expectation comes off.
+  test.fail(true, 'engine v0.2.3-cc8: every Altium board load parks after the layer mapping (no dialog up)');
   const frame = await boot(page, 'frame=pcb');
   const { result, seconds } = await importAltium(page, ['HiFive1.B01.PcbDoc'], { open: 'HiFive1.B01.PcbDoc' });
   measure('import altium board', `${seconds.toFixed(1)} s (HiFive1.B01.PcbDoc, 2.4 MB), warnings: ${JSON.stringify(result.warnings)}`);

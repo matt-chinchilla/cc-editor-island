@@ -131,7 +131,7 @@ function byCodePoint(a: string, b: string): number {
 }
 
 /** The engine export an import calls, and its arguments. */
-export interface ImportCall { name: 'kicadOpenFile' | 'kicadImportSchematic'; args: string[] }
+export type ImportCall = { name: 'kicadOpenFile'; args: [path: string] } | { name: 'kicadImportSchematic'; args: [path: string, typeName: string, propsJson: string] };
 
 /**
  * The engine call for a source staged under `root` (paths relative to it): a
@@ -158,7 +158,7 @@ type DomRect = { left: number; top: number; width: number; height: number };
 type DomButton = { textContent: string | null; getBoundingClientRect(): DomRect; click(): void };
 type DomWindow = { getBoundingClientRect(): DomRect; querySelector(sel: string): unknown };
 type DomDoc = { querySelectorAll?(sel: string): ArrayLike<unknown> };
-export type ImportWindow = ModalWindow & { document?: DomDoc; console?: Console; Module?: unknown };
+export type ImportWindow = ModalWindow & { document?: DomDoc; console?: Console; Module?: KicadImportExports };
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const all = <T>(doc: DomDoc | undefined, sel: string): T[] => {
@@ -224,15 +224,16 @@ export function closeDialog(w: ImportWindow, v: DialogView): boolean {
 
 export type DialogKind = 'progress' | 'layers' | 'report' | 'issues' | 'other';
 
-/** The title of KiCad's own error box (DisplayErrorMessage): its details pane never makes it a report. */
+/** The title of KiCad's own error box (DisplayErrorMessage): in a schematic import its details pane never makes it a report. */
 const ERROR_TITLE = 'Error';
 /** The title of DIALOG_HTML_REPORTER at the pin (its default; importFile sets none). */
 const ISSUES_TITLE = 'Report';
 
 /**
  * What a dialog is to the import: the progress reporter (left alone), the
- * layer mapping (Auto-Match Layers, then OK), KiCad's error box ("Error", a
- * failure even with a details pane), a wxLog report (OK: a collapsible details
+ * layer mapping (Auto-Match Layers, then OK), in a schematic import KiCad's
+ * error box ("Error", a failure even with a details pane; a board import keeps
+ * the rules it had before), a wxLog report (OK: a collapsible details
  * pane, or a message box titled "<app> Information", "... Warning" or "...
  * Error" with OK alone), a schematic importer's issues report (OK alone, under
  * an HTML box or titled "Report"; only when `schematic`, the board importers
@@ -241,7 +242,7 @@ const ISSUES_TITLE = 'Report';
 export function classify(v: DialogView, title: string, schematic = false): DialogKind {
   if (isProgressDialog(v)) return 'progress';
   if (button(v, 'Auto-Match Layers') != null) return 'layers';
-  if (title === ERROR_TITLE) return 'other';
+  if (schematic && title === ERROR_TITLE) return 'other';
   const okAlone = buttonsOf(v).length === 1 && button(v, 'OK') != null;
   if (schematic && okAlone && (title === ISSUES_TITLE || v.parts.some((e) => /HtmlWindow/i.test(e.typeName)))) return 'issues';
   if (v.parts.some((e) => /CollapsiblePane/.test(e.typeName))) return 'report';
@@ -314,8 +315,11 @@ export type DriveResult = { ok: true; warnings: string[] } | { ok: false; messag
  */
 export async function driveImport(w: ImportWindow, call: ImportCall, opts: { deadline: number; timing: ImportTiming; closed: () => boolean; engineBusy: () => boolean }): Promise<DriveResult> {
   const t = opts.timing;
-  const fn = (w.Module as Record<string, unknown> | undefined)?.[call.name];
-  if (typeof fn !== 'function') return { ok: false, message: `${call.name} is missing` };
+  const mod = w.Module;
+  const start = call.name === 'kicadOpenFile'
+    ? (mod?.kicadOpenFile == null ? null : () => mod.kicadOpenFile?.(...call.args))
+    : (mod?.kicadImportSchematic == null ? null : () => mod.kicadImportSchematic?.(...call.args));
+  if (start == null || typeof mod?.[call.name] !== 'function') return { ok: false, message: `${call.name} is missing` };
   const tap = tapEngineLog(w);
   /** The call's answer: pending until its Promise settles. */
   let opened: 'pending' | 'refused' | 'imported' | 'rejected' = 'pending';
@@ -327,7 +331,7 @@ export async function driveImport(w: ImportWindow, call: ImportCall, opts: { dea
   const pressed = new Map<string, { at: number; auto?: number; ok?: number }>();
   try {
     let ret: unknown;
-    try { ret = (fn as (...a: string[]) => unknown).apply(w.Module, call.args); } catch (err) { return { ok: false, message: `${call.name} threw: ${String(err)}`.slice(0, WARNING_CHARS) }; }
+    try { ret = start(); } catch (err) { return { ok: false, message: `${call.name} threw: ${String(err)}`.slice(0, WARNING_CHARS) }; }
     Promise.resolve(ret).then((v) => { opened = v === true ? 'imported' : 'refused'; }, () => { opened = 'rejected'; });
 
     let quietSince: number | null = null;

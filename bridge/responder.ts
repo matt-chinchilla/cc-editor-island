@@ -660,7 +660,8 @@ export function startResponder(opts: {
     const w = win;
     if (w?.FS == null) return fail('not_ready', op);
     const needs = frame === 'pcb' ? ['kicadOpenFile', 'kicadSaveBoard'] as const : ['kicadImportSchematic'] as const;
-    for (const name of needs) if (typeof (w.Module as Record<string, unknown> | undefined)?.[name] !== 'function') return fail('unsupported', name);
+    const mod: KicadImportExports | undefined = w.Module;
+    for (const name of needs) if (typeof mod?.[name] !== 'function') return fail('unsupported', name);
     if (engineBusy() || keysBlocked(w)) return fail('busy', op);
     return { w, FS: w.FS, open: a.open, files, altium };
   }
@@ -723,7 +724,10 @@ export function startResponder(opts: {
     // a schematic's converted root), its display settings included.
     displaySettings = stageLocalSettings(w, project, frame === 'pcb' ? source : target);
     emit({ type: 'ev.state', phase: 'opening' });
-    if (frame === 'sch' && !(await openStub(w, FS, project, target, deadline))) return fail('open_failed', target);
+    if (frame === 'sch' && !(await openStub(w, FS, project, target, deadline))) {
+      await settleChrome(w);   // a load that ran may have shown the menu bar, as after project.open's failure
+      return fail('open_failed', target);
+    }
     if (closed) return fail('import_failed', 'the frame closed');
     const drove = await driveImport(w, importCall(frame, root, source, altium), { deadline, timing, closed: () => closed, engineBusy });
     if (closed) return fail('import_failed', 'the frame closed');
