@@ -27,9 +27,13 @@ const events = (page: Page): Promise<Ev[]> => page.evaluate(() => (window as unk
 const of = async (page: Page, type: string): Promise<Ev[]> => (await events(page)).filter((e) => e.type === type);
 const request = (page: Page, op: string, args?: unknown): Promise<Record<string, unknown>> =>
   page.evaluate(([o, a]) => (window as unknown as Harness).__bridge.request(o as string, a), [op, args] as const);
-/** A request's refusal as "code: message" (the harness rejects with it; Playwright prefixes its own words), or "ok". */
+/**
+ * A request's refusal as "code: message" (the harness rejects with it), or
+ * "ok". Playwright prefixes its own words: "page.evaluate: Error: " on
+ * Chromium, "page.evaluate: " alone on Firefox.
+ */
 const refusal = (page: Page, op: string, args?: unknown): Promise<string> =>
-  request(page, op, args).then(() => 'ok', (err: Error) => { const first = err.message.split('\n')[0]; return first.slice(first.lastIndexOf('Error: ') + 'Error: '.length); });
+  request(page, op, args).then(() => 'ok', (err: Error) => err.message.split('\n')[0].replace(/^.*?page\.evaluate:\s*/, '').replace(/^Error:\s*/, ''));
 /** The engine's visible top-level windows (its frame, a chooser frame or a dialog). */
 const windows = (frame: Frame): Promise<string[]> =>
   frame.evaluate(() => (window as unknown as Registry).wxElementRegistry.findAll({ visible: true }).filter((e) => /Dialog|Frame/.test(e.typeName)).map((e) => e.name));
