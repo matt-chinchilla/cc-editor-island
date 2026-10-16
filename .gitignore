@@ -3,7 +3,7 @@ dist/
 upstream/
 .playwright/
 test-results/
-engine/
+/engine/
 theme/icons/png/
 theme/icons/out/
 release/
