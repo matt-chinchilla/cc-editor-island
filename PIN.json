@@ -25,7 +25,7 @@
       "shared": "7791275bdfbf54e1500e303121dacaa2c3fd7d00",
       "patches": [
         "importer gates removed (kicad cc/main 90898109)",
-        "kicadImportSchematic (pcbjam cc/main c9752f8)",
+        "kicadImportSchematic (pcbjam cc/main 49da806, finished in pcbjam cc/main e790a09)",
         "MAPPED_FILE for the WebAssembly platform (pcbjam cc/main c9752f8)",
         "Altium ReadProperties repair, Header already parsed (kicad cc/main 4f1c8f27, the repair of KiCad master d07e9384)",
         "KIID string-constructor repair, the random fallback outside the catch handler (kicad cc/main 0e0b3f54; the in-handler thread_local access compiled to a trap and every Altium board import died on it)"
