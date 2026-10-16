@@ -1,0 +1,15 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileCopyrightText: The KiCad developers
+
+Source: KiCad's qa data at KiCad commit 48f1e865216623283579984110a80210e7ccc789
+(the engine's pin, PIN.json pcbjam.kicad), copied on 2026-10-15 from our
+mirror of it (/home/matthew/cc-engine/kicad-source-mirror). Unmodified.
+
+- qa/data/pcbnew/plugins/altium/eDP_adapter_dvt1_source/: eDP_adapter_dvt1.PrjPcb,
+  it6251_core.SchDoc, power.SchDoc, eDP_adapter_dvt1.PcbDoc (an Altium project:
+  the project file, its two sheets and its board)
+- qa/data/pcbnew/plugins/altium/HiFive/HiFive1.B01.PcbDoc (an Altium board)
+
+KiCad's qa data carries KiCad's license, GPL-3.0-or-later (its LICENSE.README,
+notices/kicad-LICENSE.README here, lists no other terms for these files). The
+e2e specs in tests/e2e/island.spec.ts read them at /fixtures/altium/.
