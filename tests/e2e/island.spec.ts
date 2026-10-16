@@ -1151,7 +1151,7 @@ function sheetFacts(text: string) {
   };
 }
 
-test('import: an Altium project (eDP adapter) converts in the sch frame: the first sheet takes the project stem, both sheets top-level, the kicad_pro saved', async ({ page }) => {
+test('import: an Altium project (eDP adapter) converts in the sch frame: the first sheet takes the project stem, both sheets top-level, the kicad_pro saved, and sheet.enter\'s file reaches either sheet', async ({ page }) => {
   // Measured on engine v0.2.3-cc8 run 4 (PROTOCOL.md "Altium on engine"): KiCad 10's project import renames
   // the first document's file to <project stem>.kicad_sch and keeps the documents as top-level sheets, with
   // no wrapper root; its issues report shows, so the warnings are the island's one line.
@@ -1180,14 +1180,32 @@ test('import: an Altium project (eDP adapter) converts in the sch frame: the fir
   expect(root).not.toContain('power.kicad_sch');
   expect(sheetFacts(root)).toEqual({ head: 'kicad_sch', version: 20260306, symbols: 124, sheets: 0, paths: ['/', `/${top[0].uuid}`].sort() });
   expect(sheetFacts(await savedText(page, 'power.kicad_sch'))).toEqual({ head: 'kicad_sch', version: 20260306, symbols: 49, sheets: 0, paths: ['/', `/${top[1].uuid}`].sort() });
-  // The sheet tree is flat: both documents at depth 0, both at path "/".
+  // The sheet tree is flat: both documents at depth 0, both at path "/"; KiCad shows the root.
   expect(await request(page, 'sheet.tree')).toEqual({
     current: '/',
+    currentFile: 'eDP_adapter_dvt1.kicad_sch',
     sheets: [
       { path: '/', name: 'it6251_core', page: '2', depth: 0, parent: '', file: 'eDP_adapter_dvt1.kicad_sch' },
       { path: '/', name: 'power', page: '3', depth: 0, parent: '', file: 'power.kicad_sch' },
     ],
   });
+  // sheet.enter's file reaches the second top-level sheet, which its path alone cannot name. The
+  // engine's own count of the items on the shown sheet says which one KiCad shows.
+  const shownItems = (): Promise<number> => frame.evaluate(() => (JSON.parse(String((window as unknown as { Module: { kicadCollabTestListItems(n: number): string } }).Module.kicadCollabTestListItems(1_000_000))) as unknown[]).length);
+  const rootItems = await shownItems();
+  expect(rootItems).toBe(604);
+  const t0 = Date.now();
+  expect(await request(page, 'sheet.enter', { path: '/', file: 'power.kicad_sch' })).toEqual({});
+  measure('sheet.enter power', `${Date.now() - t0} ms (the first top-level sheet, then Next Sheet)`);
+  expect(await request(page, 'sheet.tree')).toMatchObject({ current: '/', currentFile: 'power.kicad_sch' });
+  const powerItems = await shownItems();
+  measure('items shown', `root ${rootItems}, power ${powerItems}`);
+  expect(powerItems).toBe(173);
+  expect(await request(page, 'sheet.enter', { path: '/', file: 'eDP_adapter_dvt1.kicad_sch' })).toEqual({});
+  expect(await request(page, 'sheet.tree')).toMatchObject({ current: '/', currentFile: 'eDP_adapter_dvt1.kicad_sch' });
+  expect(await shownItems()).toBe(rootItems);
+  // A file no sheet at the path holds is refused.
+  await expect(request(page, 'sheet.enter', { path: '/', file: 'it6251_core.kicad_sch' })).rejects.toThrow('bad_args: sheet.enter');
 });
 
 test('import: a converted board paints its pours opaque once filled, and the host\'s own display settings stand', async ({ page }) => {

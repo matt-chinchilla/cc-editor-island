@@ -23,6 +23,8 @@ beforeAll(() => {
   Object.assign(timing, { editPollMs: 5 });
   // A place reads the selection every 2 ms for 100 ms; a hanging one is read every 5 ms.
   Object.assign(timing, { placePollMs: 2, placeMs: 100, placeWatchMs: 5, placeCancelMs: 50 });
+  // sheet.enter with a file waits 40 ms for each switch.
+  Object.assign(timing, { sheetStepMs: 40 });
 });
 // No DOM in this suite: a KeyboardEvent stand-in that keeps every init field (key, code, ctrlKey, ...).
 beforeEach(() => {
@@ -1429,7 +1431,8 @@ describe('sheets, layers and fit', () => {
 
   it('sheet.tree drops the absolute file path for its base name and keeps the rest', async () => {
     const r = booted(fakeEngine());
-    expect(await r.request('sheet.tree')).toEqual({ ok: true, result: { current: '/', sheets: [{ path: '/', name: 'blink', page: '1', depth: 0, parent: '', file: 'blink.kicad_sch' }] } });
+    // No document is open: the shown sheet's file is unknown.
+    expect(await r.request('sheet.tree')).toEqual({ ok: true, result: { current: '/', currentFile: '', sheets: [{ path: '/', name: 'blink', page: '1', depth: 0, parent: '', file: 'blink.kicad_sch' }] } });
   });
   it('sheet.enter validates the path and relays the engine\'s answer', async () => {
     const eng = fakeEngine();
@@ -1438,6 +1441,103 @@ describe('sheets, layers and fit', () => {
     expect(await r.request('sheet.enter', { path: '/not-a-uuid/' })).toMatchObject({ ok: false, code: 'bad_args' });
     expect(await r.request('sheet.enter', { path: '/11111111-1111-1111-1111-111111111111/' })).toMatchObject({ ok: false, code: 'not_applied' });
     expect(await r.request('sheet.enter', {})).toMatchObject({ ok: false, code: 'bad_args' });
+  });
+
+  describe('sheet.enter with a file (KiCad 10 reports every top-level sheet at "/")', () => {
+    type Collab = { kicadCollab?: { onSheetChanged?: (p: string) => void; onSheetsState?: (j: string) => void } };
+    /**
+     * The eDP import as the engine left it (e2e 2026-10-15): two top-level sheets
+     * at "/", the root shown. kicadSheetsEnter("/") reaches only the first: on it
+     * already, the engine pushes its state inside the call and switches nothing;
+     * else the switch follows (5 ms here, about 100 ms in the engine). PgDn is
+     * KiCad's Next Sheet, which does nothing on the last sheet.
+     */
+    function topLevel(o: { follows?: boolean } = {}) {
+      const eng = fakeEngine();
+      const files = ['eDP.kicad_sch', 'power.kicad_sch'];
+      const shown = { i: 0 };
+      const collab = () => (eng.win as unknown as Collab).kicadCollab;
+      eng.Module.kicadSheetsGetTree.mockImplementation(() => JSON.stringify({ current: '/', sheets: files.map((f, i) => ({ depth: 0, file: `${ROOT}/${f}`, name: f.slice(0, -'.kicad_sch'.length), page: String(i + 2), parent: '', path: '/' })) }));
+      const show = (i: number): void => { setTimeout(() => { shown.i = i; collab()?.onSheetChanged?.(`${ROOT}/${files[i]}`); collab()?.onSheetsState?.('{}'); }, 5); };
+      eng.Module.kicadSheetsEnter.mockImplementation((p: string) => {
+        if (p !== '/') return false;
+        if (shown.i === 0) collab()?.onSheetsState?.('{}');
+        else show(0);
+        return true;
+      });
+      const keys: string[] = [];
+      (eng.win as unknown as Window).dispatchEvent = vi.fn((e: Event) => {
+        const k = e as KeyboardEvent;
+        if (e.type !== 'keydown') return true;
+        keys.push(k.code);
+        if (k.code === 'PageDown' && o.follows !== false && shown.i < files.length - 1) show(shown.i + 1);
+        return true;
+      }) as never;
+      const { page, parent } = fakePage();
+      const r = startResponder({ parentOrigin: PARENT, page });
+      const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+      r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+      let id = 0;
+      const request = async (op: string, args?: unknown): Promise<{ ok: boolean; result?: Record<string, unknown>; code?: string } | undefined> => {
+        const n = ++id;
+        port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+        for (const end = Date.now() + 3_000; Date.now() < end; await settle(5)) {
+          const m = got.find((x) => x.id === n) as { ok: boolean; result?: Record<string, unknown>; error?: { code: string } } | undefined;
+          if (m != null) return m.ok ? { ok: true, result: m.result } : { ok: false, code: m.error?.code };
+        }
+        return undefined;
+      };
+      const open = () => request('project.open', { name: 'eDP', files: files.map((f) => ({ path: f, bytes: b(`(kicad_sch ${f})`) })), open: files[0] });
+      const currentFile = async () => (await request('sheet.tree'))?.result?.currentFile;
+      return { eng, shown, keys, request, open, currentFile };
+    }
+
+    it('reaches the second by the enter then KiCad\'s Next Sheet, the first by the enter alone, and sheet.tree names the shown file', async () => {
+      const t = topLevel();
+      expect(await t.open()).toMatchObject({ ok: true });
+      expect(await t.currentFile()).toBe('eDP.kicad_sch');   // KiCad shows the root first
+      expect(await t.request('sheet.enter', { path: '/', file: 'power.kicad_sch' })).toEqual({ ok: true, result: {} });
+      expect(t.shown.i).toBe(1);
+      expect(t.eng.Module.kicadSheetsEnter.mock.calls).toEqual([['/']]);
+      expect(t.keys).toEqual(['PageDown']);
+      expect(await t.currentFile()).toBe('power.kicad_sch');
+      // Shown already: nothing is called or pressed.
+      expect(await t.request('sheet.enter', { path: '/', file: 'power.kicad_sch' })).toEqual({ ok: true, result: {} });
+      expect(t.eng.Module.kicadSheetsEnter).toHaveBeenCalledTimes(1);
+      expect(t.keys).toEqual(['PageDown']);
+      // Back to the first: the enter's own switch, awaited, and no key.
+      expect(await t.request('sheet.enter', { path: '/', file: 'eDP.kicad_sch' })).toEqual({ ok: true, result: {} });
+      expect(t.shown.i).toBe(0);
+      expect(t.keys).toEqual(['PageDown']);
+      expect(await t.currentFile()).toBe('eDP.kicad_sch');
+      // A sheet switch of the reader's own is followed too.
+      (t.eng.win as unknown as Collab).kicadCollab?.onSheetChanged?.(`${ROOT}/power.kicad_sch`);
+      expect(await t.currentFile()).toBe('power.kicad_sch');
+    });
+
+    it('a file that names no sheet at the path, or not in sheet.tree\'s shape, is bad_args; a path with no sheet is not_applied', async () => {
+      const t = topLevel();
+      expect(await t.open()).toMatchObject({ ok: true });
+      expect(await t.request('sheet.enter', { path: '/', file: 'nope.kicad_sch' })).toEqual({ ok: false, code: 'bad_args' });
+      for (const file of ['sub/power.kicad_sch', 'power.sch', '.kicad_sch', '', 5, null]) {
+        expect(await t.request('sheet.enter', { path: '/', file })).toEqual({ ok: false, code: 'bad_args' });
+      }
+      expect(await t.request('sheet.enter', { path: '/', file: 'power.kicad_sch', page: '3' })).toEqual({ ok: false, code: 'bad_args' });
+      expect(t.eng.Module.kicadSheetsEnter).not.toHaveBeenCalled();
+      expect(await t.request('sheet.enter', { path: '/11111111-1111-1111-1111-111111111111/', file: 'power.kicad_sch' })).toEqual({ ok: false, code: 'not_applied' });
+      expect(t.keys).toEqual([]);
+    });
+
+    it('a switch KiCad never reports is not_applied, and a popup menu up holds the walk back (busy)', async () => {
+      const t = topLevel({ follows: false });
+      expect(await t.open()).toMatchObject({ ok: true });
+      expect(await t.request('sheet.enter', { path: '/', file: 'power.kicad_sch' })).toEqual({ ok: false, code: 'not_applied' });
+      expect(t.keys).toEqual(['PageDown']);
+      expect(await t.currentFile()).toBe('eDP.kicad_sch');
+      t.eng.ui.popup = true;
+      expect(await t.request('sheet.enter', { path: '/', file: 'power.kicad_sch' })).toEqual({ ok: false, code: 'busy' });
+      expect(t.keys).toEqual(['PageDown']);
+    });
   });
   it('layers.get relays the state; the setters validate the id and relay the answer', async () => {
     const eng = fakeEngine();

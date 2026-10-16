@@ -53,8 +53,13 @@ export interface Responder {
 
 type Answer = { ok: true; result: Record<string, unknown> } | { ok: false; code: string; message: string };
 
-/** The engine window with the save callback slot the fork calls (save-flow.ts's SaveHookWindow). */
-type CollabWindow = ToolWindow & { kicadCollab?: { onSave?: (absPath: string) => void } };
+/**
+ * The engine window with the callback slots the fork calls: the save one
+ * (save-flow.ts's SaveHookWindow), and the schematic editor's sheet pushes
+ * (eeschema_embind.cpp): onSheetChanged(absPath) once KiCad shows another
+ * sheet, onSheetsState(json) whenever the sheet panel's state is pushed.
+ */
+type CollabWindow = ToolWindow & { kicadCollab?: { onSave?: (absPath: string) => void; onSheetChanged?: (absPath: string) => void; onSheetsState?: (json: string) => void } };
 /** A project.import that passed its checks: the source, the files, and an Altium project's sheets and project file (sch frame). */
 type CheckedImport = { w: ToolWindow; FS: EmscriptenFS; open: string; files: Array<{ path: string; bytes: Uint8Array }>; altium?: { project: string; sheets: string[] } };
 
@@ -135,7 +140,17 @@ export const timing = {
   placeMs: 10_000,
   placeWatchMs: 100,
   placeCancelMs: 1_000,
+  /**
+   * sheet.enter with a file: how long each step waits for KiCad to show the
+   * next sheet. The engine reported the switch 50 to 125 ms after the enter or
+   * the key (Chromium and Firefox, local pair, 2026-10-15).
+   */
+  sheetStepMs: 5_000,
 };
+/** KiCad's Next Sheet (eeschema's PgDn, by virtual page number, the top-level sheets included). */
+const NEXT_SHEET_KEY: KeyPress = { key: 'PageDown', code: 'PageDown', ctrl: false, shift: false, alt: false };
+/** A sheet file's base name, as sheet.tree reports it. */
+const SHEET_FILE_RE = /^[^/\0]{1,255}\.kicad_sch$/;
 /** KiCad's Zoom to Fit. */
 const HOME_KEY: KeyPress = { key: 'Home', code: 'Home', ctrl: false, shift: false, alt: false };
 /** A real one of these in the frame is the reader steering the view: a fit no longer holds. */
@@ -311,6 +326,17 @@ export function startResponder(opts: {
    * stay KiCad's and no ev.pick is sent. Set by engineReady.
    */
   let pickerOn = false;
+  /**
+   * The base name of the file of the sheet KiCad shows, read while a document
+   * is open (`opened`): the root when the document opens or is imported (KiCad
+   * shows it first), then each sheet KiCad reports showing (onSheetChanged).
+   * KiCad 10 reports every top-level sheet at the path "/": this tells them apart.
+   */
+  let sheetFile: string | null = null;
+  /** The sheet pushes counted so far, and the waits for the next switch. */
+  let sheetChanges = 0;
+  let sheetStates = 0;
+  const sheetWaiters = new Set<() => void>();
 
   /** Rebuilds each event with exactly its protocol keys; saved bytes travel as a transferred copy. */
   const emit = (ev: IslandEvent): void => {
@@ -618,6 +644,7 @@ export function startResponder(opts: {
       return fail('open_failed', target);
     }
     opened = normalizePath(target);
+    sheetFile = opened == null ? null : baseName(opened);   // KiCad shows the root first (measured 2026-10-15)
     startSaveHook(w);   // a fresh hook lifetime for this document
     editDepth = editBaseline(w);   // the depth the load left (null while it is parked): ev.edited's baseline, never sent
     quietClear();   // a new document: the engine's leave prompt guards it again
@@ -746,6 +773,7 @@ export function startResponder(opts: {
       return fail('import_failed', `the converted ${kind} was not saved (${target})`);
     }
     opened = target;
+    sheetFile = baseName(target);   // the converted root, which KiCad shows first (measured 2026-10-15)
     if (saveHook == null) startSaveHook(w);   // from here on the converted file is the document, as after project.open
     editDepth = editBaseline(w);   // the converted document's depth: ev.edited's baseline, never sent
     const chrome = await settleChrome(w);
@@ -1104,17 +1132,69 @@ export function startResponder(opts: {
         file: typeof s.file === 'string' ? baseName(s.file) : '',
       }];
     });
-    return ok({ current: state.current, sheets });
+    return ok({ current: state.current, currentFile: (opened != null ? sheetFile : null) ?? '', sheets });
+  }
+
+  /** Resolves true at the first sheet switch KiCad reports after the `since`th, false after `ms`. */
+  function sheetSwitch(since: number, ms: number): Promise<boolean> {
+    if (sheetChanges > since) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const done = (v: boolean): void => { sheetWaiters.delete(seen); clearTimeout(timer); resolve(v); };
+      const seen = (): void => { if (sheetChanges > since) done(true); };
+      const timer = setTimeout(() => done(false), ms);
+      sheetWaiters.add(seen);
+    });
   }
 
   async function sheetEnter(args: unknown): Promise<Answer> {
     const op = 'sheet.enter';
-    if (!isObj(args) || !onlyKeys(args, ['path']) || typeof args.path !== 'string' || !SHEET_PATH_RE.test(args.path)) return fail('bad_args', op);
+    if (!isObj(args) || !onlyKeys(args, ['path', 'file']) || typeof args.path !== 'string' || !SHEET_PATH_RE.test(args.path)) return fail('bad_args', op);
+    if (args.file !== undefined && (typeof args.file !== 'string' || !SHEET_FILE_RE.test(args.file))) return fail('bad_args', op);
     if (win == null) return fail('not_ready', op);
-    const fn = win.Module?.kicadSheetsEnter;
+    const w = win;
+    const fn = w.Module?.kicadSheetsEnter;
     if (typeof fn !== 'function') return fail('unsupported', 'kicadSheetsEnter');
-    const applied = await withTimeout<unknown>(fn(args.path), timing.applyMs);
-    return applied === true ? ok() : fail('not_applied', op);
+    if (args.file === undefined) {
+      const applied = await withTimeout<unknown>(fn(args.path), timing.applyMs);
+      return applied === true ? ok() : fail('not_applied', op);
+    }
+    const path = args.path;
+    const file = args.file;
+    // The sheets at that path. KiCad 10 reports every top-level sheet at "/", and
+    // kicadSheetsEnter reaches only the first of them; `file` picks one.
+    const state = await engineJson('kicadSheetsGetTree');
+    if (state === 'unsupported') return fail('unsupported', 'kicadSheetsGetTree');
+    if (state == null || !Array.isArray(state.sheets)) return fail('island_error', op);
+    const rows = (state.sheets as unknown[]).filter((s): s is Record<string, unknown> => isObj(s) && s.path === path);
+    if (rows.length === 0) return fail('not_applied', op);
+    if (!rows.some((s) => typeof s.file === 'string' && baseName(s.file) === file)) return fail('bad_args', op);
+    const here = (): boolean => opened != null && sheetFile === file;
+    if (state.current === path && here()) return ok();
+    /** KiCad shows the file, at the path (a sheet below may use the same file). */
+    const arrived = async (): Promise<boolean> => {
+      if (!here()) return false;
+      const now = await engineJson('kicadSheetsGetTree');
+      return now !== 'unsupported' && now != null && now.current === path;
+    };
+    // To the first sheet at the path, then KiCad's Next Sheet until KiCad shows
+    // the file: Next Sheet goes by virtual page number through every sheet
+    // (eeschema's navigate tool), so the walk takes at most one step per row.
+    if (keysBlocked(w)) return fail('busy', op);
+    const changes = sheetChanges;
+    const states = sheetStates;
+    const applied = await withTimeout<unknown>(fn(path), timing.applyMs);
+    if (applied !== true) return fail('not_applied', op);
+    // On the first sheet already, the engine pushes its state inside the call and
+    // switches nothing; otherwise the switch follows on the editor's coroutine.
+    if (!(sheetStates > states && sheetChanges === changes) && !(await sheetSwitch(changes, timing.sheetStepMs))) return fail('not_applied', op);
+    for (let step = 0; !(await arrived()); step++) {
+      if (closed || step >= (state.sheets as unknown[]).length) return fail('not_applied', op);
+      if (keysBlocked(w)) return fail('busy', op);
+      const before = sheetChanges;
+      pressKey(w, NEXT_SHEET_KEY);
+      if (!(await sheetSwitch(before, timing.sheetStepMs))) return fail('not_applied', op);
+    }
+    return ok();
   }
 
   async function layersGet(): Promise<Answer> {
@@ -1250,6 +1330,22 @@ export function startResponder(opts: {
       // The editor's own frame, so any other window of KiCad's holds the place keys back.
       try { ownFrames = new Set((w.wxElementRegistry?.findAll({ visible: true }) ?? []).filter((e) => FRAME_TYPE_RE.test(e.typeName)).map((e) => e.name)); } catch { ownFrames = new Set(); }
       placeWatch = new PlacementWatch(w, { frame, timing, depth: () => undoDepth(w), blocked: () => keysBlocked(w), press: (k) => pressKey(w, k) });
+      // The sheet KiCad shows (sheetFile), from the schematic editor's own pushes;
+      // a listener already in the slots is still called.
+      const cw = w as CollabWindow;
+      const prior = cw.kicadCollab;
+      const changed = prior?.onSheetChanged;
+      const pushed = prior?.onSheetsState;
+      cw.kicadCollab = {
+        ...prior,
+        onSheetChanged: (absPath: string) => {
+          if (typeof absPath === 'string' && opened != null) sheetFile = baseName(absPath);
+          sheetChanges++;
+          for (const seen of [...sheetWaiters]) seen();
+          changed?.(absPath);
+        },
+        onSheetsState: (json: string) => { sheetStates++; pushed?.(json); },
+      };
       // Popup menus and dialogs over the canvas: the host hides what it draws there.
       stopMenus = watchMenus(w, (open) => emit({ type: 'ev.menu', open }));
       // A fitted view stays fitted through resizes and a replaced drawing

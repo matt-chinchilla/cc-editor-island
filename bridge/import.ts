@@ -20,18 +20,23 @@
 //   ("File format is not supported", or Cancel on "Save Changes?").
 //
 // A schematic (island v0.2.3-cc8) goes through Module.kicadImportSchematic,
-// KiCad's own File > Import path (eeschema files-io.cpp importFile at the pin),
-// read from the source, not yet measured:
-// - Its progress reporter ("Import Schematic") is the same plain wxDialog with
-//   a gauge and a Cancel button.
+// KiCad's own File > Import path (eeschema files-io.cpp importFile at the pin).
+// Measured 2026-10-15 on the engine's fourth build (KiCad's qa eDP adapter
+// project, Chromium and Firefox; PROTOCOL.md "Altium on engine"):
+// - Its progress reporter is the same plain wxDialog with a gauge and a Cancel
+//   button, known by those parts ("Import Schematic" is its title in KiCad's source).
 // - When the importer reported anything, DIALOG_HTML_REPORTER shows its lines
-//   modal inside the call: titled "Report", an HTML box over a lone OK. wxHTML
-//   draws the lines on a canvas, so neither the DOM nor the element registry
-//   holds their text, and the importer never wxLogs them: the island presses OK
-//   and says only that KiCad reported issues (SCHEMATIC_ISSUES_LINE).
+//   modal inside the call: a wxDialog titled "Report" holding a wxHtmlWindow and
+//   a wxButton (its OK). wxHTML draws the lines on a canvas, so neither the DOM
+//   nor the element registry holds their text, and the importer never wxLogs
+//   them: the island presses OK and says only that KiCad reported issues
+//   (SCHEMATIC_ISSUES_LINE).
 // - An IO_ERROR or an exception shows KiCad's error box ("Error", the message
-//   over a details pane and OK): the import fails, named by its text.
-// - The call resolves true only when a converted sheet holds items.
+//   over a details pane and OK): the import fails, named by its text (seen on
+//   the build before, which refused both eDP sheets with "Header already parsed").
+// - The call resolves true only when a converted sheet holds items (KiCad's source).
+// An Altium board (.pcbdoc) does not convert on that build: KiCad's load parks
+// right after the layer mapping, an engine defect under investigation.
 import { normalizePath } from '../src/stage';
 import type { Frame } from '../src/types';
 import { isProgressDialog, plainLabel, visibleDialogs, type DialogView, type ModalWindow, type WxElement } from './modal';
