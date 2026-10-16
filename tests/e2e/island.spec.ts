@@ -1137,25 +1137,57 @@ test('import: an Altium board (HiFive1) converts in the pcb frame and saves HiFi
   expect(facts.footprints).toBeGreaterThan(100);
 });
 
-test('import: an Altium project (eDP adapter) converts in the sch frame: both sheets under the root, the kicad_pro saved', async ({ page }) => {
+/** What a converted sheet file holds: its top form, its format version, its placed symbols, its sheet symbols and every instance path it names. */
+function sheetFacts(text: string) {
+  const root = readSexpr(text);
+  if (!Array.isArray(root)) throw new Error('the sheet is not a list');
+  const kids = root.filter((k): k is Sx[] => Array.isArray(k));
+  return {
+    head: root[0],
+    version: Number(kids.find((k) => k[0] === 'version')?.[1]),
+    symbols: kids.filter((k) => k[0] === 'symbol').length,
+    sheets: kids.filter((k) => k[0] === 'sheet').length,
+    paths: [...new Set([...text.matchAll(/\(path "([^"]*)"/g)].map((m) => m[1]))].sort(),
+  };
+}
+
+test('import: an Altium project (eDP adapter) converts in the sch frame: the first sheet takes the project stem, both sheets top-level, the kicad_pro saved', async ({ page }) => {
+  // Measured on engine v0.2.3-cc8 run 4 (PROTOCOL.md "Altium on engine"): KiCad 10's project import renames
+  // the first document's file to <project stem>.kicad_sch and keeps the documents as top-level sheets, with
+  // no wrapper root; its issues report shows, so the warnings are the island's one line.
   const frame = await boot(page, 'frame=sch');
   const sheets = ['it6251_core.SchDoc', 'power.SchDoc'];
   // As the site stages it: the sheets, the .PrjPcb, and a .kicad_pro of KiCad's template named after the project.
   const { result, seconds } = await importAltium(page, [...sheets, 'eDP_adapter_dvt1.PrjPcb'], { open: 'it6251_core.SchDoc', sheets, project: 'eDP_adapter_dvt1.PrjPcb' }, [{ from: 'blank/blank.kicad_pro', as: 'eDP_adapter_dvt1.kicad_pro' }]);
   measure('import altium project', `${seconds.toFixed(1)} s (eDP_adapter_dvt1.PrjPcb, 2 sheets, 0.8 MB), warnings: ${JSON.stringify(result.warnings)}`);
-  expect(result.opened).toBe('eDP_adapter_dvt1.kicad_sch');
-  expect(result.dropped).toEqual([]);
-  expect(Array.isArray(result.warnings)).toBe(true);
+  expect(result).toEqual({ opened: 'eDP_adapter_dvt1.kicad_sch', dropped: [], warnings: ['KiCad reported issues while importing the schematic; the converted sheets may be incomplete.'], chrome: false });
   expect(await dialogsUp(frame)).toEqual([]);
-  const saved = new Set((await events(page)).filter((e) => e.type === 'ev.saved').map((e) => e.path));
-  for (const p of ['eDP_adapter_dvt1.kicad_sch', 'it6251_core.kicad_sch', 'power.kicad_sch', 'eDP_adapter_dvt1.kicad_pro']) expect(saved).toContain(p);
-  for (const p of ['eDP_adapter_dvt1.kicad_sch', 'it6251_core.kicad_sch', 'power.kicad_sch']) expect(readSexpr(await savedText(page, p))[0]).toBe('kicad_sch');
-  // KiCad's project import put both sheets below the root.
-  const tree = await request(page, 'sheet.tree') as { sheets: Array<{ path: string; depth: number; file: string }> };
-  const below = tree.sheets.filter((s) => s.path !== '/');
-  expect(below).toHaveLength(2);
-  expect(below.every((s) => s.depth >= 1)).toBe(true);
-  expect(below.map((s) => s.file.slice(s.file.lastIndexOf('/') + 1)).sort()).toEqual(['it6251_core.kicad_sch', 'power.kicad_sch']);
+  // The first sheet's content saved under the project's stem, the second under its own, and the
+  // project file; there is no it6251_core.kicad_sch.
+  const saved = (await events(page)).filter((e) => e.type === 'ev.saved').map((e) => e.path);
+  expect([...new Set(saved)].sort()).toEqual(['eDP_adapter_dvt1.kicad_pro', 'eDP_adapter_dvt1.kicad_sch', 'power.kicad_sch']);
+  // The project file lists both documents as top-level sheets (KiCad's TOP_LEVEL_SHEET_INFO, a fresh uuid each import).
+  const pro = JSON.parse(await savedText(page, 'eDP_adapter_dvt1.kicad_pro')) as { schematic: { top_level_sheets: Array<{ uuid: string; name: string; filename: string }> } };
+  const top = pro.schematic.top_level_sheets;
+  expect(top.map(({ name, filename }) => ({ name, filename }))).toEqual([
+    { name: 'it6251_core', filename: 'eDP_adapter_dvt1.kicad_sch' },
+    { name: 'power', filename: 'power.kicad_sch' },
+  ]);
+  for (const s of top) expect(s.uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  // Both parse as KiCad 10 schematics with their converted parts; neither holds a sheet symbol (the root never
+  // names power.kicad_sch), and each sheet's symbols are placed under its top-level sheet's uuid.
+  const root = await savedText(page, 'eDP_adapter_dvt1.kicad_sch');
+  expect(root).not.toContain('power.kicad_sch');
+  expect(sheetFacts(root)).toEqual({ head: 'kicad_sch', version: 20260306, symbols: 124, sheets: 0, paths: ['/', `/${top[0].uuid}`].sort() });
+  expect(sheetFacts(await savedText(page, 'power.kicad_sch'))).toEqual({ head: 'kicad_sch', version: 20260306, symbols: 49, sheets: 0, paths: ['/', `/${top[1].uuid}`].sort() });
+  // The sheet tree is flat: both documents at depth 0, both at path "/".
+  expect(await request(page, 'sheet.tree')).toEqual({
+    current: '/',
+    sheets: [
+      { path: '/', name: 'it6251_core', page: '2', depth: 0, parent: '', file: 'eDP_adapter_dvt1.kicad_sch' },
+      { path: '/', name: 'power', page: '3', depth: 0, parent: '', file: 'power.kicad_sch' },
+    ],
+  });
 });
 
 test('import: a converted board paints its pours opaque once filled, and the host\'s own display settings stand', async ({ page }) => {
