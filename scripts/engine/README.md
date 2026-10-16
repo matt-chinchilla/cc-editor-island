@@ -42,6 +42,7 @@ trees share one compose project and its volumes.
 ## The two invocations
 
 ```bash
+export CC_ENGINE_ROOT=<the folder holding the four clones>   # pcbjam, kicad-source-mirror, wxWidgets, pcbjam-shared
 bash scripts/engine/build.sh pristine   # the pinned v0.2.3 commits, unchanged; runs the deps stage
 bash scripts/engine/build.sh cc8        # cc/main of pcbjam and kicad-source-mirror (wx, shared: the pins)
 bash scripts/engine/build.sh cc8 --build-deps   # cc8, rerunning the deps stage too

@@ -105,13 +105,31 @@ async function fromCdn() {
 }
 
 /**
+ * Whether `ancestor` is in the history of `of` in the clone at `clone`. Only git's
+ * own "no" (merge-base --is-ancestor exits 1) is false: any other failure (a commit
+ * the clone does not hold, an unreadable clone) throws, so a check that cannot be
+ * made never passes as "not in the pin".
+ */
+function isAncestor(clone, ancestor, of) {
+  try {
+    execFileSync('git', ['-C', clone, 'merge-base', '--is-ancestor', ancestor, of], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return true;
+  } catch (err) {
+    if (err?.status === 1) return false;
+    const said = String(err?.stderr ?? err?.message ?? '').trim().split('\n')[0];
+    throw new Error(`cannot tell whether ${ancestor} is in the history of ${of} in ${clone} (git exited ${err?.status ?? 'without a status'}${said ? `: ${said}` : ''}); the clone must hold both commits, and CC_ENGINE_ROOT (${ENGINE_ROOT}) names the folder holding the four clones`);
+  }
+}
+
+/**
  * The full commit `sha` names in `repo`'s local clone when it is one of ours in the
  * build: in the history of `built` and not in PCBJam's pin's. Else null, with why.
+ * Throws when the clone cannot answer one of those two questions.
  */
 function ourCommit(repo, sha, built) {
   const clone = join(ENGINE_ROOT, CLONES[repo]);
   const git = (...a) => execFileSync('git', ['-C', clone, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  const holds = (ancestor, of) => { try { git('merge-base', '--is-ancestor', ancestor, of); return true; } catch { return false; } };
+  const holds = (ancestor, of) => isAncestor(clone, ancestor, of);
   let full;
   try { full = git('rev-parse', '--verify', '--quiet', `${sha}^{commit}`); } catch { return { why: `is not one commit in ${clone} (the clone the build used; CC_ENGINE_ROOT sets where)` }; }
   if (!holds(full, built)) return { why: `${full} is not in the history of the build's ${repo} ${built}` };

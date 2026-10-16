@@ -16,6 +16,7 @@ This repository is GPL-3.0-or-later (see `LICENSE`). KiCad and PCBJam are GPL-3.
 A fresh clone builds with Node (22 is what the island is built with) and the engine files, which are our own build: `scripts/engine/build.sh cc8` runs PCBJam's recipe in Docker on the `cc/main` heads of the four local clones under `CC_ENGINE_ROOT` (`scripts/engine/README.md` has the setup and the timings; to rebuild a published release, check those clones out at the commits its `PIN.json` `engine.build` names first), and `fetch-engine --local` takes its output in and records the commits it was built from:
 
 ```bash
+export CC_ENGINE_ROOT=<the folder holding the four clones>   # pcbjam, kicad-source-mirror, wxWidgets, pcbjam-shared
 npm ci                              # the pinned dependencies from package-lock.json
 npx playwright install chromium     # the browser the icon rasterizer uses (add firefox for the full e2e)
 bash scripts/engine/build.sh cc8    # build the engine into $CC_ENGINE_ROOT/out/cc8/ (hours the first time)
