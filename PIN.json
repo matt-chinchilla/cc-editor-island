@@ -19,15 +19,16 @@
     "toolTag": "v0.2.3",
     "build": {
       "recipe": "cc/main",
-      "pcbjam": "ca189b0cd2e6fd98e6cc2822ea57e2ee09220570",
-      "kicad": "4f1c8f27ef908bd0705c188833186d9b8831e3e0",
+      "pcbjam": "5b384a3646a0bc9d03cdd7bf689a5269ef5ec9f7",
+      "kicad": "0e0b3f54d51d4ff1b7f12492d7b7682da4f04824",
       "wxwidgets": "8bad5f58e9b51050d3678f5c98cb0dc41b4595b2",
       "shared": "7791275bdfbf54e1500e303121dacaa2c3fd7d00",
       "patches": [
         "importer gates removed (kicad cc/main 90898109)",
         "kicadImportSchematic (pcbjam cc/main c9752f8)",
         "MAPPED_FILE for the WebAssembly platform (pcbjam cc/main c9752f8)",
-        "Altium ReadProperties repair, Header already parsed (kicad cc/main 4f1c8f27, the repair of KiCad master d07e9384)"
+        "Altium ReadProperties repair, Header already parsed (kicad cc/main 4f1c8f27, the repair of KiCad master d07e9384)",
+        "KIID string-constructor repair, the random fallback outside the catch handler (kicad cc/main 0e0b3f54; the in-handler thread_local access compiled to a trap and every Altium board import died on it)"
       ],
       "reproduction": {
         "pristine": {
@@ -43,33 +44,33 @@
       "kicad_editor.js": {
         "sha256": "6384c3dfa5d763fbb6de307f8a22839b3047e4727c61ae68f061662e9d693308",
         "bytes": 488429,
-        "source": "ca189b0cd2e6fd98e6cc2822ea57e2ee09220570"
+        "source": "5b384a3646a0bc9d03cdd7bf689a5269ef5ec9f7"
       },
       "kicad_editor.wasm": {
-        "sha256": "231f51ab2583d1985a2537e26cc0a8880f64a8a6fd38f4b05f502780c53ed4f5",
-        "bytes": 63212133,
-        "source": "ca189b0cd2e6fd98e6cc2822ea57e2ee09220570"
+        "sha256": "350cfba398f711c6d41abb33bcc9a22f363f4631022a135b787f78872df4737a",
+        "bytes": 63212676,
+        "source": "5b384a3646a0bc9d03cdd7bf689a5269ef5ec9f7"
       },
       "wx.js": {
         "sha256": "42d6b547f9a024f187f1b7812b64a3f76ca322d35393531340cb316ff88da351",
         "bytes": 79808,
-        "source": "ca189b0cd2e6fd98e6cc2822ea57e2ee09220570"
+        "source": "5b384a3646a0bc9d03cdd7bf689a5269ef5ec9f7"
       },
       "wx-dom.js": {
         "sha256": "7edabd5571c9f2fd0ea1acf7005fb3628f2e3cf6b8f430f8e473c328fb042a10",
         "bytes": 68699,
-        "source": "ca189b0cd2e6fd98e6cc2822ea57e2ee09220570"
+        "source": "5b384a3646a0bc9d03cdd7bf689a5269ef5ec9f7"
       },
       "images.tar.gz": {
-        "sha256": "fd533410e895374d951488af746b3d3ce030d7440d9e1659f563ad56c1137c34",
-        "bytes": 5370941,
-        "source": "ca189b0cd2e6fd98e6cc2822ea57e2ee09220570"
+        "sha256": "68deaeefb2d3e9f57d1fa8c9d6ccd0f738ca2919f7d56124a1c0175eae545de9",
+        "bytes": 5369307,
+        "source": "5b384a3646a0bc9d03cdd7bf689a5269ef5ec9f7"
       }
     }
   },
   "icons": {
-    "stockArchiveSha256": "fd533410e895374d951488af746b3d3ce030d7440d9e1659f563ad56c1137c34",
-    "repackedSha256": "23ed7391f71b68022c2681d5c2b3f1664e4a4eca6b9668123528c1a8e46085c5",
+    "stockArchiveSha256": "68deaeefb2d3e9f57d1fa8c9d6ccd0f738ca2919f7d56124a1c0175eae545de9",
+    "repackedSha256": "a4641350fcf1eb469d97acdf3952f1876a998e170bbc08e01005999c1cf3e04c",
     "inputs": {
       "theme/icons/src/add_component.svg": "d8d2dfa56f179658a3b2bd458090683161f188ad13d84d89fdb82f1a0f2a12e6",
       "theme/icons/src/add_line.svg": "64db6c023211cd897ea1f3613fcc4d338bf86fbca3086cf832bf3bf25dd516f0",

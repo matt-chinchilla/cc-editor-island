@@ -35,8 +35,9 @@
 //   over a details pane and OK): the import fails, named by its text (seen on
 //   the build before, which refused both eDP sheets with "Header already parsed").
 // - The call resolves true only when a converted sheet holds items (KiCad's source).
-// An Altium board (.pcbdoc) does not convert on that build: KiCad's load parks
-// right after the layer mapping, an engine defect under investigation.
+// An Altium board (.pcbdoc) converts from the engine's fifth build on (kicad
+// cc/main 0e0b3f54, measured 2026-10-16); the builds before trapped in KIID's
+// string constructor during the component parse, right after the layer mapping.
 import { normalizePath } from '../src/stage';
 import type { Frame } from '../src/types';
 import { isProgressDialog, plainLabel, visibleDialogs, type DialogView, type ModalWindow, type WxElement } from './modal';
