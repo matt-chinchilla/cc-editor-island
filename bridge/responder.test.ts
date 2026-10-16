@@ -1450,11 +1450,13 @@ describe('sheets, layers and fit', () => {
      * at "/", the root shown. kicadSheetsEnter("/") reaches only the first: on it
      * already, the engine pushes its state inside the call and switches nothing;
      * else the switch follows (5 ms here, about 100 ms in the engine). PgDn is
-     * KiCad's Next Sheet, which does nothing on the last sheet.
+     * KiCad's Next Sheet, which does nothing on the last sheet. `files` replaces the
+     * two sheets; `next` says where a PgDn goes from the shown sheet (null: nowhere,
+     * nothing reported); `pressed` runs at each PgDn, before its switch.
      */
-    function topLevel(o: { follows?: boolean } = {}) {
+    function topLevel(o: { follows?: boolean; files?: string[]; next?: (i: number) => number | null; pressed?: (n: number) => void } = {}) {
       const eng = fakeEngine();
-      const files = ['eDP.kicad_sch', 'power.kicad_sch'];
+      const files = o.files ?? ['eDP.kicad_sch', 'power.kicad_sch'];
       const shown = { i: 0 };
       const collab = () => (eng.win as unknown as Collab).kicadCollab;
       eng.Module.kicadSheetsGetTree.mockImplementation(() => JSON.stringify({ current: '/', sheets: files.map((f, i) => ({ depth: 0, file: `${ROOT}/${f}`, name: f.slice(0, -'.kicad_sch'.length), page: String(i + 2), parent: '', path: '/' })) }));
@@ -1470,7 +1472,10 @@ describe('sheets, layers and fit', () => {
         const k = e as KeyboardEvent;
         if (e.type !== 'keydown') return true;
         keys.push(k.code);
-        if (k.code === 'PageDown' && o.follows !== false && shown.i < files.length - 1) show(shown.i + 1);
+        if (k.code !== 'PageDown') return true;
+        o.pressed?.(keys.length);
+        const to = o.follows === false ? null : (o.next ?? ((i: number) => (i < files.length - 1 ? i + 1 : null)))(shown.i);
+        if (to != null) show(to);
         return true;
       }) as never;
       const { page, parent } = fakePage();
@@ -1537,6 +1542,29 @@ describe('sheets, layers and fit', () => {
       t.eng.ui.popup = true;
       expect(await t.request('sheet.enter', { path: '/', file: 'power.kicad_sch' })).toEqual({ ok: false, code: 'busy' });
       expect(t.keys).toEqual(['PageDown']);
+    });
+
+    it('presses Next Sheet at most once per row of the tree, then answers not_applied', async () => {
+      // Each PgDn is reported as a switch, but never to the file asked for.
+      const t = topLevel({ files: ['a.kicad_sch', 'b.kicad_sch', 'c.kicad_sch'], next: () => 1 });
+      expect(await t.open()).toMatchObject({ ok: true });
+      expect(await t.request('sheet.enter', { path: '/', file: 'c.kicad_sch' })).toEqual({ ok: false, code: 'not_applied' });
+      expect(t.keys).toEqual(['PageDown', 'PageDown', 'PageDown']);
+      expect(await t.currentFile()).toBe('b.kicad_sch');
+    });
+
+    it('a dialog that comes up partway through the walk answers busy, leaving the sheet passed shown; sent again, the walk goes on', async () => {
+      const t = topLevel({ files: ['a.kicad_sch', 'b.kicad_sch', 'c.kicad_sch'], pressed: (n) => { if (n === 1) t.eng.dialogs.push({ typeName: 'wxDialog', visible: true }); } });
+      expect(await t.open()).toMatchObject({ ok: true });
+      expect(await t.request('sheet.enter', { path: '/', file: 'c.kicad_sch' })).toEqual({ ok: false, code: 'busy' });
+      expect(t.keys).toEqual(['PageDown']);
+      expect(t.shown.i).toBe(1);
+      expect(await t.currentFile()).toBe('b.kicad_sch');   // the intermediate sheet stays shown
+      t.eng.dialogs.length = 0;
+      // Again: the enter goes back to the first sheet, then two presses reach c.
+      expect(await t.request('sheet.enter', { path: '/', file: 'c.kicad_sch' })).toEqual({ ok: true, result: {} });
+      expect(t.keys).toEqual(['PageDown', 'PageDown', 'PageDown']);
+      expect(await t.currentFile()).toBe('c.kicad_sch');
     });
   });
   it('layers.get relays the state; the setters validate the id and relay the answer', async () => {

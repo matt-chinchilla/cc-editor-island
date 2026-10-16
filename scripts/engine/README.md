@@ -36,7 +36,7 @@ PCBJam's CDN.
 5. Logs `free -g` every minute while it runs, then copies the five files from the
    tree's `output/` and writes `meta.json` beside them.
 
-Only one engine build runs at a time (`/home/matthew/cc-engine/out/.build.lock`): both
+Only one engine build runs at a time (`$CC_ENGINE_ROOT/out/.build.lock`): both
 trees share one compose project and its volumes.
 
 ## The two invocations

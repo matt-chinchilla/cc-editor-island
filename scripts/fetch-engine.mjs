@@ -34,7 +34,7 @@
 //   reproduction: { pristine: "byte-equal" | { differs: [<file>, ...], note: "<sentence>" } } }
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const pin = JSON.parse(readFileSync('PIN.json', 'utf8'));
@@ -105,6 +105,18 @@ async function fromCdn() {
 }
 
 /**
+ * Why a git call in the clone at `clone` failed, in words: git itself missing, no
+ * clone at that path, or git's own first line (a folder that is no repository, say).
+ */
+function gitFailure(err, clone) {
+  if (err?.code === 'ENOENT') return 'git is not installed (or not on PATH)';
+  const where = `CC_ENGINE_ROOT (${ENGINE_ROOT}) names the folder holding the four clones`;
+  if (!existsSync(clone)) return `there is no clone at ${clone}; ${where}`;
+  const said = String(err?.stderr ?? err?.message ?? '').trim().split('\n')[0];
+  return `git exited ${err?.status ?? 'without a status'} in ${clone}${said ? `: ${said}` : ''}; ${where}`;
+}
+
+/**
  * Whether `ancestor` is in the history of `of` in the clone at `clone`. Only git's
  * own "no" (merge-base --is-ancestor exits 1) is false: any other failure (a commit
  * the clone does not hold, an unreadable clone) throws, so a check that cannot be
@@ -116,8 +128,7 @@ function isAncestor(clone, ancestor, of) {
     return true;
   } catch (err) {
     if (err?.status === 1) return false;
-    const said = String(err?.stderr ?? err?.message ?? '').trim().split('\n')[0];
-    throw new Error(`cannot tell whether ${ancestor} is in the history of ${of} in ${clone} (git exited ${err?.status ?? 'without a status'}${said ? `: ${said}` : ''}); the clone must hold both commits, and CC_ENGINE_ROOT (${ENGINE_ROOT}) names the folder holding the four clones`);
+    throw new Error(`cannot tell whether ${ancestor} is in the history of ${of} (the clone must hold both commits): ${gitFailure(err, clone)}`);
   }
 }
 
@@ -128,10 +139,16 @@ function isAncestor(clone, ancestor, of) {
  */
 function ourCommit(repo, sha, built) {
   const clone = join(ENGINE_ROOT, CLONES[repo]);
-  const git = (...a) => execFileSync('git', ['-C', clone, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  const git = (...a) => execFileSync('git', ['-C', clone, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   const holds = (ancestor, of) => isAncestor(clone, ancestor, of);
   let full;
-  try { full = git('rev-parse', '--verify', '--quiet', `${sha}^{commit}`); } catch { return { why: `is not one commit in ${clone} (the clone the build used; CC_ENGINE_ROOT sets where)` }; }
+  try {
+    full = git('rev-parse', '--verify', '--quiet', `${sha}^{commit}`);
+  } catch (err) {
+    // --quiet: a name the clone does not hold exits 1 and says nothing; anything else is the clone or git failing.
+    if (err?.status === 1) return { why: `is not one commit in ${clone} (the clone the build used; CC_ENGINE_ROOT sets where)` };
+    return { why: `could not be looked up: ${gitFailure(err, clone)}` };
+  }
   if (!holds(full, built)) return { why: `${full} is not in the history of the build's ${repo} ${built}` };
   if (holds(full, BASES[repo])) return { why: `${full} is PCBJam's (in the history of the pin ${BASES[repo]}), not a change of ours` };
   return { full };
