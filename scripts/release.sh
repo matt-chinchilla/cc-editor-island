@@ -50,7 +50,11 @@ WX_SHA=$(served wxwidgets)
 SHARED_SHA=$(served shared)
 OURS=$(served ours)
 RECIPE=$(served recipe)
-if [ "$OURS" = true ]; then CHANGED=", with our changes on \`$RECIPE\`"; else CHANGED=; fi
+# PCBJam's pins: the base our build's commits start from (the same commits when the engine is PCBJam's).
+PIN_ROOT=$(pin pcbjam.root)
+PIN_KICAD=$(pin pcbjam.kicad)
+PIN_WX=$(pin pcbjam.wxwidgets)
+PIN_SHARED=$(pin pcbjam.shared)
 REL="dist/r/$ID"
 OUT="release/$ID"
 SRC="cc-editor-island-$ID-src.tar.gz"
@@ -207,23 +211,33 @@ for (const f of modified) {
   echo
   echo "## The pinned sources"
   echo
-  echo "| What | Upstream | Commit | Our mirror tag |"
-  echo "|---|---|---|---|"
-  echo "| PCBJam, the recipe and the web sources (tag \`$PCBJAM_TAG\`$CHANGED) | github.com/PCBJam/pcbjam | \`$ROOT_SHA\` | \`cc/$ID\` in github.com/$OWNER/pcbjam |"
-  echo "| KiCad as PCBJam builds it$CHANGED | github.com/PCBJam/kicad-source-mirror | \`$KICAD_SHA\` | \`cc/$ID\` in github.com/$OWNER/kicad-source-mirror |"
-  echo "| wxWidgets with the WebAssembly port | github.com/PCBJam/wxWidgets | \`$WX_SHA\` | \`cc/$ID\` in github.com/$OWNER/wxWidgets |"
-  echo "| pcbjam-shared (MIT, mirrored for completeness, not part of the served build) | github.com/PCBJam/pcbjam-shared | \`$SHARED_SHA\` | \`cc/$ID\` in github.com/$OWNER/pcbjam-shared |"
+  if [ "$OURS" = true ]; then
+    # Our build's commits exist only on our forks; PCBJam's repositories hold the pins they start from.
+    echo "| What | Built from (our fork, branch \`$RECIPE\`) | Base (PCBJam's pin, tag \`$PCBJAM_TAG\`) | Our mirror tag |"
+    echo "|---|---|---|---|"
+    echo "| PCBJam, the recipe and the web sources, with our changes | \`$ROOT_SHA\` in github.com/$OWNER/pcbjam | \`$PIN_ROOT\` in github.com/PCBJam/pcbjam | \`cc/$ID\` in github.com/$OWNER/pcbjam |"
+    echo "| KiCad as PCBJam builds it, with our changes | \`$KICAD_SHA\` in github.com/$OWNER/kicad-source-mirror | \`$PIN_KICAD\` in github.com/PCBJam/kicad-source-mirror | \`cc/$ID\` in github.com/$OWNER/kicad-source-mirror |"
+    echo "| wxWidgets with the WebAssembly port | \`$WX_SHA\` in github.com/$OWNER/wxWidgets | \`$PIN_WX\` in github.com/PCBJam/wxWidgets | \`cc/$ID\` in github.com/$OWNER/wxWidgets |"
+    echo "| pcbjam-shared (MIT, mirrored for completeness, not part of the served build) | \`$SHARED_SHA\` in github.com/$OWNER/pcbjam-shared | \`$PIN_SHARED\` in github.com/PCBJam/pcbjam-shared | \`cc/$ID\` in github.com/$OWNER/pcbjam-shared |"
+  else
+    echo "| What | Upstream | Commit | Our mirror tag |"
+    echo "|---|---|---|---|"
+    echo "| PCBJam, the recipe and the web sources (tag \`$PCBJAM_TAG\`) | github.com/PCBJam/pcbjam | \`$ROOT_SHA\` | \`cc/$ID\` in github.com/$OWNER/pcbjam |"
+    echo "| KiCad as PCBJam builds it | github.com/PCBJam/kicad-source-mirror | \`$KICAD_SHA\` | \`cc/$ID\` in github.com/$OWNER/kicad-source-mirror |"
+    echo "| wxWidgets with the WebAssembly port | github.com/PCBJam/wxWidgets | \`$WX_SHA\` | \`cc/$ID\` in github.com/$OWNER/wxWidgets |"
+    echo "| pcbjam-shared (MIT, mirrored for completeness, not part of the served build) | github.com/PCBJam/pcbjam-shared | \`$SHARED_SHA\` | \`cc/$ID\` in github.com/$OWNER/pcbjam-shared |"
+  fi
   echo
   echo "Dependencies the recipe pins by a git commit are reached through those repositories:"
   echo
-  echo "- KiCad: the kicad-source-mirror commit above, the gitlink at the pcbjam commit above. The recipe's versions.sh also records \`KICAD_COMMIT=$KICAD_RECIPE_COMMIT\`, its own older record; the engine was built from the gitlink."
-  echo "- wxWidgets: the wxWidgets commit above, the gitlink at the pcbjam commit above."
+  echo "- KiCad: the kicad-source-mirror commit the engine was built from (above), the gitlink at the pcbjam commit it was built from. The recipe's versions.sh also records \`KICAD_COMMIT=$KICAD_RECIPE_COMMIT\`, its own older record; the engine was built from the gitlink."
+  echo "- wxWidgets: the wxWidgets commit the engine was built from (above), the gitlink at the same pcbjam commit."
   echo "- RapidJSON: commit \`$RAPIDJSON_COMMIT\` of github.com/Tencent/rapidjson; the archive of that commit is attached as well, by the sha256 the recipe pins."
   if [ "$OURS" = true ]; then
     echo
     echo "## Our engine changes"
     echo
-    echo "Each is named with the commit of its mirror's \`$RECIPE\` branch that holds it; every file they touch carries a dated \"Modified by Chirichella Inc. on\" notice."
+    echo "Each is named with the commit on its fork's \`$RECIPE\` branch that made it; the built commits above hold every one of them, and every file they touch carries a dated \"Modified by Chirichella Inc. on\" notice."
     echo
     served patches | sed 's/^/- /'
   fi

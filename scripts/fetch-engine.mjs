@@ -13,9 +13,12 @@
 //       against <dir>/meta.json (sha256 and bytes). No CDN fetch. PIN.json engine.build
 //       takes the four source commits from that meta.json and the recipe name, the
 //       patches and the reproduction record from the notes file, or, with no --notes,
-//       as PIN.json already holds them. Every patch names the commit it is, as
-//       "<repo> <recipe> <sha>", and that sha must be the build's: notes left from an
-//       older build are refused.
+//       as PIN.json already holds them. Every patch names the commit that made it,
+//       as "<repo> <recipe> <sha>", and that commit must be one of ours in the build:
+//       in the history of the build's commit for that repo and not in PCBJam's pin's,
+//       read from the local clone the build used ($CC_ENGINE_ROOT/<repo>, default
+//       /home/matthew/cc-engine, as scripts/engine/build.sh). Notes naming a commit
+//       the build does not hold, or one of PCBJam's, are refused.
 //
 // A new images.tar.gz moves the icon overlay's anchor: build.mjs refuses until
 // node theme/icons/rasterize.mjs && node theme/icons/repack.mjs records it
@@ -29,6 +32,7 @@
 // where recipe is the pcbjam commit whose docker/build.sh ran.
 // A notes file: { recipe: "cc/main", patches: ["... (kicad cc/main <sha>)", ...],
 //   reproduction: { pristine: "byte-equal" | { differs: [<file>, ...], note: "<sentence>" } } }
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -41,6 +45,10 @@ const out = join('engine', tool, toolTag);
 const sha256hex = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const SHA = /^[0-9a-f]{40}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
+// The local clones scripts/engine/build.sh builds from, and PCBJam's pinned commit in each.
+const ENGINE_ROOT = process.env.CC_ENGINE_ROOT ?? '/home/matthew/cc-engine';
+const CLONES = { pcbjam: 'pcbjam', kicad: 'kicad-source-mirror', wxwidgets: 'wxWidgets', shared: 'pcbjam-shared' };
+const BASES = { pcbjam: pin.pcbjam.root, kicad: pin.pcbjam.kicad, wxwidgets: pin.pcbjam.wxwidgets, shared: pin.pcbjam.shared };
 
 function usage() {
   console.error('usage: node scripts/fetch-engine.mjs [--cdn | --local <dir> [--notes <file>]]');
@@ -96,6 +104,21 @@ async function fromCdn() {
   return { expected, read, source: pin.pcbjam.root, build: null, from: base };
 }
 
+/**
+ * The full commit `sha` names in `repo`'s local clone when it is one of ours in the
+ * build: in the history of `built` and not in PCBJam's pin's. Else null, with why.
+ */
+function ourCommit(repo, sha, built) {
+  const clone = join(ENGINE_ROOT, CLONES[repo]);
+  const git = (...a) => execFileSync('git', ['-C', clone, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  const holds = (ancestor, of) => { try { git('merge-base', '--is-ancestor', ancestor, of); return true; } catch { return false; } };
+  let full;
+  try { full = git('rev-parse', '--verify', '--quiet', `${sha}^{commit}`); } catch { return { why: `is not one commit in ${clone} (the clone the build used; CC_ENGINE_ROOT sets where)` }; }
+  if (!holds(full, built)) return { why: `${full} is not in the history of the build's ${repo} ${built}` };
+  if (holds(full, BASES[repo])) return { why: `${full} is PCBJam's (in the history of the pin ${BASES[repo]}), not a change of ours` };
+  return { full };
+}
+
 /** The recipe name, patches and reproduction record, checked against the build's own commits. */
 function checkNotes(notes, sources, from) {
   const bad = (msg) => { throw new Error(`${from}: ${msg}`); };
@@ -108,7 +131,8 @@ function checkNotes(notes, sources, from) {
     const named = [...p.matchAll(mention)];
     if (named.length === 0) bad(`the patch "${p}" names no "<repo> ${recipe} <sha>"`);
     for (const [, repo, sha] of named) {
-      if (!sources[repo].startsWith(sha)) bad(`the patch "${p}" names ${repo} ${sha}, but the build's ${repo} is ${sources[repo]}`);
+      const { why } = ourCommit(repo, sha, sources[repo]);
+      if (why) bad(`the patch "${p}" names ${repo} ${sha}, which ${why}`);
     }
   }
   const pristine = reproduction?.pristine;

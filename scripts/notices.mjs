@@ -287,7 +287,7 @@ ${engineFiles.map(([name, f]) => `<tr><td data-label="File"><code>${esc(name)}</
 <ul>
 ${modified.map((f) => `<li><code>${esc(f.path)}</code><ul class="notes">${f.notices.map((n) => `<li class="note">Modified by ${esc(BRAND)} on ${esc(n.date)}: ${esc(n.text)}</li>`).join('')}</ul></li>`).join('\n')}
 </ul>${src.ours ? `
-<p>The engine is built with these changes to PCBJam's and KiCad's sources, each named with the commit of its mirror's <code>${esc(src.recipe)}</code> branch that holds it; the tags under "Where the source is" point at those commits. Every file the changes touch carries a dated "Modified by ${esc(OWNER)} on" notice.</p>
+<p>The engine is built with these changes to PCBJam's and KiCad's sources, each named with the commit on its mirror's <code>${esc(src.recipe)}</code> branch that made it; the commits the tags under "Where the source is" point at hold every one of them. Every file the changes touch carries a dated "Modified by ${esc(OWNER)} on" notice.</p>
 <ul>
 ${src.patches.map((p) => `<li>${esc(p)}</li>`).join('\n')}
 </ul>` : ''}`]);

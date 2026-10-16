@@ -121,7 +121,7 @@ The pristine build (2026-10-15, finished 2026-10-16T00:00:42Z) compared with the
 files the island served until `v0.2.3-cc7` (`engine/kicad_editor/v0.2.3/` then, fetched by
 `scripts/fetch-engine.mjs` from PCBJam's CDN; kept now in `/home/matthew/cc-engine/out/cdn-v0.2.3/`):
 
-| file | built here (pristine) | PCBJam CDN (`PIN.json`) | bytes (here / CDN) | result |
+| file | built here (pristine) | PCBJam CDN v0.2.3 (kept copy) | bytes (here / CDN) | result |
 |------|------|------|------|------|
 | `kicad_editor.js` | `39e41c2233a1e139be74e4a8b408380ec7c05ec7c1418d3e336deb3dd600d9b0` | `39e41c2233a1e139be74e4a8b408380ec7c05ec7c1418d3e336deb3dd600d9b0` | 488,056 / 488,056 | byte-equal |
 | `kicad_editor.wasm` | `9cc2400964558d694d83bee5ff7e6341b1901592becf32c2ac09d4b9ae4c0a62` | `a80fd1f7004d1571aa2344ae7a195187fff31ee31e74ca5eff7adc42c98812f9` | 60,823,287 / 60,823,287 | 19 bytes differ, every one inside a compiled-in date or time string |
@@ -216,7 +216,7 @@ Stages:
 - KiCad compile: 00:28:22Z to 00:40:35Z (all 1,854 objects, served by ccache, though only `wasm/kiplatform/io.cpp` changed since the build before; this is the entrypoint re-touch in Notes);
 - `wasm-opt`: 00:40:36Z to 00:41:34Z.
 
-The island serves this build since `v0.2.3-cc8`: `npm run fetch-engine -- --local /home/matthew/cc-engine/out/cc8` copied it into `engine/kicad_editor/v0.2.3/` and wrote `PIN.json` `engine.build` and `engine.files`. The CDN files that path held before are kept in `/home/matthew/cc-engine/out/cdn-v0.2.3/` (their sha256s are the CDN column above).
+The island serves the `cc8` tree's builds since `v0.2.3-cc8`: `npm run fetch-engine -- --local "$CC_ENGINE_ROOT/out/cc8"` copies the latest run into `engine/kicad_editor/v0.2.3/`, and `PIN.json` `engine.build` and `engine.files` name the commits and sha256s of the run served (run 4 since 2026-10-16, after the Altium ReadProperties repair). The CDN files that path held before are kept in `/home/matthew/cc-engine/out/cdn-v0.2.3/` (their sha256s are the CDN column above).
 
 To repeat the comparison:
 

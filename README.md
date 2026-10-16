@@ -13,17 +13,17 @@ This repository is GPL-3.0-or-later (see `LICENSE`). KiCad and PCBJam are GPL-3.
 
 ## Build
 
-A fresh clone builds with Node (22 is what the island is built with) and the engine files, which are our own build: `scripts/engine/build.sh` runs PCBJam's recipe in Docker on the commits `PIN.json` `engine.build` names (`scripts/engine/README.md` has the setup and the timings), and `fetch-engine --local` takes its output in:
+A fresh clone builds with Node (22 is what the island is built with) and the engine files, which are our own build: `scripts/engine/build.sh cc8` runs PCBJam's recipe in Docker on the `cc/main` heads of the four local clones under `CC_ENGINE_ROOT` (`scripts/engine/README.md` has the setup and the timings; to rebuild a published release, check those clones out at the commits its `PIN.json` `engine.build` names first), and `fetch-engine --local` takes its output in and records the commits it was built from:
 
 ```bash
 npm ci                              # the pinned dependencies from package-lock.json
 npx playwright install chromium     # the browser the icon rasterizer uses (add firefox for the full e2e)
-bash scripts/engine/build.sh cc8    # build the engine into /home/matthew/cc-engine/out/cc8/ (hours the first time)
-npm run fetch-engine -- --local /home/matthew/cc-engine/out/cc8   # copy the five files in, each checked against that build's meta.json
+bash scripts/engine/build.sh cc8    # build the engine into $CC_ENGINE_ROOT/out/cc8/ (hours the first time)
+npm run fetch-engine -- --local "$CC_ENGINE_ROOT/out/cc8"   # copy the five files in, each checked against that build's meta.json
 npm run build                       # build dist/r/<islandId>/, dist/island.json and dist/current
 ```
 
-`fetch-engine --local` writes `PIN.json` `engine.files` and `engine.build` (the four source commits from the build's `meta.json`; the recipe name, the patches and the reproduction record from `--notes <file>` or as `PIN.json` holds them, and every patch must name a commit of the build). A new icon archive asks for `node theme/icons/rasterize.mjs && node theme/icons/repack.mjs` once before the build will run. Plain `npm run fetch-engine` reads PCBJam's own build from cdn.pcbjam.com for an island with no `engine.build`; while `engine.build` is there it refuses unless `--cdn` says to switch back.
+`fetch-engine --local` writes `PIN.json` `engine.files` and `engine.build` (the four source commits from the build's `meta.json`; the recipe name, the patches and the reproduction record from `--notes <file>` or as `PIN.json` holds them; every patch must name a commit of ours in the build's history, checked in the clones under `CC_ENGINE_ROOT`). A new icon archive asks for `node theme/icons/rasterize.mjs && node theme/icons/repack.mjs` once before the build will run. Plain `npm run fetch-engine` reads PCBJam's own build from cdn.pcbjam.com for an island with no `engine.build`; while `engine.build` is there it refuses unless `--cdn` says to switch back.
 
 Then `npm test` runs the unit tests (vitest), `npm run typecheck` the type check, and `npm run e2e` the browser tests over the local pair (Playwright, Chromium and Firefox).
 
