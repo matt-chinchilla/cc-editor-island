@@ -118,8 +118,8 @@ nothing else in the plan changes.
 ## Reproduction record (D7)
 
 The pristine build (2026-10-15, finished 2026-10-16T00:00:42Z) compared with the CDN
-files the island serves today (`engine/kicad_editor/v0.2.3/`, fetched by
-`scripts/fetch-engine.mjs`, whose sha256s are `PIN.json`'s `engine.files`):
+files the island served until `v0.2.3-cc7` (`engine/kicad_editor/v0.2.3/` then, fetched by
+`scripts/fetch-engine.mjs` from PCBJam's CDN; kept now in `/home/matthew/cc-engine/out/cdn-v0.2.3/`):
 
 | file | built here (pristine) | PCBJam CDN (`PIN.json`) | bytes (here / CDN) | result |
 |------|------|------|------|------|
@@ -216,12 +216,14 @@ Stages:
 - KiCad compile: 00:28:22Z to 00:40:35Z (all 1,854 objects, served by ccache, though only `wasm/kiplatform/io.cpp` changed since the build before; this is the entrypoint re-touch in Notes);
 - `wasm-opt`: 00:40:36Z to 00:41:34Z.
 
+The island serves this build since `v0.2.3-cc8`: `npm run fetch-engine -- --local /home/matthew/cc-engine/out/cc8` copied it into `engine/kicad_editor/v0.2.3/` and wrote `PIN.json` `engine.build` and `engine.files`. The CDN files that path held before are kept in `/home/matthew/cc-engine/out/cdn-v0.2.3/` (their sha256s are the CDN column above).
+
 To repeat the comparison:
 
 ```bash
-cmp -l /home/matthew/cc-engine/out/pristine/kicad_editor.wasm engine/kicad_editor/v0.2.3/kicad_editor.wasm | wc -l   # 19
+cmp -l /home/matthew/cc-engine/out/pristine/kicad_editor.wasm /home/matthew/cc-engine/out/cdn-v0.2.3/kicad_editor.wasm | wc -l   # 19
 diff <(tar -tzvf /home/matthew/cc-engine/out/pristine/images.tar.gz | awk '{print $3, $6}' | sort) \
-     <(tar -tzvf engine/kicad_editor/v0.2.3/images.tar.gz | awk '{print $3, $6}' | sort)                 # empty
+     <(tar -tzvf /home/matthew/cc-engine/out/cdn-v0.2.3/images.tar.gz | awk '{print $3, $6}' | sort)                 # empty
 ```
 
 ## Notes

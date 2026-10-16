@@ -3,7 +3,7 @@
 
 The Circuit Center editor island: the page that runs the KiCad editor in the browser inside a cross-origin iframe on circuitcenter.ai.
 
-It holds PCBJam's KiCad in WebAssembly engine, pinned at PCBJam tag v0.2.3 (root commit and gitlinks in `PIN.json`), our own loader, and the responder for the `cc-editor/1` message protocol.
+It holds PCBJam's KiCad in WebAssembly engine at PCBJam tag v0.2.3 (root commit and gitlinks in `PIN.json` `pcbjam`), built by us with PCBJam's own recipe from our mirrors' `cc/main` (the commits and changes in `PIN.json` `engine.build`, the recipe in `scripts/engine/`), our own loader, and the responder for the `cc-editor/1` message protocol.
 
 Since stage 1c the frame boots canvas only (KiCad's menus, toolbars and panes hidden; `chrome.show` brings them back), and the protocol carries seven ops for the host's own controls: `key.press`, `view.fit`, `sheet.tree`, `sheet.enter`, `layers.get`, `layers.visible` and `layers.active` (`PROTOCOL.md`). The fast part picker (`PICKER.md`) adds four more, `lib.index`, `lib.item`, `lib.prefetch` and `place`, and the event `ev.pick`: KiCad's place keys open the host's picker, which places a part without KiCad enumerating a library.
 
@@ -13,14 +13,17 @@ This repository is GPL-3.0-or-later (see `LICENSE`). KiCad and PCBJam are GPL-3.
 
 ## Build
 
-A fresh clone builds with Node (22 is what the island is built with) and network access to cdn.pcbjam.com, where `fetch-engine` reads the pinned engine files:
+A fresh clone builds with Node (22 is what the island is built with) and the engine files, which are our own build: `scripts/engine/build.sh` runs PCBJam's recipe in Docker on the commits `PIN.json` `engine.build` names (`scripts/engine/README.md` has the setup and the timings), and `fetch-engine --local` takes its output in:
 
 ```bash
 npm ci                              # the pinned dependencies from package-lock.json
 npx playwright install chromium     # the browser the icon rasterizer uses (add firefox for the full e2e)
-npm run fetch-engine                # fetch PCBJam's engine files for the pin and verify each sha256 against PIN.json
+bash scripts/engine/build.sh cc8    # build the engine into /home/matthew/cc-engine/out/cc8/ (hours the first time)
+npm run fetch-engine -- --local /home/matthew/cc-engine/out/cc8   # copy the five files in, each checked against that build's meta.json
 npm run build                       # build dist/r/<islandId>/, dist/island.json and dist/current
 ```
+
+`fetch-engine --local` writes `PIN.json` `engine.files` and `engine.build` (the four source commits from the build's `meta.json`; the recipe name, the patches and the reproduction record from `--notes <file>` or as `PIN.json` holds them, and every patch must name a commit of the build). A new icon archive asks for `node theme/icons/rasterize.mjs && node theme/icons/repack.mjs` once before the build will run. Plain `npm run fetch-engine` reads PCBJam's own build from cdn.pcbjam.com for an island with no `engine.build`; while `engine.build` is there it refuses unless `--cdn` says to switch back.
 
 Then `npm test` runs the unit tests (vitest), `npm run typecheck` the type check, and `npm run e2e` the browser tests over the local pair (Playwright, Chromium and Firefox).
 
@@ -60,6 +63,6 @@ For every build we serve, the complete corresponding source is this repository a
 Publishing is the owner's: nothing here runs on its own, the owner runs each step below, and each script takes `--dry-run` to read GitHub and print every write as `DRY: ...` instead.
 
 1. Create this repository on GitHub (the owner's step, once): `gh repo create matt-chinchilla/cc-editor-island --public --source=. --push`.
-2. `bash scripts/mirrors.sh`: forks pcbjam, kicad-source-mirror, wxWidgets and pcbjam-shared under matt-chinchilla once, then tags `cc/<islandId>` on each at the commits in `PIN.json`. A tag that exists at another commit is never moved.
+2. `bash scripts/mirrors.sh`: forks pcbjam, kicad-source-mirror, wxWidgets and pcbjam-shared under matt-chinchilla once, then tags `cc/<islandId>` on each at the commits the engine was built from (`PIN.json` `engine.build`, else the `pcbjam` pin). For our own build it first pushes the branch `cc/main` to each fork from the local clones the build used, at the built commit, never forced; a clone whose `cc/main` has moved past the build is refused. A tag that exists at another commit is never moved.
 3. `npm run build`, commit, then `bash scripts/release.sh`: assembles `release/<islandId>/` (the source tarball of HEAD, `SHA256SUMS` over every file that ships, the dependency source archives verified against the sha256 pins in `notices/versions.sh`, `RELEASE_NOTES.md`) and publishes the release tagged `<islandId>`.
 4. `bash scripts/ship.sh <islandId>`: refuses unless the release `<islandId>` carries a `SHA256SUMS` that every file about to ship matches and the three mirror tags exist; then rsyncs `dist/r/<islandId>/` to the box, copies `island.json`, flips `current` with a rename and keeps two releases. It ships to prod: run `bash scripts/ship.sh --dry-run <islandId>` first.

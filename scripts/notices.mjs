@@ -220,13 +220,32 @@ function versionOf(dep, versions) {
 /** "A", "A and B", "A, B and C". */
 const andList = (names) => (names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names.join(''));
 
+/**
+ * The commits the served engine was built from, the one home every script reads
+ * them from (build.mjs's island.json, mirrors.sh, ship.sh, release.sh, this page):
+ * PIN.json engine.build when the engine is our own build (fetch-engine --local),
+ * else PCBJam's pin, whose CDN build it then is. `ours` says which.
+ */
+export function servedSources(pin) {
+  const b = pin.engine?.build;
+  const s = b
+    ? { ours: true, recipe: b.recipe, pcbjam: b.pcbjam, kicad: b.kicad, wxwidgets: b.wxwidgets, shared: b.shared, patches: b.patches }
+    : { ours: false, recipe: null, pcbjam: pin.pcbjam.root, kicad: pin.pcbjam.kicad, wxwidgets: pin.pcbjam.wxwidgets, shared: pin.pcbjam.shared, patches: [] };
+  for (const key of ['pcbjam', 'kicad', 'wxwidgets', 'shared']) {
+    if (!/^[0-9a-f]{40}$/.test(s[key] ?? '')) throw new Error(`PIN.json ${b ? 'engine.build' : 'pcbjam'} holds no full commit for ${key}: ${s[key]}`);
+  }
+  if (b && (!Array.isArray(s.patches) || s.patches.length === 0)) throw new Error('PIN.json engine.build lists no patches');
+  return s;
+}
+
 export function render({ versions, modified }, pin, texts) {
   const id = pin.islandId;
   const release = `${GH}/cc-editor-island/releases/tag/${id}`;
+  const src = servedSources(pin);
   const mirrors = [
-    { repo: 'pcbjam', what: 'PCBJam, the build recipe and the web sources', commit: pin.pcbjam.root },
-    { repo: 'kicad-source-mirror', what: 'KiCad as PCBJam builds it', commit: pin.pcbjam.kicad },
-    { repo: 'wxWidgets', what: 'wxWidgets with the WebAssembly port', commit: pin.pcbjam.wxwidgets },
+    { repo: 'pcbjam', what: src.ours ? 'PCBJam with our changes, the build recipe and the web sources' : 'PCBJam, the build recipe and the web sources', commit: src.pcbjam },
+    { repo: 'kicad-source-mirror', what: src.ours ? 'KiCad as PCBJam builds it, with our changes' : 'KiCad as PCBJam builds it', commit: src.kicad },
+    { repo: 'wxWidgets', what: 'wxWidgets with the WebAssembly port', commit: src.wxwidgets },
   ];
   const engineFiles = Object.entries(pin.engine.files);
   const deps = DEPS.map((d) => ({ ...d, v: versionOf(d, versions) })).filter((d) => d.v.vars.length > 0);
@@ -237,7 +256,9 @@ export function render({ versions, modified }, pin, texts) {
   // wording checks run over these; the reproduced texts are kept apart.
   const own = [];
   own.push(['Circuit Center editor', `
-<p>This is the Circuit Center editor, release <code>${esc(id)}</code>: PCBJam's build of KiCad for the browser at PCBJam tag <code>${esc(pin.pcbjam.tag)}</code>, with a loader, a message responder and a theme by ${esc(BRAND)}.</p>
+<p>This is the Circuit Center editor, release <code>${esc(id)}</code>: ${src.ours
+    ? `KiCad for the browser as PCBJam builds it at PCBJam tag <code>${esc(pin.pcbjam.tag)}</code>, built by ${esc(BRAND)} with the changes listed under "Files we changed", and with a loader, a message responder and a theme by ${esc(BRAND)}.`
+    : `PCBJam's build of KiCad for the browser at PCBJam tag <code>${esc(pin.pcbjam.tag)}</code>, with a loader, a message responder and a theme by ${esc(BRAND)}.`}</p>
 <p>Copyright (c) ${YEAR} ${esc(OWNER)} for the files ${esc(BRAND)} wrote. KiCad, PCBJam, wxWidgets and the libraries listed below are copyright their own authors.</p>
 <p>This program is free software. The editor as a whole is conveyed to you under the GNU General Public License, version 3, and you may redistribute it and modify it under those terms. The files ${esc(BRAND)} wrote may also be used under any later version of that license.</p>
 <p>There is no warranty for this program, to the extent permitted by applicable law. It is provided as is, without warranty of any kind, either expressed or implied, including the implied warranties of merchantability and fitness for a particular purpose. Sections 15 and 16 of the license say this in full.</p>
@@ -251,25 +272,32 @@ ${mirrors.map((m) => `<li>${esc(m.what)}: the tag <code>cc/${esc(id)}</code> in 
 <li>The source archives of the libraries the recipe builds from are attached to the same release.${pinnedBySha.length ? ` Those of ${esc(andList(pinnedBySha))} are each pinned by the sha256 in their row of the dependency table below;` : ''} KiCad and wxWidgets are pinned by the mirror commits above.</li>
 </ul>
 <p>We also mirror pcbjam-shared (MIT) for completeness, at <code>${esc(GH)}/pcbjam-shared</code>; it is not part of the served build.</p>
-<p>The build instructions for this release are PCBJam's own recipe at commit <code>${esc(pin.pcbjam.root)}</code>, in the pcbjam mirror at the tag <code>cc/${esc(id)}</code>: <code>.github/workflows/wasm-build.yml</code>, <code>docker/</code> and <code>scripts/</code>, with the versions in <code>scripts/common/versions.sh</code>.</p>
-<p>The engine files served here, each checked against the sha256 PCBJam published for tag <code>${esc(pin.engine.toolTag)}</code>:</p>
+${src.ours
+    ? `<p>The build instructions for this release are <code>scripts/engine/build.sh</code> and <code>scripts/engine/README.md</code> in the island repository at the tag <code>${esc(id)}</code>. They run PCBJam's own recipe (<code>docker/build.sh</code>, with <code>docker/</code> and <code>scripts/</code> and the versions in <code>scripts/common/versions.sh</code>) in the pcbjam mirror at the tag <code>cc/${esc(id)}</code>, commit <code>${esc(src.pcbjam)}</code>, on a tree holding KiCad at <code>${esc(src.kicad)}</code>, wxWidgets at <code>${esc(src.wxwidgets)}</code> and pcbjam-shared at <code>${esc(src.shared)}</code>, each at the tag <code>cc/${esc(id)}</code> of its mirror.</p>
+<p>The engine files served here, each checked against the sha256 that build recorded:</p>`
+    : `<p>The build instructions for this release are PCBJam's own recipe at commit <code>${esc(src.pcbjam)}</code>, in the pcbjam mirror at the tag <code>cc/${esc(id)}</code>: <code>.github/workflows/wasm-build.yml</code>, <code>docker/</code> and <code>scripts/</code>, with the versions in <code>scripts/common/versions.sh</code>.</p>
+<p>The engine files served here, each checked against the sha256 PCBJam published for tag <code>${esc(pin.engine.toolTag)}</code>:</p>`}
 <table><thead><tr><th>File</th><th>sha256</th><th>Built from</th></tr></thead><tbody>
 ${engineFiles.map(([name, f]) => `<tr><td data-label="File"><code>${esc(name)}</code></td><td data-label="sha256"><code class="hash">${esc(f.sha256)}</code></td><td data-label="Built from"><code class="hash">${esc(f.source)}</code></td></tr>`).join('\n')}
 </tbody></table>
-<p>The icon archive <code>images.tar.gz</code> is served repacked: ${esc(pin.icons.replacedEntries)} of its ${esc(pin.icons.entries)} entries are toolbar glyphs ${esc(BRAND)} redrew, every other entry is PCBJam's byte for byte. The repacked archive's sha256 is <code>${esc(pin.icons.repackedSha256)}</code>. Its preferred form for modification is <code>theme/icons/src</code> with <code>theme/icons/rasterize.mjs</code> and <code>theme/icons/repack.mjs</code> in the island repository.</p>`]);
+<p>The icon archive <code>images.tar.gz</code> is served repacked: ${esc(pin.icons.replacedEntries)} of its ${esc(pin.icons.entries)} entries are toolbar glyphs ${esc(BRAND)} redrew, every other entry is ${src.ours ? 'the build\'s' : 'PCBJam\'s'} byte for byte. The repacked archive's sha256 is <code>${esc(pin.icons.repackedSha256)}</code>. Its preferred form for modification is <code>theme/icons/src</code> with <code>theme/icons/rasterize.mjs</code> and <code>theme/icons/repack.mjs</code> in the island repository.</p>`]);
 
   own.push(['Files we changed', `
 <p>The loader is PCBJam's code, copied at the pin. The unchanged copies are kept in <code>loader/pristine</code> of the island repository. These copied files differ from PCBJam's; each carries the notices below, quoted from the file:</p>
 <ul>
 ${modified.map((f) => `<li><code>${esc(f.path)}</code><ul class="notes">${f.notices.map((n) => `<li class="note">Modified by ${esc(BRAND)} on ${esc(n.date)}: ${esc(n.text)}</li>`).join('')}</ul></li>`).join('\n')}
-</ul>`]);
+</ul>${src.ours ? `
+<p>The engine is built with these changes to PCBJam's and KiCad's sources, each named with the commit of its mirror's <code>${esc(src.recipe)}</code> branch that holds it; the tags under "Where the source is" point at those commits. Every file the changes touch carries a dated "Modified by ${esc(OWNER)} on" notice.</p>
+<ul>
+${src.patches.map((p) => `<li>${esc(p)}</li>`).join('\n')}
+</ul>` : ''}`]);
 
   own.push(['Libraries and their licenses', `
 <p>Every dependency named by <code>scripts/common/versions.sh</code> in the pinned recipe, with the license it comes under. ${added.length ? `The recipe names ${esc(andList(added))} beyond the list our design names; they are here with their own licenses.` : ''}</p>
 <table><thead><tr><th>Dependency</th><th>Version</th><th>In the recipe</th><th>License</th></tr></thead><tbody>
 ${deps.map((d) => `<tr><td data-label="Dependency">${esc(d.name)}</td><td data-label="Version">${esc(d.v.text)}${d.v.sha ? `<br><span class="small">sha256 <code class="hash">${esc(d.v.sha)}</code></span>` : ''}</td><td data-label="In the recipe">${esc(d.recipe)}</td><td data-label="License">${esc(d.license)}</td></tr>`).join('\n')}
 </tbody></table>
-<p>The kicad-source-mirror commit the engine was built from is <code>${esc(pin.pcbjam.kicad)}</code>, the gitlink at PCBJam's commit; the commit versions.sh names for KiCad is the recipe's own record and may be older. The wxWidgets fork is at <code>${esc(pin.pcbjam.wxwidgets)}</code>.</p>`]);
+<p>The kicad-source-mirror commit the engine was built from is <code>${esc(src.kicad)}</code>, the gitlink at ${src.ours ? 'the pcbjam commit above' : 'PCBJam\'s commit'}; the commit versions.sh names for KiCad is the recipe's own record and may be older. The wxWidgets fork is at <code>${esc(src.wxwidgets)}</code>.</p>`]);
 
   own.push(['Phosphor Icons', `
 <p>The six toolbar glyphs ${esc(BRAND)} redrew for the icon archive follow the Phosphor Icons Light style. Phosphor Icons is released under the MIT License; its notice follows as its authors wrote it.</p>`]);

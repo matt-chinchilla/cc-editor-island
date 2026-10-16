@@ -36,13 +36,21 @@ run() {
 refuse() { echo "refused: $*" >&2; exit 1; }
 
 pin() { node -p "require('./PIN.json').$1"; }
+# The commits the served engine was built from (servedSources in scripts/notices.mjs:
+# PIN.json engine.build for our own build, else PCBJam's pin), as the license page names them.
+served() {
+  node --input-type=module -e "import { readFileSync } from 'node:fs'; import { servedSources } from './scripts/notices.mjs'; const s = servedSources(JSON.parse(readFileSync('PIN.json', 'utf8'))); console.log(Array.isArray(s['$1']) ? s['$1'].join('\\n') : s['$1'])"
+}
 ID=$(pin islandId)
 [[ "$ID" =~ ^[a-z0-9][a-z0-9.-]{0,63}$ ]] || refuse "PIN.json islandId does not match the islandId grammar ^[a-z0-9][a-z0-9.-]{0,63}$ (the site's ISLAND_ID_RE): $ID"
 PCBJAM_TAG=$(pin pcbjam.tag)
-ROOT_SHA=$(pin pcbjam.root)
-KICAD_SHA=$(pin pcbjam.kicad)
-WX_SHA=$(pin pcbjam.wxwidgets)
-SHARED_SHA=$(pin pcbjam.shared)
+ROOT_SHA=$(served pcbjam)
+KICAD_SHA=$(served kicad)
+WX_SHA=$(served wxwidgets)
+SHARED_SHA=$(served shared)
+OURS=$(served ours)
+RECIPE=$(served recipe)
+if [ "$OURS" = true ]; then CHANGED=", with our changes on \`$RECIPE\`"; else CHANGED=; fi
 REL="dist/r/$ID"
 OUT="release/$ID"
 SRC="cc-editor-island-$ID-src.tar.gz"
@@ -191,22 +199,34 @@ for (const f of modified) {
 {
   echo "# Circuit Center editor island $ID"
   echo
-  echo "PCBJam's build of KiCad for the browser at PCBJam tag \`$PCBJAM_TAG\`, with our loader, message responder and theme. This repository at tag \`$ID\` (commit \`$HEAD_SHA\`) is the source of the island; the rest of the complete corresponding source is below."
+  if [ "$OURS" = true ]; then
+    echo "KiCad for the browser as PCBJam builds it at PCBJam tag \`$PCBJAM_TAG\`, built by us with PCBJam's recipe from the commits below (\`scripts/engine/\` in this repository runs it), with our loader, message responder and theme. This repository at tag \`$ID\` (commit \`$HEAD_SHA\`) is the source of the island; the rest of the complete corresponding source is below."
+  else
+    echo "PCBJam's build of KiCad for the browser at PCBJam tag \`$PCBJAM_TAG\`, with our loader, message responder and theme. This repository at tag \`$ID\` (commit \`$HEAD_SHA\`) is the source of the island; the rest of the complete corresponding source is below."
+  fi
   echo
   echo "## The pinned sources"
   echo
   echo "| What | Upstream | Commit | Our mirror tag |"
   echo "|---|---|---|---|"
-  echo "| PCBJam, the recipe and the web sources (tag \`$PCBJAM_TAG\`) | github.com/PCBJam/pcbjam | \`$ROOT_SHA\` | \`cc/$ID\` in github.com/$OWNER/pcbjam |"
-  echo "| KiCad as PCBJam builds it | github.com/PCBJam/kicad-source-mirror | \`$KICAD_SHA\` | \`cc/$ID\` in github.com/$OWNER/kicad-source-mirror |"
+  echo "| PCBJam, the recipe and the web sources (tag \`$PCBJAM_TAG\`$CHANGED) | github.com/PCBJam/pcbjam | \`$ROOT_SHA\` | \`cc/$ID\` in github.com/$OWNER/pcbjam |"
+  echo "| KiCad as PCBJam builds it$CHANGED | github.com/PCBJam/kicad-source-mirror | \`$KICAD_SHA\` | \`cc/$ID\` in github.com/$OWNER/kicad-source-mirror |"
   echo "| wxWidgets with the WebAssembly port | github.com/PCBJam/wxWidgets | \`$WX_SHA\` | \`cc/$ID\` in github.com/$OWNER/wxWidgets |"
   echo "| pcbjam-shared (MIT, mirrored for completeness, not part of the served build) | github.com/PCBJam/pcbjam-shared | \`$SHARED_SHA\` | \`cc/$ID\` in github.com/$OWNER/pcbjam-shared |"
   echo
   echo "Dependencies the recipe pins by a git commit are reached through those repositories:"
   echo
-  echo "- KiCad: the kicad-source-mirror commit above, the gitlink at PCBJam's commit. The recipe's versions.sh also records \`KICAD_COMMIT=$KICAD_RECIPE_COMMIT\`, its own older record; the engine was built from the gitlink."
-  echo "- wxWidgets: the wxWidgets commit above, the gitlink at PCBJam's commit."
+  echo "- KiCad: the kicad-source-mirror commit above, the gitlink at the pcbjam commit above. The recipe's versions.sh also records \`KICAD_COMMIT=$KICAD_RECIPE_COMMIT\`, its own older record; the engine was built from the gitlink."
+  echo "- wxWidgets: the wxWidgets commit above, the gitlink at the pcbjam commit above."
   echo "- RapidJSON: commit \`$RAPIDJSON_COMMIT\` of github.com/Tencent/rapidjson; the archive of that commit is attached as well, by the sha256 the recipe pins."
+  if [ "$OURS" = true ]; then
+    echo
+    echo "## Our engine changes"
+    echo
+    echo "Each is named with the commit of its mirror's \`$RECIPE\` branch that holds it; every file they touch carries a dated \"Modified by Chirichella Inc. on\" notice."
+    echo
+    served patches | sed 's/^/- /'
+  fi
   echo
   echo "## Attached"
   echo

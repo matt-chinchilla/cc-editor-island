@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, w
 import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { inputDrift } from '../theme/icons/inputs.mjs';
+import { servedSources } from './notices.mjs';
 
 const local = process.argv.includes('--local');
 const pin = JSON.parse(readFileSync('PIN.json', 'utf8'));
@@ -20,11 +21,17 @@ const { tool, toolTag } = pin.engine;
 const engineSrc = join('engine', tool, toolTag);
 const FILES = ['kicad_editor.js', 'kicad_editor.wasm', 'wx.js', 'wx-dom.js', 'images.tar.gz'];
 if (!existsSync(engineSrc)) throw new Error('run npm run fetch-engine first');
+// The commits the engine was built from: PIN.json engine.build for our own build, else
+// PCBJam's pin (servedSources). Whether they are reachable in the mirrors is ship.sh's
+// check, at ship time, against the cc/<islandId> tags; the build only needs them whole
+// and agreeing with the source every engine file records.
+const sources = servedSources(pin);
 // Every engine file must be recorded in PIN.json and present on disk with exactly the recorded bytes.
 const engine = {};
 for (const name of FILES) {
   const recorded = pin.engine.files?.[name];
   if (recorded?.sha256 == null) throw new Error(`${name} not recorded in PIN.json; run npm run fetch-engine first`);
+  if (recorded.source !== sources.pcbjam) throw new Error(`${name}: PIN.json says it was built from ${recorded.source}, but the served pcbjam commit is ${sources.pcbjam}; run npm run fetch-engine again`);
   const path = join(engineSrc, name);
   if (!existsSync(path)) throw new Error(`${name} missing from ${engineSrc}`);
   const bytes = readFileSync(path);
@@ -79,7 +86,7 @@ execSync('npx vite build', { stdio: 'inherit' });
 execSync(`node scripts/notices.mjs ${rel}`, { stdio: 'inherit' });
 
 // 3. island.json, twice: inside the release and at the root for the no-cache route.
-const island = { id, tag: pin.pcbjam.tag, kicadCommit: pin.pcbjam.kicad, source: `https://github.com/matt-chinchilla/cc-editor-island/releases/tag/${id}` };
+const island = { id, tag: pin.pcbjam.tag, kicadCommit: sources.kicad, source: `https://github.com/matt-chinchilla/cc-editor-island/releases/tag/${id}` };
 writeFileSync(join(rel, 'island.json'), JSON.stringify(island));
 writeFileSync(join('dist', 'island.json'), JSON.stringify(island));
 

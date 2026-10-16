@@ -1,5 +1,5 @@
 {
-  "islandId": "v0.2.3-cc7",
+  "islandId": "v0.2.3-cc8",
   "pcbjam": {
     "tag": "v0.2.3",
     "root": "7ec51c1c55aab45b21cd2956af413b4420520838",
@@ -17,37 +17,58 @@
     "manifest": "https://cdn.pcbjam.com/wasm/manifest-v0.2.3.json",
     "tool": "kicad_editor",
     "toolTag": "v0.2.3",
+    "build": {
+      "recipe": "cc/main",
+      "pcbjam": "c9752f8d3fa22d5164c9924b02ea20f76370d7de",
+      "kicad": "90898109c74ce5143fda09e21e36d280f02f68c4",
+      "wxwidgets": "8bad5f58e9b51050d3678f5c98cb0dc41b4595b2",
+      "shared": "7791275bdfbf54e1500e303121dacaa2c3fd7d00",
+      "patches": [
+        "importer gates removed (kicad cc/main 90898109)",
+        "kicadImportSchematic (pcbjam cc/main c9752f8)",
+        "MAPPED_FILE for the WebAssembly platform (pcbjam cc/main c9752f8)"
+      ],
+      "reproduction": {
+        "pristine": {
+          "differs": [
+            "kicad_editor.wasm",
+            "images.tar.gz"
+          ],
+          "note": "The pristine kicad_editor.wasm has the CDN file's length and differs in 19 bytes, all inside its two compiled-in build date and time stamps; the pristine images.tar.gz holds the same 5,116 members with identical names, sizes and contents, in another order with other mtimes and owner."
+        }
+      }
+    },
     "files": {
       "kicad_editor.js": {
-        "sha256": "39e41c2233a1e139be74e4a8b408380ec7c05ec7c1418d3e336deb3dd600d9b0",
-        "bytes": 488056,
-        "source": "7ec51c1c55aab45b21cd2956af413b4420520838"
+        "sha256": "6384c3dfa5d763fbb6de307f8a22839b3047e4727c61ae68f061662e9d693308",
+        "bytes": 488429,
+        "source": "c9752f8d3fa22d5164c9924b02ea20f76370d7de"
       },
       "kicad_editor.wasm": {
-        "sha256": "a80fd1f7004d1571aa2344ae7a195187fff31ee31e74ca5eff7adc42c98812f9",
-        "bytes": 60823287,
-        "source": "7ec51c1c55aab45b21cd2956af413b4420520838"
+        "sha256": "e8bd84e9123f3a67233b1336e9cb5ca8d88ce9f4a1075a7e0cfd87201e2e508a",
+        "bytes": 63211699,
+        "source": "c9752f8d3fa22d5164c9924b02ea20f76370d7de"
       },
       "wx.js": {
         "sha256": "42d6b547f9a024f187f1b7812b64a3f76ca322d35393531340cb316ff88da351",
         "bytes": 79808,
-        "source": "7ec51c1c55aab45b21cd2956af413b4420520838"
+        "source": "c9752f8d3fa22d5164c9924b02ea20f76370d7de"
       },
       "wx-dom.js": {
         "sha256": "7edabd5571c9f2fd0ea1acf7005fb3628f2e3cf6b8f430f8e473c328fb042a10",
         "bytes": 68699,
-        "source": "7ec51c1c55aab45b21cd2956af413b4420520838"
+        "source": "c9752f8d3fa22d5164c9924b02ea20f76370d7de"
       },
       "images.tar.gz": {
-        "sha256": "bc24c8db9b9050af2093305e0e42694812297ff4f465f45b0d30b0303dde6477",
-        "bytes": 5373919,
-        "source": "7ec51c1c55aab45b21cd2956af413b4420520838"
+        "sha256": "4ee189c32c796adf0d8b1c61cfa69b10c9c91d43d5327722a3a507c34af39be5",
+        "bytes": 5369575,
+        "source": "c9752f8d3fa22d5164c9924b02ea20f76370d7de"
       }
     }
   },
   "icons": {
-    "stockArchiveSha256": "bc24c8db9b9050af2093305e0e42694812297ff4f465f45b0d30b0303dde6477",
-    "repackedSha256": "b012d6915c22cf9d224ea6b5b95390c975d8289a4005a53144577dd2bc746234",
+    "stockArchiveSha256": "4ee189c32c796adf0d8b1c61cfa69b10c9c91d43d5327722a3a507c34af39be5",
+    "repackedSha256": "4d1b16a7fef80b031f6d36f3c6ea2a1c42062c6f52835b98d1b0f5c4f762ceb2",
     "inputs": {
       "theme/icons/src/add_component.svg": "d8d2dfa56f179658a3b2bd458090683161f188ad13d84d89fdb82f1a0f2a12e6",
       "theme/icons/src/add_line.svg": "64db6c023211cd897ea1f3613fcc4d338bf86fbca3086cf832bf3bf25dd516f0",

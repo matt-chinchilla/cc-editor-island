@@ -90,14 +90,18 @@ elif [ "$DRY" = 1 ] && [ -f "release/$ID/SHA256SUMS" ]; then
   check_sums "release/$ID/SHA256SUMS" "the local release/$ID/SHA256SUMS"
 fi
 
-# The three mirror tags the license page promises, at the commits PIN.json pins
-# when this is the pinned island.
+# The three mirror tags the license page promises, at the commits the served
+# engine was built from (servedSources in scripts/notices.mjs: PIN.json
+# engine.build for our own build, else PCBJam's pin) when this is the pinned island.
+served() {
+  node --input-type=module -e "import { readFileSync } from 'node:fs'; import { servedSources } from './scripts/notices.mjs'; console.log(servedSources(JSON.parse(readFileSync('PIN.json', 'utf8')))['$1'])"
+}
 PIN_ID=$(node -p "require('./PIN.json').islandId")
 declare -A WANT=()
 if [ "$PIN_ID" = "$ID" ]; then
-  WANT[pcbjam]=$(node -p "require('./PIN.json').pcbjam.root")
-  WANT[kicad-source-mirror]=$(node -p "require('./PIN.json').pcbjam.kicad")
-  WANT[wxWidgets]=$(node -p "require('./PIN.json').pcbjam.wxwidgets")
+  WANT[pcbjam]=$(served pcbjam)
+  WANT[kicad-source-mirror]=$(served kicad)
+  WANT[wxWidgets]=$(served wxwidgets)
 fi
 for r in "${MIRRORS[@]}"; do
   if sha=$(gh api "repos/$OWNER/$r/git/ref/tags/cc/$ID" --jq .object.sha 2>/dev/null); then
