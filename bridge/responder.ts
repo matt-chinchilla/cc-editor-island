@@ -1465,9 +1465,12 @@ export function startResponder(opts: {
       // engine's place and selection exports; ev.ready says so with the pseudo-cap `picker`.
       pickerOn = libs?.mirror != null && typeof mod.kicadPlaceImportedItem === 'function' && typeof mod.kicadCollabGetSelection === 'function';
       if (pickerOn) { caps.push(PICKER_CAP); caps.sort(); }
-      // ev.selected from the engine's own selection hook, armed once here; sent only while a document is open.
+      // ev.selected from the engine's own selection hook: its slot taken here, the hook
+      // armed here in a pcb frame and by the first document in a sch frame (SelectionFeed.arm);
+      // sent only while a document is open.
       const feed = new SelectionFeed(w as unknown as SelectionWindow, {
         timing,
+        frame,
         live: () => !closed && !importing && staged != null && opened != null,
         send: (s) => emit({ type: 'ev.selected', uuids: s.uuids, fpPaths: s.fpPaths }),
         log: (m, err) => console.debug('[select]', m, err),

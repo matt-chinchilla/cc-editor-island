@@ -95,20 +95,32 @@ describe('ev.selected\'s feed', () => {
   function feed(opts: { shape?: 'sch' | 'pcb'; live?: () => boolean } = {}) {
     const eng = fakeEngine(opts.shape);
     const sent: Selection[] = [];
-    const f = new SelectionFeed(eng.win, { timing: { selectSettleMs: 50, selectPullMs: 200 }, live: opts.live ?? (() => true), send: (s) => sent.push(s) });
+    const f = new SelectionFeed(eng.win, { timing: { selectSettleMs: 50, selectPullMs: 200 }, frame: opts.shape ?? 'pcb', live: opts.live ?? (() => true), send: (s) => sent.push(s) });
     return { eng, f, sent };
   }
 
-  it('arms the engine\'s hook once, keeping a listener already in the slot', () => {
+  it('takes the selection slot once, keeping a listener already in it, and arms a board\'s hook at boot', () => {
     const { eng, f } = feed();
     const prior = vi.fn();
     eng.win.kicadCollab = { onSave: () => undefined, onSelection: prior };
     expect(f.start()).toBe(true);
     expect(f.start()).toBe(false);
     expect(eng.Module.kicadCollabPresenceStart).toHaveBeenCalledTimes(1);
+    f.reset();
+    f.reset();
+    expect(eng.Module.kicadCollabPresenceStart).toHaveBeenCalledTimes(1);
     expect(typeof eng.win.kicadCollab?.onSave).toBe('function');
     eng.win.kicadCollab?.onSelection?.('[]');
     expect(prior).toHaveBeenCalledWith('[]');
+  });
+
+  it('arms a schematic\'s hook at its first document, once (registered before an import, the engine\'s listener cost the import its sheet switches)', () => {
+    const { eng, f } = feed({ shape: 'sch' });
+    expect(f.start()).toBe(true);
+    expect(eng.Module.kicadCollabPresenceStart).not.toHaveBeenCalled();
+    f.reset();
+    f.reset();
+    expect(eng.Module.kicadCollabPresenceStart).toHaveBeenCalledTimes(1);
   });
 
   it('arms nothing on an engine without kicadCollabPresenceStart', () => {

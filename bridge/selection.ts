@@ -4,7 +4,8 @@
 //
 // Editor to host: the engine's own selection hook. kicadCollabPresenceStart
 // (PCBJam's presence core, collab_presence_core.h at the pin) installs its
-// canvas input hooks once; after each left or right button release, key
+// canvas input hooks once, and registers the engine's collab document listener
+// once (ensureBridge, on the document of that moment); after each left or right button release, key
 // release or wheel on the canvas, and after each document change, it reads the
 // selection once the event has been handled (CallAfter) and, when it differs
 // from its last emit, calls window.kicadCollab.onSelection with it: a bare uuid
@@ -156,6 +157,7 @@ export class SelectionFeed {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private pulls: Array<ReturnType<typeof setTimeout>> = [];
   private hook: ((json: string) => void) | null = null;
+  private armed = false;
   private stopped = false;
   private readonly onGesture = (): void => { this.burst(); };
 
@@ -163,6 +165,8 @@ export class SelectionFeed {
     private readonly w: SelectionWindow,
     private readonly opts: {
       timing: Pick<SelectionTiming, 'selectSettleMs' | 'selectPullMs'>;
+      /** The frame's kind: when the engine's hook is armed (see arm). */
+      frame: Frame;
       live: () => boolean;
       send: (s: Selection) => void;
       log?: (m: string, err?: unknown) => void;
@@ -170,14 +174,13 @@ export class SelectionFeed {
   ) {}
 
   /**
-   * Arms the engine's hook, once: the onSelection slot (a listener already in
-   * it is still called) and kicadCollabPresenceStart, which may answer through
-   * a Promise when it queued behind a load. False without that export.
+   * Takes the engine's onSelection slot (a listener already in it is still
+   * called) and the frame's pointer and key releases, once, and in a pcb frame
+   * arms the engine's hook (arm). False without kicadCollabPresenceStart.
    */
   start(): boolean {
     const mod = this.w.Module as SelectionExports | undefined;
-    const startHooks = mod?.kicadCollabPresenceStart;
-    if (this.hook != null || this.stopped || typeof startHooks !== 'function') return false;
+    if (this.hook != null || this.stopped || typeof mod?.kicadCollabPresenceStart !== 'function') return false;
     const prior = this.w.kicadCollab?.onSelection;
     const hook = (json: string): void => {
       this.see(parseSelectionEmit(json));
@@ -185,21 +188,22 @@ export class SelectionFeed {
     };
     this.hook = hook;
     this.w.kicadCollab = { ...this.w.kicadCollab, onSelection: hook };
-    try {
-      const r: unknown = startHooks.call(mod);
-      if (r instanceof Promise) r.catch((err: unknown) => this.opts.log?.('kicadCollabPresenceStart rejected', err));
-    } catch (err) {
-      this.opts.log?.('kicadCollabPresenceStart threw', err);
-    }
     this.w.addEventListener?.('pointerup', this.onGesture, true);
     this.w.addEventListener?.('keyup', this.onGesture, true);
+    if (this.opts.frame === 'pcb') this.arm();
     return true;
   }
 
-  /** A new document (an open or an import): the host's selection is empty again, and the editor's is read. */
+  /**
+   * A new document (an open or an import): the host's selection is empty again,
+   * in a sch frame the engine's hook is armed the first time (arm), and the
+   * editor's selection is read.
+   */
   reset(): void {
+    if (this.hook == null || this.stopped) return;
     this.cancel();
     this.last = EMPTY_KEY;
+    if (this.opts.frame === 'sch') this.arm();
     this.pull();
   }
 
@@ -211,6 +215,36 @@ export class SelectionFeed {
     this.w.removeEventListener?.('keyup', this.onGesture, true);
     if (this.hook != null && this.w.kicadCollab?.onSelection === this.hook) delete this.w.kicadCollab.onSelection;
     this.hook = null;
+  }
+
+  /**
+   * kicadCollabPresenceStart, once; it may answer through a Promise when it
+   * queued behind a load. When matters, for the collab document listener it
+   * registers (measured 2026-10-20, Chromium, the local pair):
+   * - A pcb frame arms at boot. pcbnew replaces its BOARD on every open
+   *   (SetBoard deletes the old one), so the listener leaves with the boot's
+   *   empty board and is never added again: on a live board it would snapshot
+   *   the whole board after every edit (flushDiff), Fill All Zones on Glasgow
+   *   taking 3.0 s of main thread instead of 2.6 s. The canvas hooks stay.
+   * - A sch frame arms at its first document. eeschema keeps its SCHEMATIC, so
+   *   the listener stays; registered at boot it saw a schematic import's every
+   *   converted item, after which the imported sheets no longer reported their
+   *   switches (sheet.enter's walk answered not_applied on the eDP adapter).
+   *   After the document is up it is registered where the island's first
+   *   sheet.tree (kicadSheetsGetTree) registered it before, at no new cost.
+   */
+  private arm(): void {
+    if (this.armed) return;
+    this.armed = true;
+    const mod = this.w.Module as SelectionExports | undefined;
+    const startHooks = mod?.kicadCollabPresenceStart;
+    if (typeof startHooks !== 'function') return;
+    try {
+      const r: unknown = startHooks.call(mod);
+      if (r instanceof Promise) r.catch((err: unknown) => this.opts.log?.('kicadCollabPresenceStart rejected', err));
+    } catch (err) {
+      this.opts.log?.('kicadCollabPresenceStart threw', err);
+    }
   }
 
   /**

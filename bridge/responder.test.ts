@@ -2701,8 +2701,8 @@ describe('selection both ways: ev.selected and select', () => {
    * window.kicadCollab.onSelection (`emitNow`), and its select calls run on the
    * editor's loop 1 ms after they answer. `without` drops exports at boot.
    */
-  function selecting(opts: { without?: string[]; ready?: boolean } = {}) {
-    const { page, parent } = fakePage('?frame=pcb&theme=day');
+  function selecting(opts: { without?: string[]; ready?: boolean; search?: string } = {}) {
+    const { page, parent } = fakePage(opts.search ?? '?frame=pcb&theme=day');
     const r = startResponder({ parentOrigin: PARENT, page });
     started.push(r);
     const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
@@ -2738,10 +2738,18 @@ describe('selection both ways: ev.selected and select', () => {
     return { r, eng, mod, got, sel, keys, request, emitNow, selected };
   }
 
-  it('arms the engine\'s selection hook at ev.ready and lists the selection cap, which an engine without the exports does not get', async () => {
+  it('arms the engine\'s selection hook at ev.ready in a pcb frame (at the first document in a sch frame) and lists the selection cap, which an engine without the exports does not get', async () => {
     const s = selecting();
     await settle();
     expect(s.mod.kicadCollabPresenceStart).toHaveBeenCalledTimes(1);
+    expect(await s.request('project.open', OPEN)).toMatchObject({ ok: true });
+    expect(s.mod.kicadCollabPresenceStart).toHaveBeenCalledTimes(1);
+    const sch = selecting({ search: '?frame=sch&theme=day' });
+    await settle();
+    expect(sch.mod.kicadCollabPresenceStart).not.toHaveBeenCalled();
+    expect((sch.got.find((m) => m.type === 'ev.ready')?.caps as string[])).toContain('selection');
+    expect(await sch.request('project.open', { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] })).toMatchObject({ ok: true });
+    expect(sch.mod.kicadCollabPresenceStart).toHaveBeenCalledTimes(1);
     expect((s.got.find((m) => m.type === 'ev.ready')?.caps as string[])).toContain('selection');
     const older = selecting({ without: ['kicadCollabPresenceStart'] });
     await settle();
