@@ -16,6 +16,7 @@ import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
 import { ALTIUM_PROJECT, ALTIUM_SHEET, DOCUMENT_EXTENSION as EXT, driveImport, emptySheet, hasExtension, importable, importCall, importTarget } from './import';
 import { dialogUp, dismissPopups, keysBlocked, watchMenus } from './modal';
 import { placeBlob, PlacementWatch } from './place';
+import { parseSelectArgs, SELECT_EXPORTS, selectItems, SelectionFeed, type Selection, type SelectionWindow } from './selection';
 import { FitWatch, sampleDrawing, settleView, surfaceKey } from './view';
 
 declare const __ISLAND_ID__: string;   // define'd by vite.config.ts from PIN.json
@@ -29,6 +30,7 @@ export type IslandEvent =
   | { type: 'ev.menu'; open: boolean }
   | { type: 'ev.edited'; depth: number }
   | { type: 'ev.pick'; kind: PickKind; power?: true }
+  | ({ type: 'ev.selected' } & Selection)
   | { type: 'ev.closing' };
 
 export interface Responder {
@@ -146,6 +148,17 @@ export const timing = {
    * the key (Chromium and Firefox, local pair, 2026-10-15).
    */
   sheetStepMs: 5_000,
+  /**
+   * Selection (bridge/selection.ts): how long a selection must hold before
+   * ev.selected sends it (a burst of emits is sent once); the reads after a
+   * pointer or key release (at 0 ms, this, and three times this; PCBJam's own
+   * feed reads at 0, 200 and 600 ms); and, for select, how often the selection
+   * is read while the editor takes it and how long it may take. Unmeasured.
+   */
+  selectSettleMs: 150,
+  selectPullMs: 200,
+  selectPollMs: 25,
+  selectMs: 2_000,
 };
 /** KiCad's Next Sheet (eeschema's PgDn, by virtual page number, the top-level sheets included). */
 const NEXT_SHEET_KEY: KeyPress = { key: 'PageDown', code: 'PageDown', ctrl: false, shift: false, alt: false };
@@ -159,7 +172,7 @@ const STEER_EVENTS = ['wheel', 'pointerdown', 'keydown'] as const;
 const SAVE_KEY: KeyPress = { key: 's', code: 'KeyS', ctrl: true, shift: false, alt: false };
 /** KiCad's window chrome as the element registry names it (measured with chrome.show on, 2026-10-01). */
 const CHROME_RE = /^wx(MenuBar|AuiToolBar|ToolBar|StatusBar)$|InfoBar/i;
-const OPS = new Set(['project.open', 'project.import', 'project.save', 'project.forget', 'chrome.show', 'readonly', 'shutdown', 'key.press', 'view.fit', 'sheet.tree', 'sheet.enter', 'layers.get', 'layers.visible', 'layers.active', 'lib.index', 'lib.item', 'lib.prefetch', 'place']);
+const OPS = new Set(['project.open', 'project.import', 'project.save', 'project.forget', 'chrome.show', 'readonly', 'shutdown', 'key.press', 'view.fit', 'sheet.tree', 'sheet.enter', 'layers.get', 'layers.visible', 'layers.active', 'lib.index', 'lib.item', 'lib.prefetch', 'place', 'select']);
 /**
  * The picker's library reads: answered as they arrive, off the request queue
  * (they never touch the engine), so a read waiting on a bundle never holds up
@@ -168,6 +181,12 @@ const OPS = new Set(['project.open', 'project.import', 'project.save', 'project.
 const LIB_OPS = new Set(['lib.index', 'lib.item', 'lib.prefetch']);
 /** The pseudo-cap ev.ready lists when the picker is available: the place op, ev.pick and a library mirror. */
 export const PICKER_CAP = 'picker';
+/**
+ * The pseudo-cap ev.ready lists when selection runs both ways: ev.selected is
+ * armed (the engine's kicadCollabPresenceStart) and select has its exports.
+ * Older islands list those exports too, so a host gates on this word.
+ */
+export const SELECTION_CAP = 'selection';
 /** A wx top-level window: the editor's own frame, or another window of KiCad's (its footprint chooser is a frame, not a dialog). */
 const FRAME_TYPE_RE = /Frame/;
 /** A sheet path as the engine reports it: "/" then one UUID and a slash per level. */
@@ -334,6 +353,8 @@ export function startResponder(opts: {
   let idOf: ((kind: PickKind, nick: string) => Promise<string | null>) | null = null;
   /** The placement the place op started, watched until it is committed or canceled (bridge/place.ts). */
   let placeWatch: PlacementWatch | null = null;
+  /** ev.selected's source, the engine's selection hook (bridge/selection.ts); set by engineReady. */
+  let selectionFeed: SelectionFeed | null = null;
   /** The names of the editor's own frames, read at ev.ready: any other visible frame is another window of KiCad's. */
   let ownFrames = new Set<string>();
   /**
@@ -388,6 +409,9 @@ export function startResponder(opts: {
         return;
       case 'ev.pick':
         port.postMessage(ev.power === true ? { type: ev.type, kind: ev.kind, power: true } : { type: ev.type, kind: ev.kind });
+        return;
+      case 'ev.selected':
+        port.postMessage({ type: ev.type, uuids: [...ev.uuids], fpPaths: [...ev.fpPaths] });
         return;
       case 'ev.closing':
         port.postMessage({ type: ev.type });
@@ -498,6 +522,8 @@ export function startResponder(opts: {
   /** The document and the save hook are dropped and the engine's leave prompt is stopped for good. */
   function stopBridge(): void {
     placeWatch?.stop();
+    selectionFeed?.stop();
+    selectionFeed = null;
     stopEdits?.();
     stopEdits = null;
     editDepth = null;
@@ -621,6 +647,7 @@ export function startResponder(opts: {
       case 'layers.visible': return layersVisible(args);
       case 'layers.active': return layersActive(args);
       case 'place': return placeItem(args);
+      case 'select': return selectOp(args);
     }
     return fail('unknown_op', op);
   }
@@ -664,6 +691,7 @@ export function startResponder(opts: {
     opened = normalizePath(target);
     sheetFile = opened == null ? null : baseName(opened);   // KiCad shows the root first (measured 2026-10-15)
     startSaveHook(w);   // a fresh hook lifetime for this document
+    selectionFeed?.reset();   // a new document: the host's selection is empty again
     editDepth = editBaseline(w);   // the depth the load left (null while it is parked): ev.edited's baseline, never sent
     quietClear();   // a new document: the engine's leave prompt guards it again
     // Loading a file shows the menu bar again, and an infobar when the file is
@@ -816,6 +844,7 @@ export function startResponder(opts: {
     opened = target;
     sheetFile = baseName(target);   // the converted root, which KiCad shows first (measured 2026-10-15)
     if (saveHook == null) startSaveHook(w);   // from here on the converted file is the document, as after project.open
+    selectionFeed?.reset();   // a new document: the host's selection is empty again
     editDepth = editBaseline(w);   // the converted document's depth: ev.edited's baseline, never sent
     const chrome = await settleChrome(w);
     // The importer's dialogs took wx's keyboard focus and left it off the
@@ -1359,6 +1388,33 @@ export function startResponder(opts: {
     return ok();
   }
 
+  /**
+   * select (PROTOCOL.md): the checks, in order: the args (bad_args), the engine
+   * up (not_ready), its exports (unsupported), a document (not_ready), then busy
+   * while a load is parked, a popup menu or a dialog is up, or an item placed by
+   * `place` still hangs off the pointer (clearing the selection would drop it).
+   * Then bridge/selection.ts selects, and with `zoom` fits the view to the items.
+   */
+  async function selectOp(args: unknown): Promise<Answer> {
+    const op = 'select';
+    const a = parseSelectArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const w = win;
+    if (w == null) return fail('not_ready', op);
+    const mod = (w.Module ?? {}) as Record<string, unknown>;
+    for (const name of SELECT_EXPORTS) if (typeof mod[name] !== 'function') return fail('unsupported', name);
+    if (staged == null || opened == null) return fail('not_ready', op);
+    if (engineBusy() || keysBlocked(w) || placeWatch?.hanging() === true) return fail('busy', op);
+    const done = await selectItems(w, a, {
+      frame,
+      timing,
+      closed: () => closed,
+      // A zoom is the view steered: a fit no longer holds. Nothing is pressed while a dialog came up meanwhile.
+      press: (k) => { if (keysBlocked(w)) return; fitWatch?.disarm(); pressKey(w, k); },
+    });
+    return done.ok ? ok() : fail(done.code, done.message);
+  }
+
   let ready = false;
   return {
     emit,
@@ -1409,6 +1465,17 @@ export function startResponder(opts: {
       // engine's place and selection exports; ev.ready says so with the pseudo-cap `picker`.
       pickerOn = libs?.mirror != null && typeof mod.kicadPlaceImportedItem === 'function' && typeof mod.kicadCollabGetSelection === 'function';
       if (pickerOn) { caps.push(PICKER_CAP); caps.sort(); }
+      // ev.selected from the engine's own selection hook, armed once here; sent only while a document is open.
+      const feed = new SelectionFeed(w as unknown as SelectionWindow, {
+        timing,
+        live: () => !closed && !importing && staged != null && opened != null,
+        send: (s) => emit({ type: 'ev.selected', uuids: s.uuids, fpPaths: s.fpPaths }),
+        log: (m, err) => console.debug('[select]', m, err),
+      });
+      if (feed.start()) {
+        selectionFeed = feed;
+        if (SELECT_EXPORTS.every((name) => typeof mod[name] === 'function')) { caps.push(SELECTION_CAP); caps.sort(); }
+      }
       // ev.edited: polled only when the engine has the undo depth export at
       // boot; an older build is never polled and nothing is said about it.
       if (typeof mod.kicadCollabTestUndoDepth === 'function') {

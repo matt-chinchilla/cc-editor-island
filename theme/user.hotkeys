@@ -1,5 +1,6 @@
 eeschema.InteractiveDrawing.placeSymbol	A	
 eeschema.InteractiveDrawingLineWireBus.drawWires	W	
+common.Control.zoomFitSelection	Ctrl+Shift+Home	
 common.Interactive.selectSetRect	Ctrl+Alt+1	
 common.Interactive.selectSetLasso	Ctrl+Alt+2	
 eeschema.InteractiveDrawing.placeClassLabel	Ctrl+Alt+L	

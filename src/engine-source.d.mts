@@ -3,3 +3,4 @@
 // Types for src/engine-source.mjs, so the strict typecheck can read the tests that use it.
 export function hasKicadClone(): boolean;
 export function kicadFileAt(commit: string, path: string): string | null;
+export function kicadGrepAt(commit: string, pattern: string, glob: string): string[] | null;

@@ -27,6 +27,8 @@ beforeAll(() => {
   Object.assign(timing, { placePollMs: 2, placeMs: 100, placeWatchMs: 5, placeCancelMs: 50 });
   // sheet.enter with a file waits 40 ms for each switch.
   Object.assign(timing, { sheetStepMs: 40 });
+  // A selection is sent once it held 10 ms; select reads the selection every 2 ms for 100 ms.
+  Object.assign(timing, { selectSettleMs: 10, selectPullMs: 5, selectPollMs: 2, selectMs: 100 });
 });
 // No DOM in this suite: a KeyboardEvent stand-in that keeps every init field (key, code, ctrlKey, ...).
 beforeEach(() => {
@@ -2683,5 +2685,119 @@ describe('the picker: lib.index, lib.item, lib.prefetch, place and ev.pick', () 
     expect(e2.preventDefault).not.toHaveBeenCalled();
     await settle();
     expect(picks()).toEqual([]);
+  });
+});
+
+describe('selection both ways: ev.selected and select', () => {
+  const OPEN = { name: 'x', files: [{ path: 'blink.kicad_pcb', bytes: b('(kicad_pcb)') }] };
+  const U1 = '0b9b3c55-6d0e-4c6c-9e86-2f3f1d6f7a01';
+  const U2 = '1c8a2d44-5e1f-4b7b-8f75-3e2e0c5e6b02';
+  const started: Array<{ close: () => void }> = [];
+  afterEach(() => { for (const r of started.splice(0)) r.close(); });
+
+  /**
+   * A connected responder over a booted board engine with PCBJam's presence
+   * exports: its selection hook emits `{uuids, fpPaths}` through
+   * window.kicadCollab.onSelection (`emitNow`), and its select calls run on the
+   * editor's loop 1 ms after they answer. `without` drops exports at boot.
+   */
+  function selecting(opts: { without?: string[]; ready?: boolean } = {}) {
+    const { page, parent } = fakePage('?frame=pcb&theme=day');
+    const r = startResponder({ parentOrigin: PARENT, page });
+    started.push(r);
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    const sel: string[] = [];
+    const known = new Set([U1, U2]);
+    const mod = eng.Module as Record<string, unknown>;
+    const win = eng.win as unknown as { kicadCollab?: { onSelection?: (json: string) => void } };
+    const payload = () => JSON.stringify({ uuids: sel, fpPaths: sel.map((u) => `/${u}`) });
+    mod.kicadCollabPresenceStart = vi.fn(() => undefined);
+    mod.kicadCollabGetSelection = () => JSON.stringify(sel);
+    mod.kicadCollabGetSelectionFull = () => payload();
+    mod.kicadCollabTestClearSelection = vi.fn(() => { setTimeout(() => { sel.length = 0; win.kicadCollab?.onSelection?.(payload()); }, 1); return true; });
+    mod.kicadCollabTestSelectByUuid = vi.fn((u: string) => { if (!known.has(u)) return false; setTimeout(() => { sel.push(u); win.kicadCollab?.onSelection?.(payload()); }, 1); return true; });
+    for (const name of opts.without ?? []) delete mod[name];
+    const keys: Array<{ key: string; ctrl: boolean; shift: boolean }> = [];
+    const inner = eng.win.dispatchEvent.bind(eng.win);
+    eng.win.dispatchEvent = vi.fn((e: Event) => {
+      const k = e as KeyboardEvent;
+      if (e.type === 'keydown') keys.push({ key: k.key, ctrl: k.ctrlKey, shift: k.shiftKey });
+      return inner(e);
+    }) as typeof eng.win.dispatchEvent;
+    if (opts.ready !== false) r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    let id = 0;
+    const request = async (op: string, args?: unknown) => {
+      const n = ++id;
+      port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+      for (let i = 0; i < 100 && !got.some((m) => m.id === n); i++) await settle(5);
+      return got.find((m) => m.id === n);
+    };
+    const emitNow = () => win.kicadCollab?.onSelection?.(payload());
+    const selected = () => got.filter((m) => m.type === 'ev.selected');
+    return { r, eng, mod, got, sel, keys, request, emitNow, selected };
+  }
+
+  it('arms the engine\'s selection hook at ev.ready and lists the selection cap, which an engine without the exports does not get', async () => {
+    const s = selecting();
+    await settle();
+    expect(s.mod.kicadCollabPresenceStart).toHaveBeenCalledTimes(1);
+    expect((s.got.find((m) => m.type === 'ev.ready')?.caps as string[])).toContain('selection');
+    const older = selecting({ without: ['kicadCollabPresenceStart'] });
+    await settle();
+    expect((older.got.find((m) => m.type === 'ev.ready')?.caps as string[])).not.toContain('selection');
+    const noSelect = selecting({ without: ['kicadCollabTestSelectByUuid'] });
+    await settle();
+    expect((noSelect.got.find((m) => m.type === 'ev.ready')?.caps as string[])).not.toContain('selection');
+  });
+
+  it('sends ev.selected with exactly its keys, only while a document is open, once per settled change', async () => {
+    const s = selecting();
+    s.sel.push(U1); s.emitNow();
+    await settle(40);
+    expect(s.selected()).toEqual([]);   // no document yet
+    s.sel.length = 0;
+    expect(await s.request('project.open', OPEN)).toMatchObject({ ok: true });
+    s.sel.push(U1); s.emitNow();
+    s.sel.push(U2); s.emitNow();
+    await settle(40);
+    expect(s.selected()).toEqual([{ type: 'ev.selected', uuids: [U1, U2], fpPaths: [`/${U1}`, `/${U2}`] }]);
+    s.sel.length = 0; s.emitNow();
+    await settle(40);
+    expect(s.selected().at(-1)).toEqual({ type: 'ev.selected', uuids: [], fpPaths: [] });
+    expect(s.selected()).toHaveLength(2);
+    expect(await s.request('project.forget')).toMatchObject({ ok: true });
+    s.sel.push(U2); s.emitNow();
+    await settle(40);
+    expect(s.selected()).toHaveLength(2);   // forgotten: nothing more
+  });
+
+  it('select: the engine selects the items it holds, an unknown one selects nothing, and zoom presses Zoom to Selected Objects', async () => {
+    const s = selecting();
+    expect(await s.request('project.open', OPEN)).toMatchObject({ ok: true });
+    const unknown = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+    expect(await s.request('select', { uuids: [U2, unknown, U1], zoom: true })).toEqual({ id: 2, ok: true, result: {} });
+    expect(s.sel).toEqual([U2, U1]);
+    expect(s.keys).toContainEqual({ key: 'Home', ctrl: true, shift: true });
+    await settle(40);
+    expect(s.selected().at(-1)).toEqual({ type: 'ev.selected', uuids: [U2, U1], fpPaths: [`/${U2}`, `/${U1}`] });
+    expect(await s.request('select', { uuids: [unknown] })).toMatchObject({ ok: true });
+    expect(s.sel).toEqual([]);
+  });
+
+  it('select: bad_args, not_ready, unsupported and busy, in that order, nothing selected', async () => {
+    const early = selecting({ ready: false });
+    expect(await early.request('select', { uuids: [U1] })).toMatchObject({ ok: false, error: { code: 'not_ready' } });
+    const s = selecting();
+    expect(await s.request('select', { uuids: ['R1'] })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    expect(await s.request('select', { uuids: [U1], extra: true })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    expect(await s.request('select', { uuids: [U1] })).toMatchObject({ ok: false, error: { code: 'not_ready' } });   // no document
+    expect(await s.request('project.open', OPEN)).toMatchObject({ ok: true });
+    s.eng.dialogs.push({ typeName: 'wxDialog', visible: true });
+    expect(await s.request('select', { uuids: [U1] })).toMatchObject({ ok: false, error: { code: 'busy' } });
+    s.eng.dialogs.length = 0;
+    const older = selecting({ without: ['kicadCollabTestClearSelection'] });
+    expect(await older.request('select', { uuids: [U1] })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadCollabTestClearSelection' } });
+    expect(s.mod.kicadCollabTestSelectByUuid).not.toHaveBeenCalled();
   });
 });

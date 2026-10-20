@@ -21,3 +21,15 @@ export function kicadFileAt(commit, path) {
   if (!hasKicadClone()) return null;
   return execFileSync('git', ['-C', CLONE, 'show', `${commit}:${path}`], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
 }
+
+/** `git grep -n <pattern>` over the KiCad clone at `commit` in files matching `glob`, as `path:line:text` lines; null without the clone. */
+export function kicadGrepAt(commit, pattern, glob) {
+  if (!hasKicadClone()) return null;
+  try {
+    const out = execFileSync('git', ['-C', CLONE, 'grep', '-n', '-e', pattern, commit, '--', glob], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+    return out.split('\n').filter((l) => l !== '').map((l) => l.slice(commit.length + 1));
+  } catch (err) {
+    if (err?.status === 1) return [];   // git grep found nothing
+    throw err;
+  }
+}
