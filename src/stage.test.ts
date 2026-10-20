@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
 import { describe, expect, it } from 'vitest';
-import { DISPLAY_OPACITY, localSettingsPath, normalizePath, PROJECT_ROOT, stageLocalSettings, stageProject } from './stage';
+import pin from '../PIN.json' with { type: 'json' };
+import { hasKicadClone, kicadFileAt } from './engine-source.mjs';
+import { DISPLAY_OPACITY, HIDDEN_ITEM, localSettingsPath, normalizePath, PROJECT_ROOT, stageLocalSettings, stageProject, VISIBLE_ITEMS } from './stage';
 
 describe('normalizePath', () => {
   it('accepts plain relative paths', () => {
@@ -85,7 +87,7 @@ describe('stageLocalSettings', () => {
     expect(localSettingsPath('noext')).toBeNull();
   });
 
-  it('writes every display opacity at 1 with the schema\'s meta block, when the host sent none', () => {
+  it('writes every display opacity at 1 and every visible item but the drawing sheet, with the schema\'s meta block, when the host sent none', () => {
     const { FS, files } = fakeFs();
     const win = { FS } as unknown as ToolWindow;
     const staged = stageProject(win, 'cc', [{ path: 'sub/board.kicad_pcb', bytes: b('(kicad_pcb)') }, { path: 'sub/board.kicad_pro', bytes: b('{}') }]);
@@ -93,7 +95,7 @@ describe('stageLocalSettings', () => {
     const prl = JSON.parse(new TextDecoder().decode(files.get(`${root}/sub/board.kicad_prl`)));
     // KiCad 10 at the pin (project_local_settings.cpp): zones and images default to 0.6, the rest to 1.
     expect(DISPLAY_OPACITY).toEqual({ images: 1, pads: 1, shapes: 1, tracks: 1, vias: 1, zones: 1 });
-    expect(prl).toEqual({ board: { opacity: DISPLAY_OPACITY }, meta: { filename: 'board.kicad_prl', version: 5 } });
+    expect(prl).toEqual({ board: { opacity: DISPLAY_OPACITY, visible_items: [...VISIBLE_ITEMS] }, meta: { filename: 'board.kicad_prl', version: 5 } });
     // Not one of the host's files: never listed as written, so nothing reports it.
     expect(staged.written).toEqual(['sub/board.kicad_pcb', 'sub/board.kicad_pro']);
   });
@@ -112,5 +114,30 @@ describe('stageLocalSettings', () => {
     const staged = stageProject(win, 'cc', [{ path: 'board.kicad_pcb', bytes: b('(kicad_pcb)') }]);
     dirs.add(`${root}/board.kicad_prl`);
     expect(stageLocalSettings(win, staged, 'board.kicad_pcb')).toBeNull();
+  });
+});
+
+/** The visibility items' names as the engine's KiCad source spells them: the VISIBILITY_LAYER enum, lowercased (VisibilityLayerToString). */
+function engineItemNames(header: string): string[] {
+  const body = /enum class VISIBILITY_LAYER\s*\{([^}]*)\}/.exec(header)?.[1];
+  if (body == null) throw new Error('no VISIBILITY_LAYER enum');
+  return body.split('\n').map((l) => l.replace(/\/\/.*$/, '').trim().replace(/,$/, '')).filter((l) => l !== '').map((l) => l.toLowerCase());
+}
+
+describe('the board\'s visible items', () => {
+  it('list every visibility item but the drawing sheet, each once, by KiCad\'s own names', () => {
+    expect(VISIBLE_ITEMS).toHaveLength(21);
+    expect(new Set(VISIBLE_ITEMS).size).toBe(VISIBLE_ITEMS.length);
+    expect(VISIBLE_ITEMS).not.toContain(HIDDEN_ITEM);
+    expect(HIDDEN_ITEM).toBe('drawing_sheet');
+    for (const name of VISIBLE_ITEMS) expect(name).toMatch(/^[a-z_]+$/);
+  });
+
+  // The enum at the very commit the engine was built from (PIN.json engine.build.kicad), read
+  // from the clone the build used; skipped on a machine without the engine's clones.
+  it.skipIf(!hasKicadClone())('are the engine\'s VISIBILITY_LAYER enum at its kicad commit, the drawing sheet left out', () => {
+    const names = engineItemNames(kicadFileAt(pin.engine.build.kicad, 'include/settings/layer_settings_utils.h') ?? '');
+    expect(names).toContain(HIDDEN_ITEM);
+    expect([...VISIBLE_ITEMS]).toEqual(names.filter((n) => n !== HIDDEN_ITEM));
   });
 });

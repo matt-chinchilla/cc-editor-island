@@ -5,6 +5,7 @@ import { memfsProjectDir } from '../loader/src/wasm/constants';
 import { emptySheet, importCall, importTarget, importable, reportLines, SCHEMATIC_ISSUES_LINE, tapEngineLog } from './import';
 import { describeError, startResponder, timing } from './responder';
 import { createFatalGate, type FatalGate } from '../src/fatal';
+import { VISIBLE_ITEMS } from '../src/stage';
 import { isQuiet, resetUnloadQuietForTest } from '../src/unload-quiet';
 
 const PARENT = 'http://circuitcenter.localhost';
@@ -435,7 +436,7 @@ describe('startResponder', () => {
     await settle(100);
     expect(got.at(-1)).toEqual({ id: 1, ok: true, result: { opened: 'blink.kicad_sch', dropped: [], chrome: false } });
     // Written before the load, named after the opened file: every display opacity at 1.
-    expect(JSON.parse(atLoad[0]!)).toEqual({ board: { opacity: { images: 1, pads: 1, shapes: 1, tracks: 1, vias: 1, zones: 1 } }, meta: { filename: 'blink.kicad_prl', version: 5 } });
+    expect(JSON.parse(atLoad[0]!)).toEqual({ board: { opacity: { images: 1, pads: 1, shapes: 1, tracks: 1, vias: 1, zones: 1 }, visible_items: [...VISIBLE_ITEMS] }, meta: { filename: 'blink.kicad_prl', version: 5 } });
     got.length = 0;
 
     // KiCad rewrites its local settings on every save. Were a save of them reported,
@@ -2169,7 +2170,7 @@ describe('project.import', () => {
     const { send, got } = importer(undefined, eng);
     expect(await send('project.import', { name: 'AHT20', files: [brd], open: brd.path })).toMatchObject({ ok: true, result: { opened: 'boards/aht20.kicad_pcb', dropped: [] } });
     // Named after the source, the project KiCad's open loads for it.
-    expect(JSON.parse(atLoad!)).toEqual({ board: { opacity: { images: 1, pads: 1, shapes: 1, tracks: 1, vias: 1, zones: 1 } }, meta: { filename: 'aht20.kicad_prl', version: 5 } });
+    expect(JSON.parse(atLoad!)).toEqual({ board: { opacity: { images: 1, pads: 1, shapes: 1, tracks: 1, vias: 1, zones: 1 }, visible_items: [...VISIBLE_ITEMS] }, meta: { filename: 'aht20.kicad_prl', version: 5 } });
     expect(got.filter((m) => m.type === 'ev.saved').map((m) => m.path)).toEqual(['boards/aht20.kicad_pcb']);
     got.length = 0;
     eng.win.kicadCollab?.onSave?.(prl);

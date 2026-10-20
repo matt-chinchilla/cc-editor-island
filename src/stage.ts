@@ -65,6 +65,26 @@ export async function openStaged(win: ToolWindow, staged: StagedProject, open: s
  * pour olive (measured 2026-10-02).
  */
 export const DISPLAY_OPACITY = Object.freeze({ images: 1, pads: 1, shapes: 1, tracks: 1, vias: 1, zones: 1 });
+/**
+ * The board's visible items, staged as `board.visible_items`: every one of
+ * KiCad's user visibility items but `drawing_sheet`, so the board editor draws
+ * no page frame (no border, margins or title block), as the site's viewer
+ * draws none. KiCad shows exactly the items listed and hides every one
+ * omitted, so the list is complete: it is the engine's own names, the
+ * VISIBILITY_LAYER enum lowercased (include/settings/layer_settings_utils.h
+ * and VisibilityLayerToString at the engine's kicad commit, PIN.json
+ * engine.build), in that order; src/stage.test.ts checks it against that
+ * source when the engine's clones are on disk. Without the key KiCad shows
+ * all of them, the sheet included.
+ */
+export const VISIBLE_ITEMS: readonly string[] = Object.freeze([
+  'tracks', 'vias', 'pads', 'zones', 'shapes', 'bitmaps',
+  'footprints_front', 'footprints_back', 'footprint_values', 'footprint_references', 'footprint_text', 'footprint_anchors',
+  'ly_points', 'ratsnest', 'drc_warnings', 'drc_errors', 'drc_exclusions',
+  'locked_item_shadows', 'conflict_shadows', 'board_outline_area', 'grid',
+]);
+/** The one visibility item the island leaves out of VISIBLE_ITEMS. */
+export const HIDDEN_ITEM = 'drawing_sheet';
 /** PROJECT_LOCAL_SETTINGS's schema version at the pin (projectLocalSettingsVersion). */
 const LOCAL_SETTINGS_VERSION = 5;
 
@@ -84,8 +104,9 @@ export function localSettingsPath(open: string): string | null {
 }
 
 /**
- * Writes the display settings KiCad reads for `open` (DISPLAY_OPACITY, with
- * the schema's meta block) when the host sent none of that name: the user's
+ * Writes the display settings KiCad reads for `open` (DISPLAY_OPACITY and
+ * VISIBLE_ITEMS, with the schema's meta block; the schematic editor reads
+ * neither board key) when the host sent none of that name: the user's
  * own settings always stand. Answers the path written, or null. The file is
  * the engine's local display state, not the design: it is not added to
  * `written`, and the island never reports it as saved.
@@ -95,7 +116,7 @@ export function stageLocalSettings(win: ToolWindow, staged: StagedProject, open:
   const path = localSettingsPath(open);
   if (FS == null || path == null || staged.written.includes(path)) return null;
   const name = path.slice(path.lastIndexOf('/') + 1);
-  const json = { board: { opacity: { ...DISPLAY_OPACITY } }, meta: { filename: name, version: LOCAL_SETTINGS_VERSION } };
+  const json = { board: { opacity: { ...DISPLAY_OPACITY }, visible_items: [...VISIBLE_ITEMS] }, meta: { filename: name, version: LOCAL_SETTINGS_VERSION } };
   try {
     const abs = `${staged.root}/${path}`;
     if (FS.analyzePath(abs).exists) return null;   // a folder of that name; never written over
