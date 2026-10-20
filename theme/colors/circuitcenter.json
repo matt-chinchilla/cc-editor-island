@@ -288,7 +288,7 @@
     "op_currents": "rgb(244, 160, 143)",
     "op_voltages": "rgb(157, 188, 255)",
     "override_item_colors": false,
-    "page_limits": "rgb(100, 190, 203)",
+    "page_limits": "rgba(0, 0, 0, 0)",
     "pin": "rgb(129, 255, 190)",
     "pin_name": "rgb(129, 255, 190)",
     "pin_number": "rgb(129, 255, 190)",
@@ -304,6 +304,6 @@
     "sheet_name": "rgb(129, 238, 255)",
     "value": "rgb(129, 238, 255)",
     "wire": "rgb(174, 129, 255)",
-    "worksheet": "rgb(100, 190, 203)"
+    "worksheet": "rgba(0, 0, 0, 0)"
   }
 }
