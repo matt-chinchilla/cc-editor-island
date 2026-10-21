@@ -360,7 +360,7 @@ describe('startResponder', () => {
     await settle();
     expect(got).toEqual([
       { type: 'ev.state', phase: 'booting', detail: '2 popup attempts blocked' },
-      { type: 'ev.ready', caps: ['kicadLayersGetState', 'kicadLayersSetActive', 'kicadLayersSetVisible', 'kicadOpenFile', 'kicadOpenFileBusy', 'kicadSaveBoard', 'kicadSaveSchematic', 'kicadSetChrome', 'kicadSetReadOnly', 'kicadSheetsEnter', 'kicadSheetsGetTree'], engine: { tag: 'v0.2.3-cc1', kicad: '10.0' } },
+      { type: 'ev.ready', caps: ['kicadLayersGetState', 'kicadLayersSetActive', 'kicadLayersSetVisible', 'kicadOpenFile', 'kicadOpenFileBusy', 'kicadSaveBoard', 'kicadSaveSchematic', 'kicadSetChrome', 'kicadSetReadOnly', 'kicadSheetsEnter', 'kicadSheetsGetTree', 'write'], engine: { tag: 'v0.2.3-cc1', kicad: '10.0' } },
     ]);
     got.length = 0;
 
@@ -2807,5 +2807,166 @@ describe('selection both ways: ev.selected and select', () => {
     const older = selecting({ without: ['kicadCollabTestClearSelection'] });
     expect(await older.request('select', { uuids: [U1] })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadCollabTestClearSelection' } });
     expect(s.mod.kicadCollabTestSelectByUuid).not.toHaveBeenCalled();
+  });
+});
+
+describe('project.write', () => {
+  const started: Array<{ close: () => void }> = [];
+  afterEach(() => { for (const r of started.splice(0)) r.close(); });
+  const MiB = 1024 * 1024;
+
+  /** A connected responder over a booted engine of `frame` (`ready: false` leaves it booting). */
+  function writing(opts: { frame?: 'sch' | 'pcb'; ready?: boolean } = {}) {
+    const { page, parent } = fakePage(`?frame=${opts.frame ?? 'sch'}&theme=day`);
+    const r = startResponder({ parentOrigin: PARENT, page });
+    started.push(r);
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    if (opts.ready !== false) r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    let id = 0;
+    const request = async (op: string, args?: unknown) => {
+      const n = ++id;
+      port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+      for (let i = 0; i < 200 && !got.some((m) => m.id === n); i++) await settle(5);
+      return got.find((m) => m.id === n);
+    };
+    const text = (p: string) => { const f = eng.files.get(`${ROOT}/${p}`); return f == null ? null : new TextDecoder().decode(f); };
+    return { r, eng, got, request, text };
+  }
+
+  it('lists the write cap in ev.ready, sorted with the rest', async () => {
+    const s = writing();
+    await settle();
+    const caps = s.got.find((m) => m.type === 'ev.ready')?.caps as string[];
+    expect(caps).toContain('write');
+    expect(caps).toEqual([...caps].sort());
+  });
+
+  it('writes each file\'s text at the project root, creating its folders and replacing what is there, and answers the paths in order once the bytes are in', async () => {
+    const s = writing();
+    expect(await s.request('project.open', { name: 'x', files: [{ path: 'blink.kicad_pro', bytes: b('{"old":1}') }, { path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] })).toMatchObject({ ok: true });
+    s.got.length = 0;
+    const answer = await s.request('project.write', { files: [
+      { path: 'blink.kicad_pro', text: '{"new":1}' },
+      { path: 'lib/parts.pretty/R_0805.kicad_mod', text: '(footprint "R_0805")' },
+      { path: 'blink.kicad_pcb', text: '(kicad_pcb (title "Résistance"))' },
+      { path: 'fp-lib-table', text: '(fp_lib_table)' },
+    ] });
+    expect(answer).toEqual({ id: 2, ok: true, result: { written: ['blink.kicad_pro', 'lib/parts.pretty/R_0805.kicad_mod', 'blink.kicad_pcb', 'fp-lib-table'] } });
+    expect(s.text('blink.kicad_pro')).toBe('{"new":1}');
+    expect(s.text('lib/parts.pretty/R_0805.kicad_mod')).toBe('(footprint "R_0805")');
+    expect(s.eng.dirs.has(`${ROOT}/lib/parts.pretty`)).toBe(true);
+    // UTF-8 on disk: é is two bytes.
+    expect(s.eng.files.get(`${ROOT}/blink.kicad_pcb`)).toEqual(b('(kicad_pcb (title "Résistance"))'));
+    expect(s.text('blink.kicad_sch')).toBe('(kicad_sch)');   // untouched
+    // The engine is never told: no save, no event, nothing opened again.
+    expect(s.got).toEqual([answer]);
+    expect(s.eng.opened).toEqual([`${ROOT}/blink.kicad_sch`]);
+  });
+
+  it('lists a repeated path once, the last text written', async () => {
+    const s = writing({ frame: 'pcb' });
+    expect(await s.request('project.write', { files: [{ path: 'a.kicad_pro', text: '1' }, { path: 'b.kicad_sch', text: 'b' }, { path: 'a.kicad_pro', text: '2' }] }))
+      .toMatchObject({ ok: true, result: { written: ['a.kicad_pro', 'b.kicad_sch'] } });
+    expect(s.text('a.kicad_pro')).toBe('2');
+  });
+
+  it('needs only the engine past boot, no document: not_ready before ev.ready, after the args and the frame\'s own documents', async () => {
+    const early = writing({ ready: false });
+    expect(await early.request('project.write', { files: [] })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    expect(await early.request('project.write', { files: [{ path: 'a.kicad_sch', text: '' }] })).toMatchObject({ ok: false, error: { code: 'open_document' } });
+    expect(await early.request('project.write', { files: [{ path: 'a.kicad_pro', text: '{}' }] })).toMatchObject({ ok: false, error: { code: 'not_ready' } });
+    expect(early.eng.files.size).toBe(0);
+    const s = writing();
+    expect(await s.request('project.write', { files: [{ path: 'a.kicad_pro', text: '{}' }] })).toMatchObject({ ok: true, result: { written: ['a.kicad_pro'] } });
+    expect(s.text('a.kicad_pro')).toBe('{}');
+  });
+
+  it('a sch frame refuses every .kicad_sch (it holds the whole sheet hierarchy) and takes the board and the project file', async () => {
+    const s = writing({ frame: 'sch' });
+    for (const p of ['blink.kicad_sch', 'sub/power.kicad_sch', 'OLD.KICAD_SCH']) {
+      expect(await s.request('project.write', { files: [{ path: 'blink.kicad_pro', text: '{}' }, { path: p, text: '(kicad_sch)' }] }))
+        .toMatchObject({ ok: false, error: { code: 'open_document', message: p } });
+    }
+    expect(s.eng.files.size).toBe(0);   // nothing of a refused request is written
+    expect(await s.request('project.write', { files: [{ path: 'blink.kicad_pcb', text: '(kicad_pcb)' }, { path: 'blink.kicad_pro', text: '{}' }] }))
+      .toMatchObject({ ok: true, result: { written: ['blink.kicad_pcb', 'blink.kicad_pro'] } });
+  });
+
+  it('a pcb frame refuses the .kicad_pcb and takes the sheets and the project file', async () => {
+    const s = writing({ frame: 'pcb' });
+    for (const p of ['blink.kicad_pcb', 'boards/other.kicad_pcb', 'BLINK.Kicad_Pcb']) {
+      expect(await s.request('project.write', { files: [{ path: 'blink.kicad_sch', text: '(kicad_sch)' }, { path: p, text: '(kicad_pcb)' }] }))
+        .toMatchObject({ ok: false, error: { code: 'open_document', message: p } });
+    }
+    expect(s.eng.files.size).toBe(0);
+    expect(await s.request('project.write', { files: [{ path: 'blink.kicad_sch', text: '(kicad_sch)' }, { path: 'sub/power.kicad_sch', text: '(kicad_sch power)' }, { path: 'blink.kicad_pro', text: '{}' }] }))
+      .toMatchObject({ ok: true, result: { written: ['blink.kicad_sch', 'sub/power.kicad_sch', 'blink.kicad_pro'] } });
+    expect(s.text('sub/power.kicad_sch')).toBe('(kicad_sch power)');
+  });
+
+  it('bad_args for an empty list, a path that is not a plain relative path inside the project, a text that is not a string, or an unknown key; nothing of the request is written', async () => {
+    const s = writing({ frame: 'pcb' });
+    const good = { path: 'ok.kicad_pro', text: '{}' };
+    const refused = [
+      undefined,
+      {},
+      { files: [] },
+      { files: 'ok.kicad_pro' },
+      { files: [good], extra: 1 },
+      { files: [good, { path: 'b.kicad_sch', text: 'x', bytes: b('x') }] },
+      { files: [good, { path: 'b.kicad_sch' }] },
+      { files: [good, { path: 'b.kicad_sch', text: b('x') }] },
+      { files: [good, { path: 'b.kicad_sch', text: 5 }] },
+      { files: [good, { path: 5, text: 'x' }] },
+      ...['/abs.kicad_sch', '../up.kicad_sch', 'a/../b.kicad_sch', 'a//b.kicad_sch', 'a/', './a.kicad_sch', 'a/./b.kicad_sch', 'a\\b.kicad_sch', '', '.', 'a\u0000b', `${'x'.repeat(250)}.kicad_sch`].map((path) => ({ files: [good, { path, text: 'x' }] })),
+      { files: Array.from({ length: 4097 }, (_, i) => ({ path: `f${i}.kicad_mod`, text: '' })) },
+    ];
+    for (const args of refused) {
+      expect(await s.request('project.write', args)).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    }
+    expect(s.eng.files.size).toBe(0);
+  });
+
+  it('bad_args for a request over 32 MiB of UTF-8 in total (counted in bytes, not characters); 32 MiB is written', async () => {
+    const s = writing({ frame: 'pcb' });
+    const half = 'x'.repeat(16 * MiB);
+    expect(await s.request('project.write', { files: [{ path: 'a.kicad_sch', text: half }, { path: 'b.kicad_sch', text: `${half}x` }] }))
+      .toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    // 16 MiB + 1 characters, each two bytes in UTF-8.
+    expect(await s.request('project.write', { files: [{ path: 'a.kicad_sch', text: 'é'.repeat(16 * MiB + 1) }] }))
+      .toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    expect(s.eng.files.size).toBe(0);
+    expect(await s.request('project.write', { files: [{ path: 'a.kicad_sch', text: half }, { path: 'b.kicad_sch', text: half }] }))
+      .toMatchObject({ ok: true, result: { written: ['a.kicad_sch', 'b.kicad_sch'] } });
+    expect(s.eng.files.get(`${ROOT}/b.kicad_sch`)?.byteLength).toBe(16 * MiB);
+  });
+
+  it('bad_args, nothing written, when a path names a folder or runs through a file, on disk or earlier in the request', async () => {
+    const s = writing({ frame: 'pcb' });
+    expect(await s.request('project.write', { files: [{ path: 'lib/parts.pretty/R.kicad_mod', text: 'r' }, { path: 'notes', text: 'n' }] })).toMatchObject({ ok: true });
+    const before = new Map(s.eng.files);
+    for (const files of [
+      [{ path: 'ok.kicad_pro', text: '{}' }, { path: 'lib', text: 'x' }],                  // a folder on disk
+      [{ path: 'ok.kicad_pro', text: '{}' }, { path: 'notes/a.kicad_sch', text: 'x' }],    // through a file on disk
+      [{ path: 'ok.kicad_pro', text: '{}' }, { path: 'c', text: 'x' }, { path: 'c/d.kicad_sch', text: 'x' }],   // through a file of the request
+      [{ path: 'ok.kicad_pro', text: '{}' }, { path: 'e/f.kicad_sch', text: 'x' }, { path: 'e', text: 'x' }],   // a folder of the request
+    ]) {
+      expect(await s.request('project.write', { files })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    }
+    expect(s.eng.files).toEqual(before);
+  });
+
+  it('waits its turn behind the request before it', async () => {
+    const s = writing({ frame: 'pcb' });
+    expect(await s.request('project.open', { name: 'x', files: [{ path: 'blink.kicad_pcb', bytes: b('(kicad_pcb)') }] })).toMatchObject({ ok: true });
+    s.got.length = 0;
+    // The save answers before the write that was sent behind it.
+    const save = s.request('project.save');
+    const write = s.request('project.write', { files: [{ path: 'blink.kicad_sch', text: '(kicad_sch)' }] });
+    expect(await write).toMatchObject({ ok: true, result: { written: ['blink.kicad_sch'] } });
+    expect(await save).toMatchObject({ ok: true });
+    const answers = s.got.filter((m) => typeof m.id === 'number').map((m) => m.id);
+    expect(answers).toEqual([2, 3]);
   });
 });

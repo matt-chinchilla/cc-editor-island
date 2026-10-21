@@ -126,3 +126,47 @@ export function stageLocalSettings(win: ToolWindow, staged: StagedProject, open:
   }
   return path;
 }
+
+/**
+ * project.write's file system check (PROTOCOL.md): the first of `paths`
+ * (normalized, project-relative, in request order) that cannot be a file under
+ * `root`, because it names a folder (on disk, or the folder of an earlier path
+ * of the list) or runs through a file (on disk, or an earlier path of the
+ * list); null when every one can be written. Run before the first byte is
+ * written, so a refused request writes nothing.
+ */
+export function fileConflict(FS: EmscriptenFS, root: string, paths: readonly string[]): string | null {
+  const files = new Set<string>();
+  const dirs = new Set<string>();
+  const kind = (rel: string): 'dir' | 'file' | null => {
+    const abs = `${root}/${rel}`;
+    if (!FS.analyzePath(abs).exists) return null;
+    return FS.isDir(FS.stat(abs).mode) ? 'dir' : 'file';
+  };
+  for (const p of paths) {
+    const segments = p.split('/');
+    for (let i = 1; i < segments.length; i++) {
+      const dir = segments.slice(0, i).join('/');
+      if (files.has(dir) || (!dirs.has(dir) && kind(dir) === 'file')) return p;
+      dirs.add(dir);
+    }
+    if (dirs.has(p) || (!files.has(p) && kind(p) === 'dir')) return p;
+    files.add(p);
+  }
+  return null;
+}
+
+/**
+ * Writes each file at <root>/<path>, creating the folders first as
+ * stageProject does and replacing a file that is there. The paths are
+ * normalized and passed fileConflict; a failure the check could not foresee
+ * (MEMFS out of memory) throws, the files before it written.
+ */
+export function writeProjectFiles(FS: EmscriptenFS, root: string, files: ReadonlyArray<{ path: string; bytes: Uint8Array }>): void {
+  FS.mkdirTree(root);
+  for (const f of files) {
+    const slash = f.path.lastIndexOf('/');
+    if (slash >= 0) FS.mkdirTree(`${root}/${f.path.slice(0, slash)}`);
+    FS.writeFile(`${root}/${f.path}`, f.bytes);
+  }
+}

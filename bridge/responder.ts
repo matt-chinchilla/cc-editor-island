@@ -10,7 +10,7 @@ import { registerSaveHook, SAVE_COMMITTED, type SaveHookHandle } from '../loader
 import { parseBoot } from '../src/cc-config';
 import { focusCanvas, parseKeyPress, pressKey, type KeyPress } from '../src/keys';
 import { installPickKeys, kindOf, libIds, parseIndexArgs, parseItemArgs, parsePrefetchArgs, pickFor, takesText, warmLibrary, type KeyPick, type PickerLibs, type PickKind } from '../src/picker';
-import { normalizePath, openStaged, PROJECT_ROOT, stageLocalSettings, stageProject, type StagedProject } from '../src/stage';
+import { fileConflict, normalizePath, openStaged, PROJECT_ROOT, stageLocalSettings, stageProject, writeProjectFiles, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
 import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
 import { ALTIUM_PROJECT, ALTIUM_SHEET, DOCUMENT_EXTENSION as EXT, driveImport, emptySheet, hasExtension, importable, importCall, importTarget } from './import';
@@ -78,6 +78,8 @@ const MAX_FILES = 4096;
 const MAX_NAME = 255;
 /** project.import's format hint: a short string the island may ignore. */
 const MAX_FORMAT = 64;
+/** project.write's bound: the UTF-8 bytes of every text of one request together (32 MiB). */
+export const MAX_WRITE_BYTES = 32 * 1024 * 1024;
 /**
  * The bridge's waits, in ms: the bound on each engine call (so no call can
  * hold the serial request chain, shutdown included), project.open's chrome
@@ -172,7 +174,7 @@ const STEER_EVENTS = ['wheel', 'pointerdown', 'keydown'] as const;
 const SAVE_KEY: KeyPress = { key: 's', code: 'KeyS', ctrl: true, shift: false, alt: false };
 /** KiCad's window chrome as the element registry names it (measured with chrome.show on, 2026-10-01). */
 const CHROME_RE = /^wx(MenuBar|AuiToolBar|ToolBar|StatusBar)$|InfoBar/i;
-const OPS = new Set(['project.open', 'project.import', 'project.save', 'project.forget', 'chrome.show', 'readonly', 'shutdown', 'key.press', 'view.fit', 'sheet.tree', 'sheet.enter', 'layers.get', 'layers.visible', 'layers.active', 'lib.index', 'lib.item', 'lib.prefetch', 'place', 'select']);
+const OPS = new Set(['project.open', 'project.import', 'project.save', 'project.forget', 'project.write', 'chrome.show', 'readonly', 'shutdown', 'key.press', 'view.fit', 'sheet.tree', 'sheet.enter', 'layers.get', 'layers.visible', 'layers.active', 'lib.index', 'lib.item', 'lib.prefetch', 'place', 'select']);
 /**
  * The picker's library reads: answered as they arrive, off the request queue
  * (they never touch the engine), so a read waiting on a bundle never holds up
@@ -187,8 +189,20 @@ export const PICKER_CAP = 'picker';
  * Older islands list those exports too, so a host gates on this word.
  */
 export const SELECTION_CAP = 'selection';
+/**
+ * The pseudo-cap ev.ready lists for project.write (island v0.2.3-cc10): the op
+ * needs nothing of the engine but its file system, so every island that knows
+ * the op lists it. A host gates its writes on this word.
+ */
+export const WRITE_CAP = 'write';
 /** A wx top-level window: the editor's own frame, or another window of KiCad's (its footprint chooser is a frame, not a dialog). */
 const FRAME_TYPE_RE = /Frame/;
+/**
+ * The document kind a frame holds, lowercased: project.write refuses every
+ * file of it (open_document), compared in any case. A sch frame holds the
+ * whole sheet hierarchy, so every sheet; a pcb frame its board.
+ */
+const OWN_DOCUMENT: Readonly<Record<Frame, string>> = { sch: '.kicad_sch', pcb: '.kicad_pcb' };
 /** A sheet path as the engine reports it: "/" then one UUID and a slash per level. */
 const SHEET_PATH_RE = /^\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/)*$/;
 
@@ -613,6 +627,7 @@ export function startResponder(opts: {
     switch (op) {
       case 'project.open': return projectOpen(args);
       case 'project.save': return noArgs(args) ? projectSave() : fail('bad_args', op);
+      case 'project.write': return projectWrite(args);
       case 'project.forget': {
         if (!noArgs(args)) return fail('bad_args', op);
         // The host dropped the document whatever the wipe below answers: the
@@ -701,6 +716,56 @@ export function startResponder(opts: {
     // the answer's chrome says so, and the host sends chrome.show again.
     const chrome = await settleChrome(w);
     return ok({ opened, dropped: staged.dropped, chrome });
+  }
+
+  /**
+   * project.write (PROTOCOL.md): text files written into the running engine's
+   * project folder, each replacing what is there; the engine is never told, so
+   * KiCad reads a file the next time it opens it (Update PCB from Schematic, a
+   * sheet re-opened, a project reloaded). Two engines on one page keep each
+   * other's files current this way, never rebooting. The checks, in order, all
+   * before the first byte is written, so a refused request writes nothing: the
+   * args (bad_args: an empty or oversized list, a path that is not a plain
+   * relative one, a text that is not a string, more than MAX_WRITE_BYTES of
+   * UTF-8), the frame's own documents (open_document: every .kicad_sch in a
+   * sch frame, which holds the whole sheet hierarchy, the .kicad_pcb in a pcb
+   * frame), the engine up (not_ready before ev.ready), then the file system
+   * (bad_args: a path that names a folder or runs through a file). Needs no
+   * document: the file system exists from boot on.
+   */
+  function projectWrite(a: unknown): Answer {
+    const op = 'project.write';
+    if (!isObj(a) || !onlyKeys(a, ['files']) || !Array.isArray(a.files) || a.files.length === 0 || a.files.length > MAX_FILES) return fail('bad_args', op);
+    const rows: Array<{ path: string; text: string }> = [];
+    let chars = 0;
+    for (const f of a.files as unknown[]) {
+      if (!isObj(f) || !onlyKeys(f, ['path', 'text']) || typeof f.path !== 'string' || typeof f.text !== 'string') return fail('bad_args', op);
+      // A plain path only: exactly its own normal form, so the answer names the paths the host sent.
+      if (normalizePath(f.path) !== f.path) return fail('bad_args', op);
+      chars += f.text.length;
+      rows.push({ path: f.path, text: f.text });
+    }
+    // UTF-8 never takes fewer bytes than UTF-16 code units: a request over the bound in units is over it in bytes.
+    if (chars > MAX_WRITE_BYTES) return fail('bad_args', op);
+    const encoder = new TextEncoder();
+    let bytes = 0;
+    const files = rows.map((r) => {
+      const encoded = encoder.encode(r.text);
+      bytes += encoded.byteLength;
+      return { path: r.path, bytes: encoded };
+    });
+    if (bytes > MAX_WRITE_BYTES) return fail('bad_args', op);
+    const own = OWN_DOCUMENT[frame];
+    const held = files.find((f) => f.path.toLowerCase().endsWith(own));
+    if (held != null) return fail('open_document', held.path);
+    const FS = win?.FS;
+    if (FS == null) return fail('not_ready', op);
+    const conflict = fileConflict(FS, root, files.map((f) => f.path));
+    if (conflict != null) return fail('bad_args', `${op}: ${conflict} names a folder or runs through a file`);
+    writeProjectFiles(FS, root, files);
+    const written: string[] = [];
+    for (const f of files) if (!written.includes(f.path)) written.push(f.path);
+    return ok({ written });
   }
 
   /**
@@ -1479,6 +1544,9 @@ export function startResponder(opts: {
         selectionFeed = feed;
         if (SELECT_EXPORTS.every((name) => typeof mod[name] === 'function')) { caps.push(SELECTION_CAP); caps.sort(); }
       }
+      // project.write needs only the file system, which is up by now.
+      caps.push(WRITE_CAP);
+      caps.sort();
       // ev.edited: polled only when the engine has the undo depth export at
       // boot; an older build is never polled and nothing is said about it.
       if (typeof mod.kicadCollabTestUndoDepth === 'function') {
