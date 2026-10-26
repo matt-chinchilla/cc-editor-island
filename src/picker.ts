@@ -18,6 +18,8 @@ export interface KeyPick { kind: PickKind; power?: true }
 export const MAX_PREFETCH = 16;
 /** The longest library nickname or item name the ops take. */
 export const MAX_NAME = 255;
+/** The longest Value or Footprint place writes on the placed item. */
+export const MAX_FIELD = 200;
 
 /** What the mirror gives the picker beyond a plain source: the search indexes and a low-priority warm. */
 export type PickerMirror = Pick<MirrorLibsSource, 'listLibs' | 'getSearchIndex' | 'prefetch'>;
@@ -55,10 +57,35 @@ export function parseIndexArgs(args: unknown): { kind: PickKind } | null {
   return { kind: args.kind };
 }
 
-/** lib.item's and place's args: `{ kind, lib, name }`, nothing else. */
+/** lib.item's args: `{ kind, lib, name }`, nothing else. */
 export function parseItemArgs(args: unknown): { kind: PickKind; lib: string; name: string } | null {
   if (!isObj(args) || !onlyKeys(args, ['kind', 'lib', 'name']) || !isKind(args.kind) || !isName(args.lib) || !isName(args.name)) return null;
   return { kind: args.kind, lib: args.lib, name: args.name };
+}
+
+/** A Value or Footprint for the placed item: a non-empty string of at most MAX_FIELD characters with no control character. */
+const isField = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= MAX_FIELD && !CONTROL.test(v);
+
+/** What place writes on the placed item over the library's own: a symbol's Value and Footprint fields, a footprint's Value text. */
+export interface PlaceFields { value?: string; footprint?: string }
+
+/**
+ * place's args: lib.item's `{ kind, lib, name }` and two optional fields,
+ * `value` and `footprint` (PICKER.md "What place puts down"). A footprint
+ * takes a `value` (its Value text), never a `footprint`. An absent field is
+ * left absent, so the library's own stays.
+ */
+export function parsePlaceArgs(args: unknown): ({ kind: PickKind; lib: string; name: string } & PlaceFields) | null {
+  if (!isObj(args) || !onlyKeys(args, ['kind', 'lib', 'name', 'value', 'footprint'])) return null;
+  const item = parseItemArgs({ kind: args.kind, lib: args.lib, name: args.name });
+  if (item == null) return null;
+  if ('value' in args && !isField(args.value)) return null;
+  if ('footprint' in args && (!isField(args.footprint) || item.kind !== 'symbol')) return null;
+  return {
+    ...item,
+    ...('value' in args ? { value: args.value as string } : {}),
+    ...('footprint' in args ? { footprint: args.footprint as string } : {}),
+  };
 }
 
 /** lib.prefetch's args: `{ kind, libs }`, libs an array of at most MAX_PREFETCH nicknames. */

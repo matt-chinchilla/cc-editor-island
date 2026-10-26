@@ -184,6 +184,33 @@ describe('buildSymbolImport', () => {
     expect(r.sexpr).toContain('(in_bom no) (on_board no)');
   });
 
+  it('writes a Value and a Footprint on the instance alone: the library entry the sheet caches keeps its own', () => {
+    const r = buildSymbolImport(R, 'R', 'Device', 0, 0, 'u-1', { value: '10k 1% 0603', footprint: 'Resistor_SMD:R_0603_1608Metric' });
+    const { cache, placed } = blobParts(r.sexpr);
+    expect(props(placed)).toEqual({ Reference: 'R?', Value: '10k 1% 0603', Footprint: 'Resistor_SMD:R_0603_1608Metric', Datasheet: '~', Description: 'Resistor (generic)' });
+    // At the library's positions, with the library's effects (the Footprint stays hidden).
+    expect(placed).toContain('(property "Value" "10k 1% 0603" (at 0 1.5 90) (effects (font (size 1.27 1.27))))');
+    expect(placed).toContain('(property "Footprint" "Resistor_SMD:R_0603_1608Metric" (at -1.778 0 90) (hide yes)');
+    expect(props(cache)).toMatchObject({ Value: 'R', Footprint: '' });
+    expect(cache).toBe(blobParts(buildSymbolImport(R, 'R', 'Device', 0, 0, 'u-1').sexpr).cache);
+  });
+
+  it('writes one field and leaves the other the library\'s; a derived symbol takes them over its inherited ones', () => {
+    expect(props(blobParts(buildSymbolImport(R, 'R', 'Device', 0, 0, 'u-1', { value: '4k7' }).sexpr).placed)).toMatchObject({ Value: '4k7', Footprint: '' });
+    expect(props(blobParts(buildSymbolImport(R, 'R', 'Device', 0, 0, 'u-1', { footprint: 'Resistor_SMD:R_0402_1005Metric' }).sexpr).placed)).toMatchObject({ Value: 'R', Footprint: 'Resistor_SMD:R_0402_1005Metric' });
+    const { cache, placed } = blobParts(buildInteractiveImport('symbol', CHAIN, 'MCU_Test', 'MCU_XA1', { value: 'MCU_XA1-TR', footprint: 'Package_QFP:LQFP-48_7x7mm_P0.5mm_EP' }).sexpr);
+    expect(props(placed)).toMatchObject({ Value: 'MCU_XA1-TR', Footprint: 'Package_QFP:LQFP-48_7x7mm_P0.5mm_EP' });
+    expect(props(cache)).toMatchObject({ Value: 'MCU_XA1', Footprint: 'Package_QFP:LQFP-48_7x7mm_P0.5mm' });
+  });
+
+  it('adds the field a body lacks, the Footprint hidden, and escapes quotes in what it writes', () => {
+    const bare = R.replace(/\t\t\(property "Value"[^\n]*\n/, '').replace(/\t\t\(property "Footprint"[^\n]*\n/, '');
+    expect(bare).not.toContain('"Footprint"');
+    const { placed } = blobParts(buildSymbolImport(bare, 'R', 'Device', 0, 0, 'u-1', { value: '10 "k"', footprint: 'Resistor_SMD:R_0603_1608Metric' }).sexpr);
+    expect(props(placed)).toMatchObject({ Value: '10 \\"k\\"', Footprint: 'Resistor_SMD:R_0603_1608Metric' });
+    expect(placed).toMatch(/\(property "Footprint" "Resistor_SMD:R_0603_1608Metric" \(at [^)]*\) \(hide yes\)/);
+  });
+
   it('escapes quotes in names and values', () => {
     const q = R.replace('"Resistor (generic)"', '"A \\"quoted\\" one"');
     expect(buildSymbolImport(q, 'R', 'My "Lib"', 0, 0).sexpr).toContain('(lib_id "My \\"Lib\\":R")');
@@ -217,6 +244,25 @@ describe('buildFootprintImport', () => {
     expect(r.sexpr.startsWith('(footprint "LQFP-48_7x7mm_P0.5mm"')).toBe(true);
     expect(r.sexpr).not.toContain('(at 1 2 90)');
     expect(r.sexpr).toContain('(at 3 4)');
+  });
+
+  it('writes a value as the footprint\'s Value text, in its property form or its older fp_text form, adding one a body lacks', () => {
+    const withValue = FP.replace('(pad "1"', '(property "Value" "LQFP-48_7x7mm_P0.5mm" (at 0 5.85 0) (layer "F.Fab") (effects (font (size 1 1))))\n\t(pad "1"');
+    const r = buildFootprintImport(withValue, 0, 0, 'Package_QFP', 'STM32F103C8T6');
+    expect(r.sexpr).toContain('(property "Value" "STM32F103C8T6" (at 0 5.85 0) (layer "F.Fab")');
+    expect(r.sexpr).not.toContain('"Value" "LQFP-48_7x7mm_P0.5mm"');
+    expect(r.sexpr.startsWith('(footprint "Package_QFP:LQFP-48_7x7mm_P0.5mm"')).toBe(true);   // the name stays the footprint's
+    // Without a value the body's own Value text stays.
+    expect(buildFootprintImport(withValue, 0, 0, 'Package_QFP').sexpr).toContain('"Value" "LQFP-48_7x7mm_P0.5mm"');
+    const old = FP.replace('(pad "1"', '(fp_text value "LQFP-48" (at 0 5.85) (layer "F.Fab") (effects (font (size 1 1))))\n\t(pad "1"');
+    expect(buildFootprintImport(old, 0, 0, 'Package_QFP', 'A "B"').sexpr).toContain('(fp_text value "A \\"B\\"" (at 0 5.85) (layer "F.Fab")');
+    const unquoted = FP.replace('(pad "1"', '(fp_text value LQFP-48 (at 0 5.85) (layer F.Fab))\n\t(pad "1"');
+    expect(buildFootprintImport(unquoted, 0, 0, 'Package_QFP', 'X1').sexpr).toContain('(fp_text value "X1" (at 0 5.85) (layer F.Fab))');
+    const added = buildFootprintImport(FP, 0, 0, 'Package_QFP', 'STM32F103C8T6').sexpr;
+    expect(added.match(/\(property "Value" "STM32F103C8T6" \(at 0 0 0\) \(layer "F\.Fab"\)/g)).toHaveLength(1);
+    expect(added.trimEnd().endsWith(')')).toBe(true);
+    expect(forms(added).filter((f) => f.startsWith('(property "Value"'))).toHaveLength(1);   // a top-level form of the footprint
+    expect(buildInteractiveImport('footprint', withValue, 'Package_QFP', 'LQFP-48_7x7mm_P0.5mm', { value: 'U-PART' }).sexpr).toContain('(property "Value" "U-PART"');
   });
 
   it('rejects text that is no footprint, and buildInteractiveImport labels it by LIB_ID', () => {

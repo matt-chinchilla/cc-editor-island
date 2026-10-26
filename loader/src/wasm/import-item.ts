@@ -17,6 +17,10 @@
 // forms, so a name holding a parenthesis is never read as a form.
 // Modified by Circuit Center on 2026-10-07: buildInteractiveImport takes the
 // kind, the body, the library nickname and the item name.
+// Modified by Circuit Center on 2026-10-26: place's value and footprint
+// (ItemFields): buildSymbolImport writes them on the placed instance's Value
+// and Footprint fields, never on the library entry the sheet caches, and
+// buildFootprintImport writes a value as the footprint's Value text.
 /**
  * POC: drop a symbol (`.kicad_sym`) or footprint (`.kicad_mod`) picked from the
  * user's machine straight onto the open eeschema / pcbnew canvas.
@@ -254,6 +258,16 @@ function instanceField(field: string, x: number, y: number, value: string): stri
   return `(property "${esc(name)}" "${esc(value)}" ${at}${rest.length > 0 ? ` ${rest.join(" ")}` : ""})`;
 }
 
+/**
+ * What place writes on the placed item over the library's own (PICKER.md
+ * "What place puts down"): a symbol's Value and Footprint fields, a
+ * footprint's Value text. An absent one leaves the library's.
+ */
+export interface ItemFields {
+  value?: string;
+  footprint?: string;
+}
+
 export interface SymbolImport {
   /** The blob for `kicadCollabApplyItems`. */
   sexpr: string;
@@ -267,6 +281,8 @@ export interface SymbolImport {
  * `.kicad_sym` text at (x, y) mm on the shown sheet. `libNick` is the nickname
  * the placed instance will reference (`Nick:Name`) — the file's basename by
  * default; it only has to be stable, the definition travels in the blob.
+ * `over` writes a Value and a Footprint on the instance alone: the library
+ * entry the sheet caches keeps the library's own.
  */
 export function buildSymbolImport(
   libText: string,
@@ -275,6 +291,7 @@ export function buildSymbolImport(
   x: number,
   y: number,
   uuid: string = crypto.randomUUID(),
+  over: ItemFields = {},
 ): SymbolImport {
   const name = symbolName;
   const block = flattenSymbol(libText, name); // the symbol alone, derived ones flattened
@@ -289,11 +306,21 @@ export function buildSymbolImport(
   const reference = refPrefix.endsWith("?") ? refPrefix : `${refPrefix}?`;
   const fields = [...children(block)].filter((c) => headOf(c) === "property" && !LIBRARY_ONLY.test(nameOf(c) ?? "ki_"));
   const field = (n: string): string | undefined => fields.find((c) => nameOf(c) === n);
-  const placed = fields.map((c) => instanceField(c, x, y, nameOf(c) === "Reference" ? reference : (valueOf(c) ?? "")));
-  // A body with no Reference or Value field still places an annotatable symbol.
+  // The instance's own value of a field: the reference unannotated, place's Value and Footprint over the library's.
+  const ownValue = (c: string): string => {
+    const n = nameOf(c);
+    if (n === "Reference") return reference;
+    if (n === "Value" && over.value != null) return over.value;
+    if (n === "Footprint" && over.footprint != null) return over.footprint;
+    return valueOf(c) ?? "";
+  };
+  const placed = fields.map((c) => instanceField(c, x, y, ownValue(c)));
+  // A body with no Reference or Value field still places an annotatable symbol,
+  // and one with no Footprint field still takes place's Footprint (hidden, as KiCad keeps it).
   const font = "(effects (font (size 1.27 1.27)) (justify left))";
   if (field("Reference") === undefined) placed.unshift(`(property "Reference" "${esc(reference)}" (at ${fmt(x + 2.54)} ${fmt(y - 1.27)} 0) ${font})`);
-  if (field("Value") === undefined) placed.push(`(property "Value" "${esc(name)}" (at ${fmt(x + 2.54)} ${fmt(y + 1.27)} 0) ${font})`);
+  if (field("Value") === undefined) placed.push(`(property "Value" "${esc(over.value ?? name)}" (at ${fmt(x + 2.54)} ${fmt(y + 1.27)} 0) ${font})`);
+  if (field("Footprint") === undefined && over.footprint != null) placed.push(`(property "Footprint" "${esc(over.footprint)}" (at ${fmt(x)} ${fmt(y)} 0) (hide yes) (effects (font (size 1.27 1.27))))`);
   const yesNo = (b: boolean): string => (b ? "yes" : "no");
 
   const sexpr = [
@@ -317,8 +344,11 @@ export interface FootprintImport {
  * Build the pcbnew blob that drops the `.kicad_mod` footprint at (x, y) mm on
  * the board: the library body itself with `(at x y)` added (a library
  * footprint has no position), named by its LIB_ID when `libNick` is given.
+ * `value` replaces the footprint's Value text (its `(property "Value" ...)`,
+ * or an older body's `(fp_text value ...)`); a body with neither gets the
+ * property, on F.Fab as KiCad's library footprints keep it.
  */
-export function buildFootprintImport(modText: string, x: number, y: number, libNick?: string): FootprintImport {
+export function buildFootprintImport(modText: string, x: number, y: number, libNick?: string, value?: string): FootprintImport {
   const head = modText.match(/^\s*\(\s*footprint\s+"((?:[^"\\]|\\.)*)"/);
   if (!head) throw new Error("not a KiCad footprint file (expected `(footprint \"…\"`)");
   const name = unesc(head[1]!);
@@ -331,6 +361,7 @@ export function buildFootprintImport(modText: string, x: number, y: number, libN
   // the header shape a human expects. Replace an existing top-level `(at …)`.
   const at = `(at ${fmt(x)} ${fmt(y)})`;
   let placed = false;
+  let valued = value == null;
   const parts: string[] = [];
   let cursor = 0;
   const open = body.indexOf("(");
@@ -347,8 +378,18 @@ export function buildFootprintImport(modText: string, x: number, y: number, libN
       parts.push(body.slice(cursor, e), `\n\t${at}`);
       cursor = e;
       placed = true;
+    } else if (value != null && !valued && /^\(\s*(property\s+"Value"|fp_text\s+value)\s/.test(form)) {
+      // The Value text is the form's quoted atom after its head (an old body may leave it bare).
+      const text = form.replace(/^(\(\s*(?:property\s+"Value"|fp_text\s+value)\s+)(?:"(?:[^"\\]|\\.)*"|[^\s()"]+)/, (_m, lead: string) => `${lead}"${esc(value)}"`);
+      parts.push(body.slice(cursor, s), text);
+      cursor = e;
+      valued = true;
     }
     i = nextForm(body, e, outerEnd - 1);
+  }
+  if (!valued) {
+    parts.push(body.slice(cursor, outerEnd - 1), `\t(property "Value" "${esc(value!)}" (at 0 0 0) (layer "F.Fab") (effects (font (size 1 1) (thickness 0.15))))\n`);
+    cursor = outerEnd - 1;
   }
   parts.push(body.slice(cursor));
   body = parts.join("");
@@ -368,11 +409,13 @@ export function buildInteractiveImport(
   body: string,
   libNick: string,
   name: string,
+  over: ItemFields = {},
 ): { sexpr: string; label: string } {
   if (kind === "symbol") {
-    const r = buildSymbolImport(body, name, libNick, 0, 0);
+    const r = buildSymbolImport(body, name, libNick, 0, 0, undefined, over);
     return { sexpr: r.sexpr, label: r.libId };
   }
-  const r = buildFootprintImport(body, 0, 0, libNick);
+  if (over.footprint != null) throw new Error("a footprint takes no Footprint field");
+  const r = buildFootprintImport(body, 0, 0, libNick, over.value);
   return { sexpr: r.sexpr, label: `${libNick}:${r.name}` };
 }

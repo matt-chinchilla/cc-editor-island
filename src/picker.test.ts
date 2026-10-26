@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { COMMON_LIBS, installPickKeys, libIds, MAX_PREFETCH, parseIndexArgs, parseItemArgs, parsePrefetchArgs, pickFor, quietWarmUp, takesText, warmTiming, type PickerMirror } from './picker';
+import { COMMON_LIBS, installPickKeys, libIds, MAX_FIELD, MAX_PREFETCH, parseIndexArgs, parseItemArgs, parsePlaceArgs, parsePrefetchArgs, pickFor, quietWarmUp, takesText, warmTiming, type PickerMirror } from './picker';
 
 describe('the ops\' closed args', () => {
   it('lib.index takes { kind } and nothing else', () => {
@@ -10,7 +10,7 @@ describe('the ops\' closed args', () => {
     for (const bad of [undefined, null, [], {}, { kind: 'model3d' }, { kind: 'symbol', tag: '10.0.4' }]) expect(parseIndexArgs(bad)).toBeNull();
   });
 
-  it('lib.item and place take { kind, lib, name }: names non-empty, at most 255 characters, no control character', () => {
+  it('lib.item takes { kind, lib, name }: names non-empty, at most 255 characters, no control character', () => {
     expect(parseItemArgs({ kind: 'symbol', lib: 'MCU_ST_STM32F1', name: 'STM32F103C8Tx' })).toEqual({ kind: 'symbol', lib: 'MCU_ST_STM32F1', name: 'STM32F103C8Tx' });
     expect(parseItemArgs({ kind: 'footprint', lib: 'Connector_PinHeader_2.54mm', name: 'PinHeader_1x02_P2.54mm_Vertical' })).not.toBeNull();
     expect(parseItemArgs({ kind: 'symbol', lib: 'L', name: 'x'.repeat(255) })).not.toBeNull();
@@ -24,6 +24,37 @@ describe('the ops\' closed args', () => {
       { kind: 'part', lib: 'Device', name: 'R' },
       { kind: 'symbol', lib: ['Device'], name: 'R' },
     ]) expect(parseItemArgs(bad)).toBeNull();
+  });
+
+  it('lib.item never takes place\'s fields', () => {
+    expect(parseItemArgs({ kind: 'symbol', lib: 'Device', name: 'R', value: '10k' })).toBeNull();
+    expect(parseItemArgs({ kind: 'symbol', lib: 'Device', name: 'R', footprint: 'Resistor_SMD:R_0603_1608Metric' })).toBeNull();
+  });
+
+  it('place takes lib.item\'s args and two optional fields, value and footprint: strings of 1 to 200 characters, no control character', () => {
+    expect(MAX_FIELD).toBe(200);
+    expect(parsePlaceArgs({ kind: 'symbol', lib: 'Device', name: 'R' })).toEqual({ kind: 'symbol', lib: 'Device', name: 'R' });
+    const full = parsePlaceArgs({ kind: 'symbol', lib: 'RF_NFC', name: 'ST25DV04K-IER8C3', value: 'ST25DV04KC-IE6S3', footprint: 'Package_SO:SOIC-8_3.9x4.9mm_P1.27mm' });
+    expect(full).toEqual({ kind: 'symbol', lib: 'RF_NFC', name: 'ST25DV04K-IER8C3', value: 'ST25DV04KC-IE6S3', footprint: 'Package_SO:SOIC-8_3.9x4.9mm_P1.27mm' });
+    // An absent field stays absent: the library's own is kept.
+    expect(Object.keys(parsePlaceArgs({ kind: 'symbol', lib: 'Device', name: 'R', value: '10k' })!).sort()).toEqual(['kind', 'lib', 'name', 'value']);
+    expect(parsePlaceArgs({ kind: 'symbol', lib: 'Device', name: 'R', value: 'x'.repeat(200), footprint: 'y'.repeat(200) })).not.toBeNull();
+    // A footprint takes a value (its Value text), never a footprint.
+    expect(parsePlaceArgs({ kind: 'footprint', lib: 'Package_SO', name: 'SOIC-8_3.9x4.9mm_P1.27mm', value: 'ST25DV04KC-IE6S3' })).toEqual({ kind: 'footprint', lib: 'Package_SO', name: 'SOIC-8_3.9x4.9mm_P1.27mm', value: 'ST25DV04KC-IE6S3' });
+    for (const bad of [
+      { kind: 'footprint', lib: 'Package_SO', name: 'SOIC-8_3.9x4.9mm_P1.27mm', footprint: 'Package_SO:SOIC-8_3.9x4.9mm_P1.27mm' },
+      { kind: 'symbol', lib: 'Device', name: 'R', value: 'x'.repeat(201) },
+      { kind: 'symbol', lib: 'Device', name: 'R', footprint: 'y'.repeat(201) },
+      { kind: 'symbol', lib: 'Device', name: 'R', value: '' },
+      { kind: 'symbol', lib: 'Device', name: 'R', footprint: '' },
+      { kind: 'symbol', lib: 'Device', name: 'R', value: '10k\n' },
+      { kind: 'symbol', lib: 'Device', name: 'R', footprint: 'A:\u0007B' },
+      { kind: 'symbol', lib: 'Device', name: 'R', value: 10 },
+      { kind: 'symbol', lib: 'Device', name: 'R', value: null },
+      { kind: 'symbol', lib: 'Device', name: 'R', footprint: ['Resistor_SMD:R_0603_1608Metric'] },
+      { kind: 'symbol', lib: 'Device', name: 'R', value: '10k', datasheet: 'https://example.test/r.pdf' },
+      { kind: 'symbol', lib: 'Device', value: '10k' },
+    ]) expect(parsePlaceArgs(bad)).toBeNull();
   });
 
   it('lib.prefetch takes { kind, libs } with at most 16 nicknames', () => {

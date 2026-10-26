@@ -2454,6 +2454,11 @@ describe('the picker: lib.index, lib.item, lib.prefetch, place and ev.pick', () 
       ['lib.item', { kind: 'symbol', lib: 'Device', name: 'x'.repeat(256) }], ['lib.item', { kind: 'symbol', lib: 'Dev\nice', name: 'R' }],
       ['lib.prefetch', { kind: 'symbol', libs: 'Device' }], ['lib.prefetch', { kind: 'symbol', libs: Array.from({ length: 17 }, (_, i) => `L${i}`) }], ['lib.prefetch', { kind: 'symbol', libs: [3] }],
       ['place', { kind: 'symbol', lib: 'Device', name: 7 }], ['place', { kind: 'symbol', lib: 'Device', name: 'R', unit: 2 }],
+      ['lib.item', { kind: 'symbol', lib: 'Device', name: 'R', value: '10k' }],
+      ['place', { kind: 'symbol', lib: 'Device', name: 'R', value: 'x'.repeat(201) }], ['place', { kind: 'symbol', lib: 'Device', name: 'R', footprint: '' }],
+      ['place', { kind: 'symbol', lib: 'Device', name: 'R', value: 10 }],
+      // A footprint takes no footprint field: bad_args before the frame's kind is read (this is a sch frame).
+      ['place', { kind: 'footprint', lib: 'Package_QFP', name: 'LQFP-48_7x7mm_P0.5mm', footprint: 'Package_QFP:LQFP-48_7x7mm_P0.5mm' }],
     ];
     for (const [op, args] of bad) expect(await request(op, args)).toMatchObject({ ok: false, error: { code: 'bad_args', message: op } });
   });
@@ -2597,15 +2602,35 @@ describe('the picker: lib.index, lib.item, lib.prefetch, place and ev.pick', () 
     expect(board.keys).toEqual(['a']);
   });
 
+  it('place writes value and footprint on the placed symbol\'s Value and Footprint fields, never on the sheet\'s library entry; a footprint\'s value is its Value text', async () => {
+    const { request, place } = picker();
+    expect(await request('project.open', OPEN, 100)).toMatchObject({ ok: true });
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'R', value: 'RC0603FR-0710KL', footprint: 'Resistor_SMD:R_0603_1608Metric' })).toEqual({ id: 2, ok: true, result: {} });
+    const [cache, instance] = place.blobs[0].split('\n(symbol (lib_id');
+    expect(cache).toContain('(property "Value" "R"');
+    expect(cache).not.toContain('RC0603FR-0710KL');
+    expect(cache).not.toContain('Resistor_SMD:R_0603_1608Metric');
+    expect(instance).toContain('(property "Value" "RC0603FR-0710KL" (at 0 0 90)');
+    expect(instance).toMatch(/\(property "Footprint" "Resistor_SMD:R_0603_1608Metric" \(at 0 0 0\) \(hide yes\)/);
+    const board = picker({ search: '?frame=pcb&theme=day' });
+    expect(await board.request('project.open', OPEN_PCB, 100)).toMatchObject({ ok: true });
+    expect(await board.request('place', { kind: 'footprint', lib: 'Package_QFP', name: 'LQFP-48_7x7mm_P0.5mm', value: 'STM32F103C8T6' })).toMatchObject({ ok: true });
+    expect(board.place.blobs[0]).toMatch(/^\(footprint "Package_QFP:LQFP-48_7x7mm_P0\.5mm"/);
+    expect(board.place.blobs[0]).toContain('(property "Value" "STM32F103C8T6"');
+  });
+
   it('ev.ready lists the pseudo-cap picker only with a mirror and the engine\'s place exports; without one the place keys stay KiCad\'s and no ev.pick is sent', async () => {
     const withMirror = picker();
     await settle();
     const caps = withMirror.got.find((m) => m.type === 'ev.ready')?.caps as string[];
     expect(caps).toContain('picker');
+    // place's value and footprint arrive with the picker: the pseudo-cap fields, sorted in.
+    expect(caps).toContain('fields');
     expect(caps).toEqual([...caps].sort());
     const bare = picker({ libs: fakeLibs(false) });
     await settle();
     expect(bare.got.find((m) => m.type === 'ev.ready')?.caps).not.toContain('picker');
+    expect(bare.got.find((m) => m.type === 'ev.ready')?.caps).not.toContain('fields');
     expect(await bare.request('key.press', { key: 'a', code: 'KeyA' })).toMatchObject({ ok: true });
     expect(bare.keys).toEqual(['a']);
     const e = { type: 'keydown', key: 'a', code: 'KeyA', preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() };

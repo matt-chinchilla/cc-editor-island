@@ -9,7 +9,7 @@ import { buildInteractiveImport } from '../loader/src/wasm/import-item';
 import { registerSaveHook, SAVE_COMMITTED, type SaveHookHandle } from '../loader/src/wasm/save-flow';
 import { parseBoot } from '../src/cc-config';
 import { focusCanvas, parseKeyPress, pressKey, type KeyPress } from '../src/keys';
-import { installPickKeys, kindOf, libIds, parseIndexArgs, parseItemArgs, parsePrefetchArgs, pickFor, takesText, warmLibrary, type KeyPick, type PickerLibs, type PickKind } from '../src/picker';
+import { installPickKeys, kindOf, libIds, parseIndexArgs, parseItemArgs, parsePlaceArgs, parsePrefetchArgs, pickFor, takesText, warmLibrary, type KeyPick, type PickerLibs, type PickKind } from '../src/picker';
 import { fileConflict, normalizePath, openStaged, PROJECT_ROOT, stageLocalSettings, stageProject, writeProjectFiles, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
 import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
@@ -183,6 +183,12 @@ const OPS = new Set(['project.open', 'project.import', 'project.save', 'project.
 const LIB_OPS = new Set(['lib.index', 'lib.item', 'lib.prefetch']);
 /** The pseudo-cap ev.ready lists when the picker is available: the place op, ev.pick and a library mirror. */
 export const PICKER_CAP = 'picker';
+/**
+ * The pseudo-cap ev.ready lists with `picker` when place takes `value` and
+ * `footprint` (PICKER.md "What place puts down"). An older island's place
+ * refuses them as bad_args, so a host gates them on this word.
+ */
+export const FIELDS_CAP = 'fields';
 /**
  * The pseudo-cap ev.ready lists when selection runs both ways: ev.selected is
  * armed (the engine's kicadCollabPresenceStart) and select has its exports.
@@ -1416,13 +1422,15 @@ export function startResponder(opts: {
    * place (PICKER.md): the item's body from the source, built into the
    * clipboard blob (loader/src/wasm/import-item.ts, a derived symbol
    * flattened), handed to the engine; answered once the item hangs off the
-   * pointer (bridge/place.ts). The checks, in order: the args (bad_args), the
-   * frame's kind and the export (unsupported), a document (not_ready), a load,
-   * a dialog or a popup menu (busy), the item (not_found).
+   * pointer (bridge/place.ts). The checks, in order: the args (bad_args, a
+   * footprint's `footprint` field among them), the frame's kind and the export
+   * (unsupported), a document (not_ready), a load, a dialog or a popup menu
+   * (busy), the item (not_found). `value` and `footprint` are written on the
+   * placed item, never on the library entry the sheet caches.
    */
   async function placeItem(args: unknown): Promise<Answer> {
     const op = 'place';
-    const a = parseItemArgs(args);
+    const a = parsePlaceArgs(args);
     if (a == null) return fail('bad_args', op);
     if (a.kind !== kindOf(frame)) return fail('unsupported', `a ${a.kind} does not place in a ${frame} frame`);
     const w = win;
@@ -1435,7 +1443,7 @@ export function startResponder(opts: {
     if (body == null) return fail('not_found', `${a.lib}:${a.name}`);
     let sexpr: string;
     try {
-      sexpr = buildInteractiveImport(a.kind, body, a.lib, a.name).sexpr;
+      sexpr = buildInteractiveImport(a.kind, body, a.lib, a.name, { value: a.value, footprint: a.footprint }).sexpr;
     } catch (err) {
       return fail('island_error', describeError(err));
     }
@@ -1527,9 +1535,10 @@ export function startResponder(opts: {
       const mod: Record<string, unknown> = w.Module ?? {};
       const caps = Object.keys(mod).filter((k) => /^kicad[A-Za-z0-9]*$/.test(k) && typeof mod[k] === 'function').sort();
       // The picker (PICKER.md) needs the mirror (the example library has no index to search) and the
-      // engine's place and selection exports; ev.ready says so with the pseudo-cap `picker`.
+      // engine's place and selection exports; ev.ready says so with the pseudo-cap `picker`, and
+      // with `fields` that its place writes the placed item's Value and Footprint.
       pickerOn = libs?.mirror != null && typeof mod.kicadPlaceImportedItem === 'function' && typeof mod.kicadCollabGetSelection === 'function';
-      if (pickerOn) { caps.push(PICKER_CAP); caps.sort(); }
+      if (pickerOn) { caps.push(PICKER_CAP, FIELDS_CAP); caps.sort(); }
       // ev.selected from the engine's own selection hook: its slot taken here, the hook
       // armed here in a pcb frame and by the first document in a sch frame (SelectionFeed.arm);
       // sent only while a document is open.
