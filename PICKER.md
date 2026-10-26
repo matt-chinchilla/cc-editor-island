@@ -11,7 +11,7 @@ reader presses A (or the pencil case's Add a part)
   -> the page opens ITS picker; the search index is already in   (prefetched while the reader worked)
   -> typing filters 22,776 rows in the page, per keystroke        (no request)
   -> a highlighted row: lib.prefetch its library, lib.item draws its preview
-  -> Enter / click: place {kind, lib, name}
+  -> Enter / click: place {kind, lib, name, value?, footprint?}
   -> the island builds the clipboard blob from the item's body (a derived symbol flattened) and
      calls the engine's kicadPlaceImportedItem; it answers once the editor holds the part: the
      part hangs off the pointer, the click commits it (undo, ev.edited), Escape drops it
@@ -72,17 +72,20 @@ power symbol (`(power)`), else 0. Empty strings, never null.
 | `lib.index` | `{ kind: "symbol" \| "footprint" }` | `{ text: string \| null }` (the index JSON text; null without a mirror or an index) |
 | `lib.item` | `{ kind, lib: string, name: string }` | `{ body: string \| null }` (self-contained symbol lib, or the footprint text; null when absent) |
 | `lib.prefetch` | `{ kind, libs: string[] }` (nicknames, at most 16) | `{}` at once; the bundles warm in the background |
-| `place` | `{ kind, lib: string, name: string }` | `{}` once the item hangs off the pointer |
+| `place` | `{ kind, lib: string, name: string, value?: string, footprint?: string }` | `{}` once the item hangs off the pointer |
 
 `lib` and `name` are strings of 1 to 255 characters with no control character; anything else, or an
-extra key, is `bad_args`. All four answer `not_ready` before `ev.ready`. The three library reads
+extra key, is `bad_args`. `place`'s `value` and `footprint` (2026-10-26, the `fields` cap below) are
+optional strings of 1 to 200 characters with no control character, else `bad_args`; a footprint takes
+`value` alone, and a footprint's `footprint` is `bad_args`. All four answer `not_ready` before `ev.ready`. The three library reads
 answer either kind in either frame, outside the responder's serial request queue (they never touch
 the engine: a `lib.item` waiting on a bundle holds up no `key.press`, `view.fit` or `place` sent
 after it); `place` stays queued and frame-bound. `lib.item` answers a body
 for an unknown library or item as null, not as an error. `lib.prefetch` passes unknown nicknames
 over, and warms nothing when the island booted on its example library (no mirror).
 
-`place` refusals, in the order they are checked: `bad_args`; `unsupported` (a symbol in a `pcb`
+`place` refusals, in the order they are checked: `bad_args` (a footprint's `footprint` among them,
+before the frame's kind is read); `unsupported` (a symbol in a `pcb`
 frame or a footprint in a `sch` frame, or no `kicadPlaceImportedItem` / `kicadCollabGetSelection`);
 `not_ready` (no engine, or no document opened by `project.open` / `project.import`); `busy` (a load,
 a dialog or a popup menu is up; also when the engine says a load is in flight, or never takes the
@@ -101,8 +104,16 @@ What `place` puts down (decided while building, 2026-10-07):
   the child replaces its parent's. The instance carries every library field (not the `ki_` ones) at
   its library position, as a chooser pick does, and the library's `exclude_from_sim`, `in_bom` and
   `on_board`; KiCad annotates it (`U1`, `#PWR01`).
+- `value` and `footprint` (2026-10-26) are written on the PLACED INSTANCE's Value and Footprint
+  fields, at the library field's position and with its effects (the Footprint stays hidden); the
+  definition the sheet's `lib_symbols` caches keeps the library's own Value and Footprint, so two
+  instances of one symbol with different values share one entry. An absent one leaves the library's;
+  a body with no Footprint field gets one, hidden. For a derived symbol they replace the flattened
+  (inherited) fields on the instance alone.
 - A footprint is named `lib:name` (a `.kicad_mod` names itself without its library), its format
-  version as the body has it (the builder refuses one newer than the engine reads).
+  version as the body has it (the builder refuses one newer than the engine reads). `value` replaces
+  its Value text (its `(property "Value" ...)`, or an older body's `(fp_text value ...)`); a body with
+  neither gets the property on F.Fab. The footprint keeps its own name: that is the `lib:name` placed.
 - One item at a time: a `place` while the previous item still hangs drops it first. When the reader
   drops a schematic item with Escape (or Undo), the island sends KiCad a second Escape: KiCad's
   placement tool stays armed after the first, and its next press would open KiCad's own chooser.
@@ -117,6 +128,11 @@ v0.2.3, so islands without these ops list it too). On the example library (no mi
 `picker`: the island swallows no key, sends no `ev.pick`, and KiCad's own chooser works as before.
 Ship order: the page that handles `ev.pick` first, then the island (an older page ignores `ev.pick`,
 so the reader's A would do nothing).
+
+**Which islands write the fields.** `ev.ready` `caps` lists the pseudo-cap `fields` (sorted in) exactly
+when it lists `picker`, on islands whose `place` takes `value` and `footprint`. An older island's
+`place` answers `bad_args` to them (its args are closed), so a host sends them only under `fields`,
+and without it places as before and asks the reader to set the Value and the Footprint in the editor.
 
 **Event `ev.pick { kind: "symbol" | "footprint", power?: true }`** (only with the `picker` cap): the
 reader pressed the frame's place key inside the frame (`A` in a `sch` frame: symbol; `P` in a `sch` frame: power symbol, with
