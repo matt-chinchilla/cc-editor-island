@@ -72,19 +72,21 @@ power symbol (`(power)`), else 0. Empty strings, never null.
 | `lib.index` | `{ kind: "symbol" \| "footprint" }` | `{ text: string \| null }` (the index JSON text; null without a mirror or an index) |
 | `lib.item` | `{ kind, lib: string, name: string }` | `{ body: string \| null }` (self-contained symbol lib, or the footprint text; null when absent) |
 | `lib.prefetch` | `{ kind, libs: string[] }` (nicknames, at most 16) | `{}` at once; the bundles warm in the background |
-| `place` | `{ kind, lib: string, name: string, value?: string, footprint?: string }` | `{}` once the item hangs off the pointer |
+| `place` | `{ kind, lib: string, name: string, value?: string, footprint?: string, mpn?: string, manufacturer?: string }` | `{}` once the item hangs off the pointer |
 
 `lib` and `name` are strings of 1 to 255 characters with no control character; anything else, or an
 extra key, is `bad_args`. `place`'s `value` and `footprint` (2026-10-26, the `fields` cap below) are
 optional strings of 1 to 200 characters with no control character, else `bad_args`; a footprint takes
-`value` alone, and a footprint's `footprint` is `bad_args`. All four answer `not_ready` before `ev.ready`. The three library reads
+`value` alone, and a footprint's `footprint` is `bad_args`. `mpn` and `manufacturer` (2026-10-26, the
+`identity` cap below) follow the same rules, a symbol's alone: a footprint's `mpn` or `manufacturer`
+is `bad_args`. All four answer `not_ready` before `ev.ready`. The three library reads
 answer either kind in either frame, outside the responder's serial request queue (they never touch
 the engine: a `lib.item` waiting on a bundle holds up no `key.press`, `view.fit` or `place` sent
 after it); `place` stays queued and frame-bound. `lib.item` answers a body
 for an unknown library or item as null, not as an error. `lib.prefetch` passes unknown nicknames
 over, and warms nothing when the island booted on its example library (no mirror).
 
-`place` refusals, in the order they are checked: `bad_args` (a footprint's `footprint` among them,
+`place` refusals, in the order they are checked: `bad_args` (a footprint's `footprint`, `mpn` or `manufacturer` among them,
 before the frame's kind is read); `unsupported` (a symbol in a `pcb`
 frame or a footprint in a `sch` frame, or no `kicadPlaceImportedItem` / `kicadCollabGetSelection`);
 `not_ready` (no engine, or no document opened by `project.open` / `project.import`); `busy` (a load,
@@ -110,6 +112,12 @@ What `place` puts down (decided while building, 2026-10-07):
   instances of one symbol with different values share one entry. An absent one leaves the library's;
   a body with no Footprint field gets one, hidden. For a derived symbol they replace the flattened
   (inherited) fields on the instance alone.
+- `mpn` and `manufacturer` (2026-10-26) are the part's identity, written on the PLACED INSTANCE as the
+  fields `MPN` and `Manufacturer`, hidden (`(hide yes)`, at the symbol's origin, as an added Footprint
+  is), after the library's fields, MPN first; never on the `lib_symbols` entry. A library field of that
+  name takes the value at its own position with its own effects instead (no second field). Why: a
+  sheet whose part number sits in Value alone is matched by a BOM reader as a part number read from
+  a value (approximate), and the site's BOM keys on `MPN`/`Manufacturer` for an exact match.
 - A footprint is named `lib:name` (a `.kicad_mod` names itself without its library), its format
   version as the body has it (the builder refuses one newer than the engine reads). `value` replaces
   its Value text (its `(property "Value" ...)`, or an older body's `(fp_text value ...)`); a body with
@@ -133,6 +141,12 @@ so the reader's A would do nothing).
 when it lists `picker`, on islands whose `place` takes `value` and `footprint`. An older island's
 `place` answers `bad_args` to them (its args are closed), so a host sends them only under `fields`,
 and without it places as before and asks the reader to set the Value and the Footprint in the editor.
+
+**Which islands write the identity.** `ev.ready` `caps` lists the pseudo-cap `identity` (sorted in)
+exactly when it lists `picker` and `fields`, on islands whose `place` takes `mpn` and `manufacturer`.
+An island that lists `fields` without `identity` answers `bad_args` to the whole `place` when either
+is sent (its args are closed), so a host sends them only under `identity`, and without it places with
+the Value and Footprint alone.
 
 **Event `ev.pick { kind: "symbol" | "footprint", power?: true }`** (only with the `picker` cap): the
 reader pressed the frame's place key inside the frame (`A` in a `sch` frame: symbol; `P` in a `sch` frame: power symbol, with
