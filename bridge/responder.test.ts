@@ -2459,6 +2459,10 @@ describe('the picker: lib.index, lib.item, lib.prefetch, place and ev.pick', () 
       ['place', { kind: 'symbol', lib: 'Device', name: 'R', value: 10 }],
       // A footprint takes no footprint field: bad_args before the frame's kind is read (this is a sch frame).
       ['place', { kind: 'footprint', lib: 'Package_QFP', name: 'LQFP-48_7x7mm_P0.5mm', footprint: 'Package_QFP:LQFP-48_7x7mm_P0.5mm' }],
+      // Nor the part's identity, and an empty or over-long one is refused like a value.
+      ['place', { kind: 'footprint', lib: 'Package_QFP', name: 'LQFP-48_7x7mm_P0.5mm', mpn: 'STM32F103C8T6' }],
+      ['place', { kind: 'footprint', lib: 'Package_QFP', name: 'LQFP-48_7x7mm_P0.5mm', manufacturer: 'STMicroelectronics' }],
+      ['place', { kind: 'symbol', lib: 'Device', name: 'R', mpn: '' }], ['place', { kind: 'symbol', lib: 'Device', name: 'R', manufacturer: 'x'.repeat(201) }],
     ];
     for (const [op, args] of bad) expect(await request(op, args)).toMatchObject({ ok: false, error: { code: 'bad_args', message: op } });
   });
@@ -2619,6 +2623,17 @@ describe('the picker: lib.index, lib.item, lib.prefetch, place and ev.pick', () 
     expect(board.place.blobs[0]).toContain('(property "Value" "STM32F103C8T6"');
   });
 
+  it('place writes mpn and manufacturer on the placed symbol as hidden MPN and Manufacturer fields, never on the sheet\'s library entry', async () => {
+    const { request, place } = picker();
+    expect(await request('project.open', OPEN, 100)).toMatchObject({ ok: true });
+    expect(await request('place', { kind: 'symbol', lib: 'Device', name: 'R', value: 'RC0603FR-0710KL', footprint: 'Resistor_SMD:R_0603_1608Metric', mpn: 'RC0603FR-0710KL', manufacturer: 'Yageo' })).toEqual({ id: 2, ok: true, result: {} });
+    const [cache, instance] = place.blobs[0].split('\n(symbol (lib_id');
+    expect(cache).not.toContain('"MPN"');
+    expect(cache).not.toContain('"Manufacturer"');
+    expect(instance).toMatch(/\(property "MPN" "RC0603FR-0710KL" \(at 0 0 0\) \(hide yes\)/);
+    expect(instance).toMatch(/\(property "Manufacturer" "Yageo" \(at 0 0 0\) \(hide yes\)/);
+  });
+
   it('ev.ready lists the pseudo-cap picker only with a mirror and the engine\'s place exports; without one the place keys stay KiCad\'s and no ev.pick is sent', async () => {
     const withMirror = picker();
     await settle();
@@ -2626,11 +2641,14 @@ describe('the picker: lib.index, lib.item, lib.prefetch, place and ev.pick', () 
     expect(caps).toContain('picker');
     // place's value and footprint arrive with the picker: the pseudo-cap fields, sorted in.
     expect(caps).toContain('fields');
+    // place's mpn and manufacturer arrive with them too: the pseudo-cap identity.
+    expect(caps).toContain('identity');
     expect(caps).toEqual([...caps].sort());
     const bare = picker({ libs: fakeLibs(false) });
     await settle();
     expect(bare.got.find((m) => m.type === 'ev.ready')?.caps).not.toContain('picker');
     expect(bare.got.find((m) => m.type === 'ev.ready')?.caps).not.toContain('fields');
+    expect(bare.got.find((m) => m.type === 'ev.ready')?.caps).not.toContain('identity');
     expect(await bare.request('key.press', { key: 'a', code: 'KeyA' })).toMatchObject({ ok: true });
     expect(bare.keys).toEqual(['a']);
     const e = { type: 'keydown', key: 'a', code: 'KeyA', preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() };

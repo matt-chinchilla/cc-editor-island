@@ -211,6 +211,36 @@ describe('buildSymbolImport', () => {
     expect(placed).toMatch(/\(property "Footprint" "Resistor_SMD:R_0603_1608Metric" \(at [^)]*\) \(hide yes\)/);
   });
 
+  it('writes the part\'s identity on the instance alone, as hidden MPN and Manufacturer fields after the library\'s', () => {
+    const r = buildSymbolImport(R, 'R', 'Device', 0, 0, 'u-1', { value: 'RC0603FR-0710KL', footprint: 'Resistor_SMD:R_0603_1608Metric', mpn: 'RC0603FR-0710KL', manufacturer: 'Yageo' });
+    const { cache, placed } = blobParts(r.sexpr);
+    expect(props(placed)).toEqual({ Reference: 'R?', Value: 'RC0603FR-0710KL', Footprint: 'Resistor_SMD:R_0603_1608Metric', Datasheet: '~', Description: 'Resistor (generic)', MPN: 'RC0603FR-0710KL', Manufacturer: 'Yageo' });
+    // Hidden, at the symbol's origin, as the Footprint a body lacks is added.
+    expect(placed).toContain('(property "MPN" "RC0603FR-0710KL" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27))))');
+    expect(placed).toContain('(property "Manufacturer" "Yageo" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27))))');
+    // After every library field, MPN before Manufacturer.
+    expect(placed.indexOf('"Description"')).toBeLessThan(placed.indexOf('"MPN"'));
+    expect(placed.indexOf('"MPN"')).toBeLessThan(placed.indexOf('"Manufacturer"'));
+    // Never on the library entry the sheet caches.
+    expect(cache).not.toContain('"MPN"');
+    expect(cache).not.toContain('"Manufacturer"');
+    expect(cache).toBe(blobParts(buildSymbolImport(R, 'R', 'Device', 0, 0, 'u-1').sexpr).cache);
+    // Absent, nothing is added.
+    expect(blobParts(buildSymbolImport(R, 'R', 'Device', 0, 0, 'u-1', { value: '4k7' }).sexpr).placed).not.toMatch(/"MPN"|"Manufacturer"/);
+  });
+
+  it('writes the identity over a library field of that name, at its position with its effects; a derived symbol takes it on the instance', () => {
+    const own = R.replace(/(\t\t\(property "Description"[^\n]*\n)/, '$1\t\t(property "MPN" "" (at 1 2 0) (hide yes) (effects (font (size 1.27 1.27))))\n');
+    const { cache, placed } = blobParts(buildSymbolImport(own, 'R', 'Device', 0, 0, 'u-1', { mpn: 'RC0603FR-0710KL', manufacturer: 'Yageo' }).sexpr);
+    expect(placed.match(/"MPN"/g)).toHaveLength(1);
+    expect(placed).toContain('(property "MPN" "RC0603FR-0710KL" (at 1 -2 0) (hide yes)');
+    expect(props(placed)).toMatchObject({ MPN: 'RC0603FR-0710KL', Manufacturer: 'Yageo' });
+    expect(props(cache)).toMatchObject({ MPN: '' });
+    const chain = blobParts(buildInteractiveImport('symbol', CHAIN, 'MCU_Test', 'MCU_XA1', { mpn: 'MCU_XA1-TR', manufacturer: 'Example "Semi"' }).sexpr);
+    expect(props(chain.placed)).toMatchObject({ MPN: 'MCU_XA1-TR', Manufacturer: 'Example \\"Semi\\"' });
+    expect(chain.cache).not.toContain('"MPN"');
+  });
+
   it('escapes quotes in names and values', () => {
     const q = R.replace('"Resistor (generic)"', '"A \\"quoted\\" one"');
     expect(buildSymbolImport(q, 'R', 'My "Lib"', 0, 0).sexpr).toContain('(lib_id "My \\"Lib\\":R")');
@@ -268,6 +298,9 @@ describe('buildFootprintImport', () => {
   it('rejects text that is no footprint, and buildInteractiveImport labels it by LIB_ID', () => {
     expect(() => buildFootprintImport('(kicad_pcb)', 0, 0)).toThrow(/footprint/);
     expect(buildInteractiveImport('footprint', FP, 'Package_QFP', 'LQFP-48_7x7mm_P0.5mm').label).toBe('Package_QFP:LQFP-48_7x7mm_P0.5mm');
+    // A footprint takes no identity fields (place's parser refuses them first).
+    expect(() => buildInteractiveImport('footprint', FP, 'Package_QFP', 'LQFP-48_7x7mm_P0.5mm', { mpn: 'X1' })).toThrow(/MPN/);
+    expect(() => buildInteractiveImport('footprint', FP, 'Package_QFP', 'LQFP-48_7x7mm_P0.5mm', { manufacturer: 'Y' })).toThrow(/Manufacturer/);
   });
 });
 

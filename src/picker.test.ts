@@ -57,6 +57,29 @@ describe('the ops\' closed args', () => {
     ]) expect(parsePlaceArgs(bad)).toBeNull();
   });
 
+  it('place takes the part\'s identity, mpn and manufacturer, under value\'s rules, on a symbol alone', () => {
+    const full = parsePlaceArgs({ kind: 'symbol', lib: 'RF_NFC', name: 'ST25DV04K-IER8C3', value: 'ST25DV04KC-IE6C3', footprint: 'Package_SO:SOIC-8_3.9x4.9mm_P1.27mm', mpn: 'ST25DV04KC-IE6C3', manufacturer: 'STMicroelectronics' });
+    expect(full).toEqual({ kind: 'symbol', lib: 'RF_NFC', name: 'ST25DV04K-IER8C3', value: 'ST25DV04KC-IE6C3', footprint: 'Package_SO:SOIC-8_3.9x4.9mm_P1.27mm', mpn: 'ST25DV04KC-IE6C3', manufacturer: 'STMicroelectronics' });
+    // One without the other, and an absent one stays absent.
+    expect(parsePlaceArgs({ kind: 'symbol', lib: 'Device', name: 'R', mpn: 'RC0603FR-0710KL' })).toEqual({ kind: 'symbol', lib: 'Device', name: 'R', mpn: 'RC0603FR-0710KL' });
+    expect(Object.keys(parsePlaceArgs({ kind: 'symbol', lib: 'Device', name: 'R', manufacturer: 'Yageo' })!).sort()).toEqual(['kind', 'lib', 'manufacturer', 'name']);
+    expect(parsePlaceArgs({ kind: 'symbol', lib: 'Device', name: 'R', mpn: 'x'.repeat(200), manufacturer: 'y'.repeat(200) })).not.toBeNull();
+    for (const bad of [
+      // A footprint takes neither.
+      { kind: 'footprint', lib: 'Package_SO', name: 'SOIC-8_3.9x4.9mm_P1.27mm', value: 'ST25DV04KC-IE6C3', mpn: 'ST25DV04KC-IE6C3' },
+      { kind: 'footprint', lib: 'Package_SO', name: 'SOIC-8_3.9x4.9mm_P1.27mm', manufacturer: 'STMicroelectronics' },
+      { kind: 'symbol', lib: 'Device', name: 'R', mpn: '' },
+      { kind: 'symbol', lib: 'Device', name: 'R', manufacturer: '' },
+      { kind: 'symbol', lib: 'Device', name: 'R', mpn: 'x'.repeat(201) },
+      { kind: 'symbol', lib: 'Device', name: 'R', manufacturer: 'y'.repeat(201) },
+      { kind: 'symbol', lib: 'Device', name: 'R', mpn: 'RC0603\tFR' },
+      { kind: 'symbol', lib: 'Device', name: 'R', manufacturer: 'Yageo\u007f' },
+      { kind: 'symbol', lib: 'Device', name: 'R', mpn: 603 },
+      { kind: 'symbol', lib: 'Device', name: 'R', manufacturer: null },
+      { kind: 'symbol', lib: 'Device', name: 'R', mpn: 'RC0603FR-0710KL', supplier: 'Mouser' },
+    ]) expect(parsePlaceArgs(bad)).toBeNull();
+  });
+
   it('lib.prefetch takes { kind, libs } with at most 16 nicknames', () => {
     expect(parsePrefetchArgs({ kind: 'symbol', libs: [] })).toEqual({ kind: 'symbol', libs: [] });
     expect(parsePrefetchArgs({ kind: 'footprint', libs: Array.from({ length: MAX_PREFETCH }, (_, i) => `L${i}`) })?.libs).toHaveLength(16);

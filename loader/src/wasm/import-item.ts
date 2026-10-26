@@ -21,6 +21,10 @@
 // (ItemFields): buildSymbolImport writes them on the placed instance's Value
 // and Footprint fields, never on the library entry the sheet caches, and
 // buildFootprintImport writes a value as the footprint's Value text.
+// Modified by Circuit Center on 2026-10-26: place's mpn and manufacturer
+// (ItemFields): buildSymbolImport writes them on the placed instance as the
+// MPN and Manufacturer fields, hidden, after the library's fields (over a
+// library field of that name when there is one), never on the library entry.
 /**
  * POC: drop a symbol (`.kicad_sym`) or footprint (`.kicad_mod`) picked from the
  * user's machine straight onto the open eeschema / pcbnew canvas.
@@ -260,13 +264,19 @@ function instanceField(field: string, x: number, y: number, value: string): stri
 
 /**
  * What place writes on the placed item over the library's own (PICKER.md
- * "What place puts down"): a symbol's Value and Footprint fields, a
- * footprint's Value text. An absent one leaves the library's.
+ * "What place puts down"): a symbol's Value and Footprint fields and its
+ * identity (the MPN and Manufacturer fields), a footprint's Value text. An
+ * absent one leaves the library's.
  */
 export interface ItemFields {
   value?: string;
   footprint?: string;
+  mpn?: string;
+  manufacturer?: string;
 }
+
+/** The identity fields place writes on a symbol, by ItemFields key, in the order they are added. */
+const IDENTITY = [["mpn", "MPN"], ["manufacturer", "Manufacturer"]] as const;
 
 export interface SymbolImport {
   /** The blob for `kicadCollabApplyItems`. */
@@ -281,8 +291,8 @@ export interface SymbolImport {
  * `.kicad_sym` text at (x, y) mm on the shown sheet. `libNick` is the nickname
  * the placed instance will reference (`Nick:Name`) — the file's basename by
  * default; it only has to be stable, the definition travels in the blob.
- * `over` writes a Value and a Footprint on the instance alone: the library
- * entry the sheet caches keeps the library's own.
+ * `over` writes a Value, a Footprint, an MPN and a Manufacturer on the
+ * instance alone: the library entry the sheet caches keeps the library's own.
  */
 export function buildSymbolImport(
   libText: string,
@@ -306,12 +316,13 @@ export function buildSymbolImport(
   const reference = refPrefix.endsWith("?") ? refPrefix : `${refPrefix}?`;
   const fields = [...children(block)].filter((c) => headOf(c) === "property" && !LIBRARY_ONLY.test(nameOf(c) ?? "ki_"));
   const field = (n: string): string | undefined => fields.find((c) => nameOf(c) === n);
-  // The instance's own value of a field: the reference unannotated, place's Value and Footprint over the library's.
+  // The instance's own value of a field: the reference unannotated, place's Value, Footprint, MPN and Manufacturer over the library's.
   const ownValue = (c: string): string => {
     const n = nameOf(c);
     if (n === "Reference") return reference;
     if (n === "Value" && over.value != null) return over.value;
     if (n === "Footprint" && over.footprint != null) return over.footprint;
+    for (const [key, fieldName] of IDENTITY) if (n === fieldName && over[key] != null) return over[key];
     return valueOf(c) ?? "";
   };
   const placed = fields.map((c) => instanceField(c, x, y, ownValue(c)));
@@ -320,7 +331,13 @@ export function buildSymbolImport(
   const font = "(effects (font (size 1.27 1.27)) (justify left))";
   if (field("Reference") === undefined) placed.unshift(`(property "Reference" "${esc(reference)}" (at ${fmt(x + 2.54)} ${fmt(y - 1.27)} 0) ${font})`);
   if (field("Value") === undefined) placed.push(`(property "Value" "${esc(over.value ?? name)}" (at ${fmt(x + 2.54)} ${fmt(y + 1.27)} 0) ${font})`);
-  if (field("Footprint") === undefined && over.footprint != null) placed.push(`(property "Footprint" "${esc(over.footprint)}" (at ${fmt(x)} ${fmt(y)} 0) (hide yes) (effects (font (size 1.27 1.27))))`);
+  const hidden = (n: string, v: string): string => `(property "${esc(n)}" "${esc(v)}" (at ${fmt(x)} ${fmt(y)} 0) (hide yes) (effects (font (size 1.27 1.27))))`;
+  if (field("Footprint") === undefined && over.footprint != null) placed.push(hidden("Footprint", over.footprint));
+  // The part's identity, so a BOM reader keys on it: hidden, after the library's fields.
+  for (const [key, fieldName] of IDENTITY) {
+    const v = over[key];
+    if (v != null && field(fieldName) === undefined) placed.push(hidden(fieldName, v));
+  }
   const yesNo = (b: boolean): string => (b ? "yes" : "no");
 
   const sexpr = [
@@ -416,6 +433,7 @@ export function buildInteractiveImport(
     return { sexpr: r.sexpr, label: r.libId };
   }
   if (over.footprint != null) throw new Error("a footprint takes no Footprint field");
+  if (over.mpn != null || over.manufacturer != null) throw new Error("a footprint takes no MPN or Manufacturer field");
   const r = buildFootprintImport(body, 0, 0, libNick, over.value);
   return { sexpr: r.sexpr, label: `${libNick}:${r.name}` };
 }

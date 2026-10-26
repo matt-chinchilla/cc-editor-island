@@ -190,6 +190,14 @@ export const PICKER_CAP = 'picker';
  */
 export const FIELDS_CAP = 'fields';
 /**
+ * The pseudo-cap ev.ready lists with `picker` and `fields` when place takes
+ * `mpn` and `manufacturer` (PICKER.md "What place puts down"): written on the
+ * placed symbol as its MPN and Manufacturer fields, hidden. An island that
+ * lists `fields` alone refuses them as bad_args (its args are closed), so a
+ * host gates them on this word.
+ */
+export const IDENTITY_CAP = 'identity';
+/**
  * The pseudo-cap ev.ready lists when selection runs both ways: ev.selected is
  * armed (the engine's kicadCollabPresenceStart) and select has its exports.
  * Older islands list those exports too, so a host gates on this word.
@@ -1423,10 +1431,11 @@ export function startResponder(opts: {
    * clipboard blob (loader/src/wasm/import-item.ts, a derived symbol
    * flattened), handed to the engine; answered once the item hangs off the
    * pointer (bridge/place.ts). The checks, in order: the args (bad_args, a
-   * footprint's `footprint` field among them), the frame's kind and the export
-   * (unsupported), a document (not_ready), a load, a dialog or a popup menu
-   * (busy), the item (not_found). `value` and `footprint` are written on the
-   * placed item, never on the library entry the sheet caches.
+   * footprint's `footprint`, `mpn` or `manufacturer` among them), the frame's
+   * kind and the export (unsupported), a document (not_ready), a load, a
+   * dialog or a popup menu (busy), the item (not_found). `value`,
+   * `footprint`, `mpn` and `manufacturer` are written on the placed item,
+   * never on the library entry the sheet caches.
    */
   async function placeItem(args: unknown): Promise<Answer> {
     const op = 'place';
@@ -1443,7 +1452,7 @@ export function startResponder(opts: {
     if (body == null) return fail('not_found', `${a.lib}:${a.name}`);
     let sexpr: string;
     try {
-      sexpr = buildInteractiveImport(a.kind, body, a.lib, a.name, { value: a.value, footprint: a.footprint }).sexpr;
+      sexpr = buildInteractiveImport(a.kind, body, a.lib, a.name, { value: a.value, footprint: a.footprint, mpn: a.mpn, manufacturer: a.manufacturer }).sexpr;
     } catch (err) {
       return fail('island_error', describeError(err));
     }
@@ -1538,7 +1547,7 @@ export function startResponder(opts: {
       // engine's place and selection exports; ev.ready says so with the pseudo-cap `picker`, and
       // with `fields` that its place writes the placed item's Value and Footprint.
       pickerOn = libs?.mirror != null && typeof mod.kicadPlaceImportedItem === 'function' && typeof mod.kicadCollabGetSelection === 'function';
-      if (pickerOn) { caps.push(PICKER_CAP, FIELDS_CAP); caps.sort(); }
+      if (pickerOn) { caps.push(PICKER_CAP, FIELDS_CAP, IDENTITY_CAP); caps.sort(); }
       // ev.selected from the engine's own selection hook: its slot taken here, the hook
       // armed here in a pcb frame and by the first document in a sch frame (SelectionFeed.arm);
       // sent only while a document is open.
