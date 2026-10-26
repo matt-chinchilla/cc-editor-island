@@ -6,8 +6,10 @@ import { parentOriginFor, parseBoot } from './cc-config';
 describe('parentOriginFor', () => {
   it('maps prod and the local pair, and refuses unknown hosts', () => {
     expect(parentOriginFor('editor.circuitcenter.ai', '')).toBe('https://circuitcenter.ai');
-    expect(parentOriginFor('editor.circuitcenter.localhost', '')).toBe('http://circuitcenter.localhost');
-    expect(parentOriginFor('editor.circuitcenter.localhost', '4174')).toBe('http://circuitcenter.localhost:4173');
+    expect(parentOriginFor('editor.localhost', '')).toBe('http://localhost');
+    expect(parentOriginFor('editor.localhost', '4174')).toBe('http://localhost:4173');
+    // The old pair host was folded into plain localhost (2026-10-26): it boots nothing.
+    expect(parentOriginFor('editor.circuitcenter.localhost', '')).toBeNull();
     expect(parentOriginFor('evil.example', '')).toBeNull();
   });
 });

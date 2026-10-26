@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
 // Two static servers that send the real headers: the page origin harness on
-// circuitcenter.localhost:4173 (COOP same-origin, COEP credentialless,
-// frame-src) and the island on editor.circuitcenter.localhost:4174 (the
+// localhost:4173 (COOP same-origin, COEP credentialless,
+// frame-src) and the island on editor.localhost:4174 (the
 // snippet the site's nginx includes). *.localhost resolves to 127.0.0.1.
 // The page origin also serves tests/fixtures under /fixtures/, so the harness
 // loads its fixture projects same-origin, and tests/e2e/fixtures under
@@ -17,8 +17,10 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { islandHeaders } from './headers.mjs';
 
 const TYPES = { '.txt': 'text/plain; charset=utf-8', '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm', '.gz': 'application/octet-stream', '.png': 'image/png', '.svg': 'image/svg+xml' };
-const PAGE = 'http://circuitcenter.localhost:4173';
-const ISLAND = 'http://editor.circuitcenter.localhost:4174';
+const PAGE = 'http://localhost:4173';
+const ISLAND = 'http://editor.localhost:4174';
+// localhost and editor.localhost are cross-site: the site's local server block sets the same.
+const CORP = 'cross-origin';
 const LIBS_DIR = process.env.LIBS_DIR ? resolve(process.env.LIBS_DIR) : null;
 
 function serveFile(root, urlPath, res, headers) {
@@ -40,10 +42,10 @@ function serveFile(root, urlPath, res, headers) {
 createServer((req, res) => {
   const path = req.url.split('?')[0];
   if (path === '/libs' || path.startsWith('/libs/')) {
-    if (LIBS_DIR == null) { res.writeHead(404, islandHeaders(PAGE)); return res.end(); }
-    return serveFile(LIBS_DIR, path.slice('/libs'.length), res, islandHeaders(PAGE));
+    if (LIBS_DIR == null) { res.writeHead(404, islandHeaders(PAGE, CORP)); return res.end(); }
+    return serveFile(LIBS_DIR, path.slice('/libs'.length), res, islandHeaders(PAGE, CORP));
   }
-  return serveFile('dist', path, res, islandHeaders(PAGE));
+  return serveFile('dist', path, res, islandHeaders(PAGE, CORP));
 }).listen(4174, '127.0.0.1');
 createServer((req, res) => {
   const path = req.url.split('?')[0];

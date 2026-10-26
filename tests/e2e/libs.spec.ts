@@ -17,7 +17,7 @@ import pin from '../../PIN.json' with { type: 'json' };
 
 declare const process: { env: Record<string, string | undefined> };
 
-const ISLAND = 'http://editor.circuitcenter.localhost:4174';
+const ISLAND = 'http://editor.localhost:4174';
 const TAG = pin.libs.tag;
 interface Ev { type: string; phase?: string; detail?: string; depth?: number; at: number }
 interface Harness { __events: Ev[]; __saved: Record<string, Uint8Array>; __bridge: { request(op: string, args?: unknown): Promise<Record<string, unknown>> } }

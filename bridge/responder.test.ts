@@ -8,7 +8,7 @@ import { createFatalGate, type FatalGate } from '../src/fatal';
 import { VISIBLE_ITEMS } from '../src/stage';
 import { isQuiet, resetUnloadQuietForTest } from '../src/unload-quiet';
 
-const PARENT = 'http://circuitcenter.localhost';
+const PARENT = 'http://localhost';
 const ROOT = memfsProjectDir('cc');
 const settle = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 

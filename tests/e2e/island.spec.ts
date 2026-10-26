@@ -8,8 +8,8 @@
 import { expect, test, type BrowserContext, type Frame, type Page } from '@playwright/test';
 import palette from '../../theme/colors/circuitcenter.json' with { type: 'json' };
 
-const PAGE = 'http://circuitcenter.localhost:4173';
-const ISLAND = 'http://editor.circuitcenter.localhost:4174';
+const PAGE = 'http://localhost:4173';
+const ISLAND = 'http://editor.localhost:4174';
 const PAIR = new Set([PAGE, ISLAND]);
 
 interface Ev { type: string; phase?: string; detail?: string; path?: string; bytes?: number; text?: string; topic?: string; caps?: string[]; open?: boolean; depth?: number; at: number }
@@ -148,7 +148,9 @@ test('the island answers with the snippet headers, and the worker script carries
   expect(hd['content-security-policy']).toContain(`frame-ancestors ${PAGE};`);
   expect(hd['cross-origin-embedder-policy']).toBe('require-corp');
   expect(hd['cross-origin-opener-policy']).toBe('same-origin');
-  expect(hd['cross-origin-resource-policy']).toBe('same-site');
+  // The local pair (localhost + editor.localhost) is cross-site, so the harness, like the
+  // site's local server block, sends cross-origin; prod's same-site pair sends same-site.
+  expect(hd['cross-origin-resource-policy']).toBe('cross-origin');
   expect(hd['access-control-allow-origin']).toBe(PAGE);
 });
 

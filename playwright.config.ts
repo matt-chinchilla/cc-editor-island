@@ -12,7 +12,7 @@ export default defineConfig({
   workers: 1,
   reporter: [['list']],
   webServer: { command: 'node tests/serve.mjs', port: 4173, reuseExistingServer: false },
-  use: { baseURL: 'http://circuitcenter.localhost:4173', trace: 'retain-on-failure' },
+  use: { baseURL: 'http://localhost:4173', trace: 'retain-on-failure' },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1320, height: 900 } } },
     { name: 'firefox', use: { ...devices['Desktop Firefox'], viewport: { width: 1320, height: 900 } } },

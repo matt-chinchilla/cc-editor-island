@@ -8,7 +8,7 @@
 // selected by its uuid and by a footprint path.
 import { expect, test, type Frame, type Page } from '@playwright/test';
 
-const ISLAND = 'http://editor.circuitcenter.localhost:4174';
+const ISLAND = 'http://editor.localhost:4174';
 
 interface Ev { type: string; caps?: string[]; uuids?: string[]; fpPaths?: string[]; at: number }
 interface Harness { __events: Ev[]; __bridge: { request(op: string, args?: unknown): Promise<Record<string, unknown>> } }
