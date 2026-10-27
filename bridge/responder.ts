@@ -1577,10 +1577,13 @@ export function startResponder(opts: {
     const FS = w.FS;
     if (project == null || FS == null) return fail('unsupported', 'project libraries');
     const taken = await servedNames();
+    // ${KIPRJMOD}: the folder of the project KiCad loaded, the open document's (KiCad loads the
+    // project named after the file it opens, beside it); the project folder's root with none open.
+    const prjmod = opened != null && opened.includes('/') ? opened.slice(0, opened.lastIndexOf('/')) : '';
     const found: ProjectLibrary[] = [];
     for (const nick of nicks) {
       if (taken.has(nick)) return fail('bad_args', `${op}: ${nick} is a library the island already serves`);
-      const libsOf = project.find(nick);
+      const libsOf = project.find(nick, prjmod);
       if (libsOf.length === 0) return fail('not_found', nick);
       found.push(...libsOf);
     }

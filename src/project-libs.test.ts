@@ -119,6 +119,26 @@ describe('the project libraries', () => {
     expect(createProjectLibs({ root: ROOT, fs: () => null }).find('glasgow_parts')).toEqual([]);
   });
 
+  it('reads the tables beside the project file, ${KIPRJMOD}, and takes each row\'s path from there', () => {
+    const sub = 'Hardware/Main-board';
+    const fs = fakeFs({
+      [`${ROOT}/${sub}/sym-lib-table`]: SYM_TABLE,
+      [`${ROOT}/${sub}/fp-lib-table`]: FP_TABLE,
+      [`${ROOT}/${sub}/glasgow_parts.kicad_sym`]: SYMS,
+      [`${ROOT}/${sub}/glasgow_parts.pretty/UFDFPN8.kicad_mod`]: FP,
+      // Tables at the root name nothing for a project whose file sits in the subfolder.
+      [`${ROOT}/fp-lib-table`]: FP_TABLE,
+    });
+    const libs = createProjectLibs({ root: ROOT, fs: () => fs });
+    expect(libs.find('glasgow_parts', sub)).toEqual([
+      { kind: 'symbol', nick: 'glasgow_parts', path: `${sub}/glasgow_parts.kicad_sym`, id: 'prj.sym.glasgow_parts' },
+      { kind: 'footprint', nick: 'glasgow_parts', path: `${sub}/glasgow_parts.pretty`, id: 'prj.fp.glasgow_parts' },
+    ]);
+    // At the root the footprint row names a folder that is not there.
+    expect(libs.find('glasgow_parts')).toEqual([]);
+    expect(libs.find('glasgow_parts', '../up')).toEqual([]);
+  });
+
   it('serves a registered symbol library from its file at every ask: names, a derived symbol with its chain, the fat list alone', async () => {
     const fs = folder();
     const libs = createProjectLibs({ root: ROOT, fs: () => fs });

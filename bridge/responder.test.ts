@@ -3107,6 +3107,17 @@ describe('project.libs (island v0.2.3-cc12)', () => {
     expect(s.calls).toEqual(['reload symbol blink_parts', 'reload footprint blink_parts']);
   });
 
+  it('reads the tables beside the open project file (${KIPRJMOD}), not at the project folder\'s root, when the project sits in a subfolder', async () => {
+    const s = libsFrame({ frame: 'pcb' });
+    expect(await s.request('project.open', { name: 'x', files: [{ path: 'Hardware/Main-board/kb.kicad_pro', bytes: b('{}') }, { path: 'Hardware/Main-board/kb.kicad_pcb', bytes: b('(kicad_pcb)') }] })).toMatchObject({ ok: true, result: { opened: 'Hardware/Main-board/kb.kicad_pcb' } });
+    expect(await s.request('project.write', { files: LIBRARY })).toMatchObject({ ok: true });
+    expect(await s.request('project.libs', { libs: ['blink_parts'] })).toMatchObject({ ok: false, error: { code: 'not_found', message: 'blink_parts' } });
+    expect(await s.request('project.write', { files: LIBRARY.map((f) => ({ path: `Hardware/Main-board/${f.path}`, text: f.text })) })).toMatchObject({ ok: true });
+    expect(await s.request('project.libs', { libs: ['blink_parts'] })).toMatchObject({ ok: true, result: { symbol: ['blink_parts'], footprint: ['blink_parts'] } });
+    expect(s.projectLibs.registered('footprint', 'blink_parts')?.path).toBe('Hardware/Main-board/blink_parts.pretty');
+    expect(await s.request('lib.item', { kind: 'footprint', lib: 'blink_parts', name: 'UFDFPN8' })).toMatchObject({ ok: true, result: { body: FP } });
+  });
+
   it('a library in one table only is registered as that kind', async () => {
     const s = libsFrame({ frame: 'pcb' });
     expect(await s.request('project.write', { files: LIBRARY.filter((f) => f.path !== 'sym-lib-table') })).toMatchObject({ ok: true });

@@ -252,7 +252,8 @@ tests only when `LIBS_DIR` is set, and its fallback test always.
 
 A design's own library sits in its project folder, never in the mirror: `<stem>_parts.kicad_sym`
 and `<stem>_parts.pretty/`, named by the project's own `sym-lib-table` and `fp-lib-table` (a `KiCad`
-row whose uri is `${KIPRJMOD}/` and the path). `project.libs` (PROTOCOL.md) registers one in a
+row whose uri is `${KIPRJMOD}/` and the path), all of them beside the project file: `${KIPRJMOD}` is
+the folder of the document the frame opened (the project folder's root while none is open). `project.libs` (PROTOCOL.md) registers one in a
 running frame:
 
 - **The source.** `src/project-libs.ts` serves a registered library from the folder at every ask

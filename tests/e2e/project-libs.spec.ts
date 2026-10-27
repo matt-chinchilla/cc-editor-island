@@ -164,6 +164,27 @@ test('project.libs on a board: KiCad loads the project footprint by its nickname
   expect(pcb).toContain('(model "${KIPRJMOD}/glasgow_parts.3dshapes/UFDFPN8.step"');
 });
 
+test('project.libs reads the tables beside the project file (${KIPRJMOD}) when the project sits in a subfolder, never at the folder\'s root', async ({ page }) => {
+  const sub = 'Hardware/Main-board';
+  await page.goto('/parent.html?frame=pcb');
+  await page.waitForFunction(() => (window as unknown as Harness).__events.some((e) => e.type === 'ev.ready'), null, { timeout: 170_000 });
+  const opened = await page.evaluate(async (dir) => {
+    const names = ['glasgow.kicad_pro', 'glasgow.kicad_sch', 'io_banks.kicad_sch', 'io_buffer.kicad_sch', 'glasgow.kicad_pcb'];
+    const files = await Promise.all(names.map(async (p) => ({ path: `${dir}/${p}`, bytes: new Uint8Array(await (await fetch(`/fixtures/glasgow/${p}`)).arrayBuffer()) })));
+    return (window as unknown as Harness).__bridge.request('project.open', { name: 'glasgow', files });
+  }, sub);
+  expect(opened.opened).toBe(`${sub}/glasgow.kicad_pcb`);
+  const frame = page.frames().find((f) => f.url().startsWith(`${ISLAND}/`)) ?? null;
+  // At the folder's root the tables are not the project's.
+  expect(await request(page, 'project.write', { files: LIBRARY })).toMatchObject({ written: expect.any(Array) });
+  expect(await refusal(page, 'project.libs', { libs: ['glasgow_parts'] })).toBe('not_found: glasgow_parts');
+  expect(await request(page, 'project.write', { files: LIBRARY.map((f) => ({ path: `${sub}/${f.path}`, text: f.text })) })).toMatchObject({ written: expect.any(Array) });
+  expect(await request(page, 'project.libs', { libs: ['glasgow_parts'] })).toEqual({ symbol: ['glasgow_parts'], footprint: ['glasgow_parts'] });
+  expect(await request(page, 'lib.item', { kind: 'footprint', lib: 'glasgow_parts', name: 'UFDFPN8' })).toEqual({ body: FOOTPRINT });
+  if (frame == null) { unreached(); return; }
+  expect(await loadFootprint(frame, 'glasgow_parts', 'UFDFPN8')).toBe('1:500000x800000;2:500000x800000;');
+});
+
 // Glasgow's C30 (Capacitor_SMD:C_0402_1005Metric), whose board names KiCad 6's model.
 const C30 = '00000000-0000-0000-0000-00005be41647';
 const C30_MODEL = '(model "${KICAD6_3DMODEL_DIR}/Capacitor_SMD.3dshapes/C_0402_1005Metric.step"';

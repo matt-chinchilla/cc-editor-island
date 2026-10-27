@@ -186,7 +186,8 @@ and `pagehide`, and never runs on the example library. Nothing is shown.
 
 A part the reader brings from another library joins the design as its PROJECT LIBRARY, the KiCad
 way: `<stem>_parts.kicad_sym`, `<stem>_parts.pretty/<footprint>.kicad_mod` and a row of each in the
-project's own `sym-lib-table` and `fp-lib-table` (type `KiCad`, uri `${KIPRJMOD}/...`). The page
+project's own `sym-lib-table` and `fp-lib-table` (type `KiCad`, uri `${KIPRJMOD}/...`), all beside the
+project file (`${KIPRJMOD}`: the folder of the document the frame opened). The page
 writes them into each frame through `project.write`, then sends `project.libs { libs:
 ["<stem>_parts"] }` (PROTOCOL.md; the `projectLibs` cap), and from the answer on, with no reboot:
 

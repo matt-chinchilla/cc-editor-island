@@ -46,7 +46,7 @@ export const isProjectNick = (v: unknown): v is string => typeof v === 'string' 
 /** The file system calls this reads with (Emscripten's FS). */
 export type ProjectFs = Pick<EmscriptenFS, 'readFile' | 'readdir' | 'analyzePath' | 'stat' | 'isDir'>;
 
-/** A library of the project folder: its nickname, its kind, its path in the folder and the id the engine's uri carries. */
+/** A library of the project folder: its nickname, its kind, its path in the project folder (${KIPRJMOD} resolved) and the id the engine's uri carries. */
 export interface ProjectLibrary { kind: LibKind; nick: string; path: string; id: string }
 
 /** A row of a lib table: `(lib (name "...") (type "...") (uri "..."))`. */
@@ -87,11 +87,14 @@ const textOf = (raw: unknown): string | null =>
 
 export interface ProjectLibs {
   /**
-   * The project libraries the folder's own tables name `nick` as, at most one
+   * The project libraries the project's own tables name `nick` as, at most one
    * per kind, each whose file (a symbol library) or folder (a footprint
-   * library) is there. Read from the folder now; [] when there is none.
+   * library) is there. `prjmod` is ${KIPRJMOD}, the folder of the project
+   * file, as a path in the project folder ('' for its root): the tables are
+   * read there and a row's path is taken from there. Read from the folder now;
+   * [] when there is none.
    */
-  find(nick: string): ProjectLibrary[];
+  find(nick: string, prjmod?: string): ProjectLibrary[];
   /** From now on `lib` is served (its items read from the folder at every ask). */
   register(lib: ProjectLibrary): void;
   /** The registered library of that kind and nickname. */
@@ -168,17 +171,21 @@ export function createProjectLibs(opts: { root: string; fs: () => ProjectFs | nu
   }
 
   return {
-    find(nick) {
+    find(nick, prjmod = '') {
       const FS = fs();
       if (FS == null || !isProjectNick(nick)) return [];
+      if (prjmod !== '' && normalizePath(prjmod) !== prjmod) return [];
+      const at = (rel: string): string => (prjmod === '' ? rel : `${prjmod}/${rel}`);
       const found: ProjectLibrary[] = [];
       for (const kind of LIB_KINDS) {
-        const table = read(FS, `${root}/${TABLE_FILE[kind]}`);
+        const table = read(FS, `${root}/${at(TABLE_FILE[kind])}`);
         if (table == null) continue;
         // The first row of that nickname is the one KiCad takes.
         const row = parseLibTable(table, kind).find((r) => r.name === nick);
-        const path = row == null ? null : projectPath(row, kind);
-        if (path == null) continue;
+        const rel = row == null ? null : projectPath(row, kind);
+        if (rel == null) continue;
+        // The library's path in the project folder: ${KIPRJMOD} is the project file's folder.
+        const path = at(rel);
         if (exists(FS, `${root}/${path}`) !== (kind === 'symbol' ? 'file' : 'dir')) continue;
         found.push({ kind, nick, path, id: projectId(kind, nick) });
       }
