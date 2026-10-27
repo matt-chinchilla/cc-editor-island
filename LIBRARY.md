@@ -247,3 +247,41 @@ turns into a ccl2 mirror with both search indexes (6 symbol libraries, 13 symbol
 `extends` chain is fetched with it, so Diode holds 1N4148 and its parent 1N4001; 5 footprint
 libraries, 6 footprints), read back by `verifyMirror`; `tests/e2e/libs.spec.ts` runs its mirror
 tests only when `LIBS_DIR` is set, and its fallback test always.
+
+## The project library (arriving with v0.2.3-cc12)
+
+A design's own library sits in its project folder, never in the mirror: `<stem>_parts.kicad_sym`
+and `<stem>_parts.pretty/`, named by the project's own `sym-lib-table` and `fp-lib-table` (a `KiCad`
+row whose uri is `${KIPRJMOD}/` and the path). `project.libs` (PROTOCOL.md) registers one in a
+running frame:
+
+- **The source.** `src/project-libs.ts` serves a registered library from the folder at every ask
+  and keeps no copy. Its ids are `prj.sym.<nickname>` and `prj.fp.<nickname>`, its uris
+  `/mnt/pcbjam/prj.sym.<nickname>` and `/mnt/pcbjam/prj.fp.<nickname>` (an empty placeholder file
+  at each, as boot writes for the mirror's). `withProjectLibs` puts it in front of the source boot
+  is given (the mirror, or the example library): a project id is answered from the folder, every
+  other id as before, and the mirror's presync, index and warm-up pass through untouched.
+- **Items.** A symbol library's items are the file's top-level symbols, each given alone under the
+  file's header for the engine's fat list (the shape a ccl2 bundle carries, so the engine links a
+  derived symbol to its parent once the library has merged), and with its `extends` chain from the
+  same file for a single read (`lib.item`, `place`, a `get`), as `getItemBody` assembles a mirror's.
+  A name twice in one file: the first stands. A footprint library's items are its folder's
+  `.kicad_mod` files, each named by its stem, in code point order.
+- **The engine's row.** The first registration of a nickname adds a row to the engine's table at run
+  time (the engine's `kicadLibsAddEntry`, type `PCBJAM` or `PCBJAM_FP`, served through
+  `window.kicadLibs` like the mirror's) and every registration reloads it (`kicadLibsReload`), so
+  KiCad reads the folder again. The engine keeps a row of an existing nickname, so a nickname the
+  mirror serves is refused, and a row stays for the frame's life.
+- **After a reboot.** A design opened with its project library among `project.open`'s files is read
+  by KiCad itself: KiCad loads the project's tables with the project, and its native rows (KiCad's
+  own `.kicad_sym` and `.pretty` readers, working in the engine's file system) take precedence over
+  the run time row. `project.libs` still refreshes them and gives `lib.item` and `place` the items.
+
+Spike (2026-10-27, Chromium, the GPU window, the local pair, Glasgow in a `pcb` frame with the full
+mirror; the probe is the engine's `kicadLibsTestLoadFootprint(nickname, name)`):
+
+| road | resolves on a live engine | time | note |
+| --- | --- | --- | --- |
+| KiCad's reload over the project's own tables, written after the open | no: the probe answered nothing | 407 ms | KiCad reads a project's tables only when it loads the project (`LIBRARY_MANAGER::LoadProjectTables`, which no engine export reaches) |
+| the tables and the library among `project.open`'s files | yes, natively | probe 8 ms after the open | a footprint written later was found too (31 ms with a reload); this is the state after a reboot |
+| a project source, its row added at run time (taken) | yes | add and load 40 ms (board), 16 ms (schematic, symbols); probe 4 ms; a later footprint after a reload 13 ms | the engine asked the island for the library's bodies once per load; a mirror nickname cannot be shadowed |

@@ -181,3 +181,26 @@ and `pagehide`, and never runs on the example library. Nothing is shown.
   arrives; a place that waits for its bundle waits silently (the pointer shows the part when it lands).
 - Esc closes, Enter places the highlighted row, arrows move, the field keeps its text for the
   session.
+
+## 4. The design's own library (arriving with v0.2.3-cc12)
+
+A part the reader brings from another library joins the design as its PROJECT LIBRARY, the KiCad
+way: `<stem>_parts.kicad_sym`, `<stem>_parts.pretty/<footprint>.kicad_mod` and a row of each in the
+project's own `sym-lib-table` and `fp-lib-table` (type `KiCad`, uri `${KIPRJMOD}/...`). The page
+writes them into each frame through `project.write`, then sends `project.libs { libs:
+["<stem>_parts"] }` (PROTOCOL.md; the `projectLibs` cap), and from the answer on, with no reboot:
+
+- `lib.item { kind, lib: "<stem>_parts", name }` reads the item from the project folder, a derived
+  symbol with its chain from the same file, as for a mirror library; `place` puts it down as
+  `<stem>_parts:<name>`, with `value`, `footprint`, `mpn` and `manufacturer` under the `fields` and
+  `identity` caps as before. A registered nickname is read from the folder ahead of the mirror (the
+  island refuses a project nickname its mirror already serves, so the two never meet).
+- KiCad finds it too: its own choosers list it, a footprint loads by its `lib:name`, and Update PCB
+  from Schematic (pressed through `key.press` as today) finds the symbol's `<stem>_parts:<footprint>`
+  in the board frame's project library.
+- `lib.index` stays the mirror's: it holds no project library. The page builds its "In this design"
+  rows from the files it holds and merges them first; `lib.prefetch` of a project nickname warms
+  nothing (the folder is read at every ask).
+- Without the cap (an older island) the files are still written and saved with the design, and
+  KiCad reads the project's own tables when the frame next opens the design: the part can be placed
+  then.
