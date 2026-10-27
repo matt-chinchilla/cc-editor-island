@@ -187,6 +187,33 @@ export function splitSymbolBody(text: string): SymbolBodyParts | null {
 }
 
 /**
+ * A whole `.kicad_sym` file split (a project library, src/project-libs.ts):
+ * the forms that are not symbols, joined as `splitSymbolBody` joins a body's
+ * header, and each top-level symbol's name and block, in file order. Null
+ * when the text is not one `kicad_symbol_lib`. `symbolBody` makes one item's
+ * body of it, the shape a ccl2 bundle carries.
+ */
+export function splitSymbolLib(text: string): { header: string; symbols: Array<{ name: string; block: string }> } | null {
+  const open = text.indexOf("(");
+  if (open < 0 || headAtoms(text, open)[0] !== "kicad_symbol_lib") return null;
+  const children = childLists(text, open);
+  if (children === null) return null;
+  const header: string[] = [];
+  const symbols: Array<{ name: string; block: string }> = [];
+  for (const [s, e] of children) {
+    const atoms = headAtoms(text, s);
+    if (atoms[0] !== "symbol") header.push(text.slice(s, e));
+    else if (atoms[1] !== undefined) symbols.push({ name: atoms[1], block: text.slice(s, e) });
+  }
+  return { header: header.join("\n\t"), symbols };
+}
+
+/** One symbol's body under its library's header: the symbol alone, as a ccl2 bundle carries it. */
+export function symbolBody(header: string, block: string): string {
+  return `(kicad_symbol_lib\n\t${header}\n\t${block}\n)\n`;
+}
+
+/**
  * The self-contained body of `name`: its own body when it extends nothing,
  * else its extends chain root first and the symbol last, each block read
  * from `bodyOf` (the same bundle), in one `kicad_symbol_lib` under the

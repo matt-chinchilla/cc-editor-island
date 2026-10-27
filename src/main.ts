@@ -16,7 +16,7 @@
 import { probeCapabilities } from '../loader/src/preflight/capabilities';
 import { looksLikeOom } from '../loader/src/recovery/oom-watch';
 import { bootKicadTool } from '../loader/src/wasm/boot';
-import { startResponder } from '../bridge/responder';
+import { PROJECT_FOLDER, startResponder } from '../bridge/responder';
 import { seedsFor } from '../theme/seeds';
 import { engineBase } from './assets';
 import { parentOriginFor, parseBoot } from './cc-config';
@@ -32,6 +32,7 @@ import { installWindowOpenWrapper } from './window-open';
 import { focusCanvas, focusFrameOnPress } from './keys';
 import { islandLibs, warmUpOnEnumerate, type LibsChoice } from './libs';
 import { quietWarmUp } from './picker';
+import { createProjectLibs, withProjectLibs } from './project-libs';
 
 declare const __ISLAND_TAG__: string;      // define'd by vite.config.ts from PIN.json
 declare const __KICAD_VERSION__: string;   // define'd by vite.config.ts
@@ -73,6 +74,10 @@ async function main(): Promise<void> {
   // The library warm-up (libs.ts) stops when the engine is released or the frame goes.
   const libsWarmUp = new AbortController();
   window.addEventListener('pagehide', () => libsWarmUp.abort());
+  const libsLog = (m: string): void => console.info('[editor]', m);
+  // The design's own libraries (PROTOCOL.md project.libs): served from the project
+  // folder ahead of the mirror, through the source boot is given (below).
+  const projectLibs = createProjectLibs({ root: PROJECT_FOLDER, fs: () => window.FS, log: libsLog });
   // Hello goes out now, before anything heavy; events queue until the port connects.
   // The responder also takes KiCad's place keys from here on (ev.pick, src/picker.ts),
   // so its listeners run before the engine's own.
@@ -83,6 +88,7 @@ async function main(): Promise<void> {
     // An import's call trapped (its answer is already out): the fatal screen, and no
     // ev.state fatal (src/fatal.ts), so a host mid hand-off is not interrupted.
     onEngineStopped: (why) => gate.importStopped(why),
+    projectLibs,
   });
   const popups = installWindowOpenWrapper(
     window,
@@ -133,7 +139,6 @@ async function main(): Promise<void> {
   // The library mirror's manifest is read beside the browser probe; boot waits
   // for it (or for the example library it falls back to) before the engine's
   // fetch, since the lib tables are written from it.
-  const libsLog = (m: string): void => console.info('[editor]', m);
   const libs = islandLibs(__LIBS_TAG__, libsLog);
 
   showScreen('preflight');
@@ -165,8 +170,11 @@ async function main(): Promise<void> {
   if (container == null) { die('no_container'); return; }
   let choice: LibsChoice | null = null;
   try {
-    choice = await libs;
-    const { source: libsSource, mirror } = choice;
+    const chosen = await libs;
+    const { mirror } = chosen;
+    // The project libraries first, by id; the mirror's (or the example library's) items as before.
+    const libsSource = withProjectLibs(chosen.source, projectLibs);
+    choice = { source: libsSource, mirror };
     await bootKicadTool({
       tool: frameToTool(frame),
       base: engineBase(),

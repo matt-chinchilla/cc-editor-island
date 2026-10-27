@@ -3,7 +3,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memfsProjectDir } from '../loader/src/wasm/constants';
 import { emptySheet, importCall, importTarget, importable, reportLines, SCHEMATIC_ISSUES_LINE, tapEngineLog } from './import';
-import { describeError, startResponder, timing } from './responder';
+import { describeError, PROJECT_FOLDER, startResponder, timing } from './responder';
+import { createProjectLibs } from '../src/project-libs';
 import { createFatalGate, type FatalGate } from '../src/fatal';
 import { VISIBLE_ITEMS } from '../src/stage';
 import { isQuiet, resetUnloadQuietForTest } from '../src/unload-quiet';
@@ -3011,5 +3012,251 @@ describe('project.write', () => {
     expect(await save).toMatchObject({ ok: true });
     const answers = s.got.filter((m) => typeof m.id === 'number').map((m) => m.id);
     expect(answers).toEqual([2, 3]);
+  });
+});
+
+describe('project.libs (island v0.2.3-cc12)', () => {
+  const started: Array<{ close: () => void }> = [];
+  afterEach(() => { for (const r of started.splice(0)) r.close(); });
+  const SYM_TABLE = '(sym_lib_table (version 7) (lib (name "blink_parts")(type "KiCad")(uri "${KIPRJMOD}/blink_parts.kicad_sym")(options "")(descr "")))';
+  const FP_TABLE = '(fp_lib_table (version 7) (lib (name "blink_parts")(type "KiCad")(uri "${KIPRJMOD}/blink_parts.pretty")(options "")(descr "")) (lib (name "Device")(type "KiCad")(uri "${KIPRJMOD}/Device.pretty")(options "")(descr "")))';
+  const SYMS = '(kicad_symbol_lib (version 20241209) (generator "kicad_symbol_editor") (symbol "ST25DV04K" (in_bom yes) (on_board yes) (property "Reference" "U" (at 0 0 0)) (symbol "ST25DV04K_1_1" (pin passive line (at 0 0 0) (length 1) (name "A") (number "1")))))';
+  const FP = '(footprint "UFDFPN8" (version 20241229) (layer "F.Cu") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu")))';
+  const LIBRARY = [
+    { path: 'blink_parts.kicad_sym', text: SYMS },
+    { path: 'blink_parts.pretty/UFDFPN8.kicad_mod', text: FP },
+    { path: 'Device.pretty/X.kicad_mod', text: FP },
+    { path: 'sym-lib-table', text: SYM_TABLE },
+    { path: 'fp-lib-table', text: FP_TABLE },
+  ];
+
+  /** A connected responder with project libraries over a booted engine whose run time library exports are recorded. */
+  function libsFrame(opts: { frame?: 'sch' | 'pcb'; ready?: boolean; exports?: boolean; busyMs?: number } = {}) {
+    const { page, parent } = fakePage(`?frame=${opts.frame ?? 'sch'}&theme=day`);
+    const eng = fakeEngine();
+    const projectLibs = createProjectLibs({ root: PROJECT_FOLDER, fs: () => eng.win.FS });
+    const r = startResponder({ parentOrigin: PARENT, page, projectLibs });
+    started.push(r);
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const calls: string[] = [];
+    const queue = { until: 0 };
+    const mod = eng.Module as Record<string, unknown>;
+    if (opts.exports !== false) {
+      mod.kicadLibsAddEntry = vi.fn(async (k: string, n: string, u: string) => { calls.push(`add ${k} ${n} ${u}`); queue.until = Date.now() + (opts.busyMs ?? 5); });
+      mod.kicadLibsReload = vi.fn(async (k: string, n: string) => { calls.push(`reload ${k} ${n}`); queue.until = Date.now() + (opts.busyMs ?? 5); });
+      mod.kicadCollabBusy = () => Date.now() < queue.until;
+    }
+    const source = {
+      listLibs: vi.fn(async (kind?: string) => [{ id: 'sym.Device', name: 'Device', kind: 'symbol' }, { id: 'fp.Package_QFP', name: 'Package_QFP', kind: 'footprint' }].filter((l) => kind == null || l.kind === kind)),
+      getItemBody: vi.fn(async (id: string, _k: string, name: string) => (id === 'sym.Device' && name === 'R' ? '(kicad_symbol_lib (symbol "R"))' : null)),
+    };
+    const libs = { source: { listLibs: async (kind?: string) => [...projectLibs.libInfos(kind), ...(await source.listLibs(kind))], getItemBody: (id: string, k: string, n: string) => (projectLibs.owns(id) ? projectLibs.getItemBody(id, k, n) : source.getItemBody(id, k, n)) }, mirror: null };
+    if (opts.ready !== false) r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 }, libs);
+    let id = 0;
+    const request = async (op: string, args?: unknown) => {
+      const n = ++id;
+      port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+      for (let i = 0; i < 200 && !got.some((m) => m.id === n); i++) await settle(5);
+      return got.find((m) => m.id === n);
+    };
+    return { r, eng, got, request, calls, queue, projectLibs };
+  }
+
+  it('lists projectLibs in ev.ready with the engine\'s run time library exports and project libraries, sorted; not without either', async () => {
+    const s = libsFrame();
+    await settle();
+    const caps = s.got.find((m) => m.type === 'ev.ready')?.caps as string[];
+    expect(caps).toContain('projectLibs');
+    expect(caps).toEqual([...caps].sort());
+    const bare = libsFrame({ exports: false });
+    await settle();
+    expect(bare.got.find((m) => m.type === 'ev.ready')?.caps).not.toContain('projectLibs');
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    started.push(r);
+    const { got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    Object.assign(eng.Module as Record<string, unknown>, { kicadLibsAddEntry: () => undefined, kicadLibsReload: () => undefined, kicadCollabBusy: () => false });
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    await settle();
+    expect(got.find((m) => m.type === 'ev.ready')?.caps).not.toContain('projectLibs');
+  });
+
+  it('registers each library the folder\'s own tables name, adds its row once and reloads it at every call, and answers once the engine\'s queue is empty', async () => {
+    const s = libsFrame({ busyMs: 30 });
+    expect(await s.request('project.write', { files: LIBRARY })).toMatchObject({ ok: true });
+    const t0 = Date.now();
+    const answer = await s.request('project.libs', { libs: ['blink_parts'] });
+    expect(answer).toMatchObject({ ok: true, result: { symbol: ['blink_parts'], footprint: ['blink_parts'] } });
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(25);   // the queue's 30 ms
+    expect(s.calls).toEqual([
+      'add symbol blink_parts /mnt/pcbjam/prj.sym.blink_parts', 'reload symbol blink_parts',
+      'add footprint blink_parts /mnt/pcbjam/prj.fp.blink_parts', 'reload footprint blink_parts',
+    ]);
+    // The placeholder files at the uris, as boot writes one per library.
+    expect(s.eng.files.has('/mnt/pcbjam/prj.sym.blink_parts')).toBe(true);
+    expect(s.eng.files.has('/mnt/pcbjam/prj.fp.blink_parts')).toBe(true);
+    // lib.item reads the project's items, ahead of the source.
+    const item = await s.request('lib.item', { kind: 'symbol', lib: 'blink_parts', name: 'ST25DV04K' });
+    expect(String((item?.result as { body: string }).body)).toContain('(symbol "ST25DV04K"');
+    expect(await s.request('lib.item', { kind: 'footprint', lib: 'blink_parts', name: 'UFDFPN8' })).toMatchObject({ ok: true, result: { body: FP } });
+    expect(await s.request('lib.item', { kind: 'symbol', lib: 'Device', name: 'R' })).toMatchObject({ ok: true, result: { body: '(kicad_symbol_lib (symbol "R"))' } });
+    // A second call reloads only: the rows are there.
+    s.calls.length = 0;
+    expect(await s.request('project.libs', { libs: ['blink_parts', 'blink_parts'] })).toMatchObject({ ok: true, result: { symbol: ['blink_parts'], footprint: ['blink_parts'] } });
+    expect(s.calls).toEqual(['reload symbol blink_parts', 'reload footprint blink_parts']);
+  });
+
+  it('a library in one table only is registered as that kind', async () => {
+    const s = libsFrame({ frame: 'pcb' });
+    expect(await s.request('project.write', { files: LIBRARY.filter((f) => f.path !== 'sym-lib-table') })).toMatchObject({ ok: true });
+    expect(await s.request('project.libs', { libs: ['blink_parts'] })).toMatchObject({ ok: true, result: { symbol: [], footprint: ['blink_parts'] } });
+    expect(s.calls).toEqual(['add footprint blink_parts /mnt/pcbjam/prj.fp.blink_parts', 'reload footprint blink_parts']);
+  });
+
+  it('refuses whole, before any effect, in order: the args, the engine, each nickname (one the island serves, then one no table names), then busy', async () => {
+    const early = libsFrame({ ready: false });
+    expect(await early.request('project.libs', { libs: [] })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    expect(await early.request('project.libs', { libs: ['blink_parts'] })).toMatchObject({ ok: false, error: { code: 'not_ready' } });
+    const bare = libsFrame({ exports: false });
+    expect(await bare.request('project.libs', { libs: ['blink_parts'] })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadLibsAddEntry' } });
+    const s = libsFrame();
+    for (const args of [undefined, {}, { libs: 'blink_parts' }, { libs: [] }, { libs: ['a', 3] }, { libs: ['a/b'] }, { libs: ['a:b'] }, { libs: ['a\\b'] }, { libs: [''] }, { libs: ['x'.repeat(256)] }, { libs: Array.from({ length: 17 }, (_, i) => `l${i}`) }, { libs: ['a'], kind: 'symbol' }]) {
+      expect(await s.request('project.libs', args)).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'project.libs' } });
+    }
+    expect(await s.request('project.libs', { libs: ['blink_parts'] })).toMatchObject({ ok: false, error: { code: 'not_found', message: 'blink_parts' } });
+    expect(await s.request('project.write', { files: LIBRARY })).toMatchObject({ ok: true });
+    // Device has a project row, but the island serves a Device already: the engine would keep its row.
+    expect(await s.request('project.libs', { libs: ['blink_parts', 'Device'] })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'project.libs: Device is a library the island already serves' } });
+    expect(await s.request('project.libs', { libs: ['blink_parts', 'other'] })).toMatchObject({ ok: false, error: { code: 'not_found', message: 'other' } });
+    // A row whose file is missing names no project library.
+    s.eng.files.delete(`${ROOT}/blink_parts.kicad_sym`);
+    s.eng.files.delete(`${ROOT}/blink_parts.pretty/UFDFPN8.kicad_mod`);
+    s.eng.dirs.delete(`${ROOT}/blink_parts.pretty`);
+    expect(await s.request('project.libs', { libs: ['blink_parts'] })).toMatchObject({ ok: false, error: { code: 'not_found', message: 'blink_parts' } });
+    expect(await s.request('project.write', { files: LIBRARY })).toMatchObject({ ok: true });
+    s.eng.dialogs.push({ typeName: 'wxDialog', visible: true });
+    expect(await s.request('project.libs', { libs: ['blink_parts'] })).toMatchObject({ ok: false, error: { code: 'busy', message: 'project.libs' } });
+    s.eng.dialogs.length = 0;
+    expect(s.calls).toEqual([]);
+    expect(s.projectLibs.registered('symbol', 'blink_parts')).toBeNull();
+    expect(await s.request('project.libs', { libs: ['blink_parts'] })).toMatchObject({ ok: true });
+  });
+
+  it('island_error when the engine\'s queue stays busy past the time limit', async () => {
+    const libsMs = timing.libsMs;
+    timing.libsMs = 40;
+    try {
+      const s = libsFrame({ busyMs: 10_000 });
+      expect(await s.request('project.write', { files: LIBRARY })).toMatchObject({ ok: true });
+      expect(await s.request('project.libs', { libs: ['blink_parts'] })).toMatchObject({ ok: false, error: { code: 'island_error' } });
+    } finally {
+      timing.libsMs = libsMs;
+    }
+  });
+});
+
+describe('footprint.models (island v0.2.3-cc12)', () => {
+  const started: Array<{ close: () => void }> = [];
+  afterEach(() => { for (const r of started.splice(0)) r.close(); });
+  const UUID = '00000000-0000-0000-0000-00005be41647';
+  const OPEN_PCB = { name: 'x', files: [{ path: 'blink.kicad_pcb', bytes: b('(kicad_pcb)') }] };
+  const line = (p: string, o = '0 0 0', s = '1 1 1', r = '0 0 0') => `(model "${p}" (offset (xyz ${o})) (scale (xyz ${s})) (rotate (xyz ${r})))`;
+
+  /** A board engine holding one footprint whose model lines kicadFootprintSetModels replaces `applyMs` after the call (never, at -1). */
+  function board(opts: { frame?: 'sch' | 'pcb'; exports?: boolean; applyMs?: number; refuse?: boolean } = {}) {
+    const { page, parent } = fakePage(`?frame=${opts.frame ?? 'pcb'}&theme=day`);
+    const r = startResponder({ parentOrigin: PARENT, page });
+    started.push(r);
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    const fp = { models: [line('${KICAD6_3DMODEL_DIR}/Capacitor_SMD.3dshapes/C_0402_1005Metric.step')] };
+    const queue = { until: 0 };
+    const calls: Array<[string, unknown]> = [];
+    const mod = eng.Module as Record<string, unknown>;
+    if (opts.exports !== false) {
+      mod.kicadCollabTestItemBlob = (id: string) => (id === UUID ? `(footprint "Capacitor_SMD:C_0402_1005Metric" (layer "F.Cu") (uuid "${UUID}") ${fp.models.join(' ')})` : id === 'ffffffff-0000-0000-0000-000000000000' ? '(segment (start 0 0) (end 1 1))' : '');
+      mod.kicadCollabBusy = () => Date.now() < queue.until;
+      mod.kicadFootprintSetModels = vi.fn((id: string, json: string) => {
+        calls.push([id, JSON.parse(json)]);
+        if (opts.refuse) return false;
+        const ms = opts.applyMs ?? 5;
+        if (ms >= 0) {
+          queue.until = Date.now() + ms;
+          setTimeout(() => { fp.models = (JSON.parse(json) as Array<{ path: string; offset: number[]; rotate: number[]; scale: number[] }>).map((m) => line(m.path, m.offset.join(' '), m.scale.join(' '), m.rotate.join(' '))); }, ms);
+        }
+        return true;
+      });
+    }
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    let id = 0;
+    const request = async (op: string, args?: unknown) => {
+      const n = ++id;
+      port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+      for (let i = 0; i < 200 && !got.some((m) => m.id === n); i++) await settle(5);
+      return got.find((m) => m.id === n);
+    };
+    return { eng, got, request, fp, calls };
+  }
+
+  it('lists models in ev.ready when the engine has kicadFootprintSetModels and the read back, and not on an engine without it', async () => {
+    const s = board();
+    await settle();
+    const caps = s.got.find((m) => m.type === 'ev.ready')?.caps as string[];
+    expect(caps).toContain('models');
+    expect(caps).toEqual([...caps].sort());
+    const old = board({ exports: false });
+    await settle();
+    expect(old.got.find((m) => m.type === 'ev.ready')?.caps).not.toContain('models');
+    expect(await old.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await old.request('footprint.models', { uuid: UUID, models: [] })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadFootprintSetModels' } });
+  });
+
+  it('replaces the footprint\'s models through the engine and answers once they read back as sent', async () => {
+    const s = board({ applyMs: 30 });
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    const models = [{ path: '${KIPRJMOD}/blink_parts.3dshapes/C30.step', offset: [0, 0, 0.1], rotate: [-90, 0, 0] }, { path: '${KICAD10_3DMODEL_DIR}/Capacitor_SMD.3dshapes/C_0402_1005Metric.step' }];
+    const t0 = Date.now();
+    expect(await s.request('footprint.models', { uuid: UUID, models })).toEqual({ id: 2, ok: true, result: {} });
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(25);
+    expect(s.calls).toEqual([[UUID, [
+      { path: '${KIPRJMOD}/blink_parts.3dshapes/C30.step', offset: [0, 0, 0.1], rotate: [-90, 0, 0], scale: [1, 1, 1] },
+      { path: '${KICAD10_3DMODEL_DIR}/Capacitor_SMD.3dshapes/C_0402_1005Metric.step', offset: [0, 0, 0], rotate: [0, 0, 0], scale: [1, 1, 1] },
+    ]]]);
+    // An empty list removes every model.
+    expect(await s.request('footprint.models', { uuid: UUID, models: [] })).toMatchObject({ ok: true });
+    expect(s.fp.models).toEqual([]);
+  });
+
+  it('refuses whole, before any effect, in order: the args, the frame, the engine, the board, busy, the footprint', async () => {
+    const sch = board({ frame: 'sch' });
+    expect(await sch.request('footprint.models', { uuid: UUID })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    expect(await sch.request('footprint.models', { uuid: UUID, models: [] })).toMatchObject({ ok: false, error: { code: 'unsupported' } });
+    const s = board();
+    expect(await s.request('footprint.models', { uuid: UUID, models: [{ path: 'a.step', offset: [0, 0] }] })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'footprint.models' } });
+    expect(await s.request('footprint.models', { uuid: UUID, models: [] })).toMatchObject({ ok: false, error: { code: 'not_ready', message: 'footprint.models' } });
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    s.eng.dialogs.push({ typeName: 'wxDialog', visible: true });
+    expect(await s.request('footprint.models', { uuid: UUID, models: [] })).toMatchObject({ ok: false, error: { code: 'busy' } });
+    s.eng.dialogs.length = 0;
+    expect(await s.request('footprint.models', { uuid: 'aaaaaaaa-0000-0000-0000-000000000000', models: [] })).toMatchObject({ ok: false, error: { code: 'not_found', message: 'aaaaaaaa-0000-0000-0000-000000000000' } });
+    // A board item that is no footprint is no footprint.
+    expect(await s.request('footprint.models', { uuid: 'ffffffff-0000-0000-0000-000000000000', models: [] })).toMatchObject({ ok: false, error: { code: 'not_found' } });
+    expect(s.calls).toEqual([]);
+  });
+
+  it('not_applied when the engine refuses the list, or the lines never read back as sent', async () => {
+    const refused = board({ refuse: true });
+    expect(await refused.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await refused.request('footprint.models', { uuid: UUID, models: [] })).toMatchObject({ ok: false, error: { code: 'not_applied' } });
+    const modelsMs = timing.modelsMs;
+    timing.modelsMs = 50;
+    try {
+      const lost = board({ applyMs: -1 });
+      expect(await lost.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+      expect(await lost.request('footprint.models', { uuid: UUID, models: [] })).toMatchObject({ ok: false, error: { code: 'not_applied' } });
+    } finally {
+      timing.modelsMs = modelsMs;
+    }
   });
 });

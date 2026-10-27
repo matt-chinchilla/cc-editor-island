@@ -12,9 +12,11 @@ import { focusCanvas, parseKeyPress, pressKey, type KeyPress } from '../src/keys
 import { installPickKeys, kindOf, libIds, parseIndexArgs, parseItemArgs, parsePlaceArgs, parsePrefetchArgs, pickFor, takesText, warmLibrary, type KeyPick, type PickerLibs, type PickKind } from '../src/picker';
 import { fileConflict, normalizePath, openStaged, PROJECT_ROOT, stageLocalSettings, stageProject, writeProjectFiles, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
+import { isProjectNick, MAX_PROJECT_LIBS, type ProjectLibrary, type ProjectLibs } from '../src/project-libs';
 import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
 import { ALTIUM_PROJECT, ALTIUM_SHEET, DOCUMENT_EXTENSION as EXT, driveImport, emptySheet, hasExtension, importable, importCall, importTarget } from './import';
 import { dialogUp, dismissPopups, keysBlocked, watchMenus } from './modal';
+import { MODEL_EXPORTS, modelsJson, parseModelsArgs, readModels, sameModels } from './models';
 import { placeBlob, PlacementWatch } from './place';
 import { parseSelectArgs, SELECT_EXPORTS, selectItems, SelectionFeed, type Selection, type SelectionWindow } from './selection';
 import { FitWatch, sampleDrawing, settleView, surfaceKey } from './view';
@@ -73,6 +75,8 @@ const ENOTEMPTY = 55;
 const SAVE_QUIET_MS = 10_000;
 /** The one project slug: the save hook reports paths relative to memfsProjectDir(SLUG). */
 const SLUG = 'cc';
+/** The project folder every frame stages its project in (the island's own project slug under KiCad's projects folder). */
+export const PROJECT_FOLDER = `${PROJECT_ROOT}/${SLUG}`;
 const MAX_QUEUED = 256;
 const MAX_FILES = 4096;
 const MAX_NAME = 255;
@@ -161,6 +165,15 @@ export const timing = {
   selectPullMs: 200,
   selectPollMs: 25,
   selectMs: 2_000,
+  /**
+   * project.libs and footprint.models: how often the engine's apply queue is
+   * read while their edit runs on it, how long project.libs may wait for its
+   * libraries to load (measured 13 to 40 ms on Glasgow, 2026-10-27), and how
+   * long footprint.models may wait for the model lines to read back.
+   */
+  applyPollMs: 10,
+  libsMs: 10_000,
+  modelsMs: 5_000,
 };
 /** KiCad's Next Sheet (eeschema's PgDn, by virtual page number, the top-level sheets included). */
 const NEXT_SHEET_KEY: KeyPress = { key: 'PageDown', code: 'PageDown', ctrl: false, shift: false, alt: false };
@@ -174,7 +187,7 @@ const STEER_EVENTS = ['wheel', 'pointerdown', 'keydown'] as const;
 const SAVE_KEY: KeyPress = { key: 's', code: 'KeyS', ctrl: true, shift: false, alt: false };
 /** KiCad's window chrome as the element registry names it (measured with chrome.show on, 2026-10-01). */
 const CHROME_RE = /^wx(MenuBar|AuiToolBar|ToolBar|StatusBar)$|InfoBar/i;
-const OPS = new Set(['project.open', 'project.import', 'project.save', 'project.forget', 'project.write', 'chrome.show', 'readonly', 'shutdown', 'key.press', 'view.fit', 'sheet.tree', 'sheet.enter', 'layers.get', 'layers.visible', 'layers.active', 'lib.index', 'lib.item', 'lib.prefetch', 'place', 'select']);
+const OPS = new Set(['project.open', 'project.import', 'project.save', 'project.forget', 'project.write', 'chrome.show', 'readonly', 'shutdown', 'key.press', 'view.fit', 'sheet.tree', 'sheet.enter', 'layers.get', 'layers.visible', 'layers.active', 'lib.index', 'lib.item', 'lib.prefetch', 'place', 'select', 'project.libs', 'footprint.models']);
 /**
  * The picker's library reads: answered as they arrive, off the request queue
  * (they never touch the engine), so a read waiting on a bundle never holds up
@@ -209,6 +222,21 @@ export const SELECTION_CAP = 'selection';
  * the op lists it. A host gates its writes on this word.
  */
 export const WRITE_CAP = 'write';
+/**
+ * The pseudo-cap ev.ready lists for project.libs (island v0.2.3-cc12): the
+ * engine adds and reloads a library row at run time (kicadLibsAddEntry,
+ * kicadLibsReload) and reports its apply queue (kicadCollabBusy). Every engine
+ * since PCBJam v0.2.3 has those exports, so a host gates on this word.
+ */
+export const PROJECT_LIBS_CAP = 'projectLibs';
+/** The engine exports project.libs needs. */
+export const LIBS_EXPORTS = ['kicadLibsAddEntry', 'kicadLibsReload', 'kicadCollabBusy'] as const;
+/**
+ * The pseudo-cap ev.ready lists for footprint.models (island v0.2.3-cc12): the
+ * engine has our kicadFootprintSetModels (pcbjam cc/main 466a85a) and the read
+ * back. An island on an engine without it lists no `models`.
+ */
+export const MODELS_CAP = 'models';
 /** A wx top-level window: the editor's own frame, or another window of KiCad's (its footprint chooser is a frame, not a dialog). */
 const FRAME_TYPE_RE = /Frame/;
 /**
@@ -317,10 +345,16 @@ export function startResponder(opts: {
    * host, and a host mid hand-off must not be interrupted.
    */
   onEngineStopped?: (why: string) => void;
+  /**
+   * The frame's project libraries (src/project-libs.ts), served from the
+   * project folder by the source boot was given: project.libs registers them,
+   * lib.item and place read them first. Without it project.libs is unsupported.
+   */
+  projectLibs?: ProjectLibs;
 }): Responder {
-  const { parentOrigin, page, onShutdown, onEngineStopped } = opts;
+  const { parentOrigin, page, onShutdown, onEngineStopped, projectLibs } = opts;
   const nonce = randomNonce();
-  const root = `${PROJECT_ROOT}/${SLUG}`;
+  const root = PROJECT_FOLDER;
   let port: MessagePort | null = null;
   let chain: Promise<void> = Promise.resolve();
   const queued: IslandEvent[] = [];
@@ -677,6 +711,8 @@ export function startResponder(opts: {
       case 'layers.active': return layersActive(args);
       case 'place': return placeItem(args);
       case 'select': return selectOp(args);
+      case 'project.libs': return projectLibsOp(args);
+      case 'footprint.models': return footprintModels(args);
     }
     return fail('unknown_op', op);
   }
@@ -1497,6 +1533,131 @@ export function startResponder(opts: {
     return done.ok ? ok() : fail(done.code, done.message);
   }
 
+  /** Waits until the engine's apply queue is empty (kicadCollabBusy), at most `ms`: false when it is still busy. */
+  async function applyIdle(w: ToolWindow, ms: number): Promise<boolean> {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      if (closed) return false;
+      let busy = true;
+      try { busy = w.Module?.kicadCollabBusy?.() === true; } catch { busy = true; }
+      if (!busy) return true;
+      if (Date.now() >= deadline) return false;
+      await sleep(timing.applyPollMs);
+    }
+  }
+
+  /** The library nicknames the source boot was given serves (the mirror's, or the example library's), project libraries left out. */
+  async function servedNames(): Promise<Set<string>> {
+    if (libs == null) return new Set();
+    const all = await libs.source.listLibs();
+    return new Set(all.filter((l) => !(projectLibs?.owns(l.id) ?? false)).map((l) => l.name));
+  }
+
+  /**
+   * project.libs (PROTOCOL.md): every check before any effect, in order: the
+   * args (bad_args), the engine (not_ready, unsupported), each nickname in
+   * order (bad_args for one the island serves another way, not_found for one
+   * the folder's tables do not name as a project library), then busy while a
+   * load is parked or a popup menu or a dialog is up. Then each library is
+   * served from the folder (src/project-libs.ts), its row added to the
+   * engine's table on its first registration (kicadLibsAddEntry, which also
+   * loads it) and reloaded (kicadLibsReload: the folder read again, and a
+   * KiCad project row of that name, staged by project.open, refreshed), and
+   * the answer waits for the engine's apply queue to empty.
+   */
+  async function projectLibsOp(args: unknown): Promise<Answer> {
+    const op = 'project.libs';
+    if (!isObj(args) || !onlyKeys(args, ['libs']) || !Array.isArray(args.libs) || args.libs.length === 0 || args.libs.length > MAX_PROJECT_LIBS || !args.libs.every(isProjectNick)) return fail('bad_args', op);
+    const nicks = [...new Set(args.libs as string[])];
+    const w = win;
+    if (w == null) return fail('not_ready', op);
+    const mod = (w.Module ?? {}) as Record<string, unknown>;
+    for (const name of LIBS_EXPORTS) if (typeof mod[name] !== 'function') return fail('unsupported', name);
+    const project = projectLibs;
+    const FS = w.FS;
+    if (project == null || FS == null) return fail('unsupported', 'project libraries');
+    const taken = await servedNames();
+    const found: ProjectLibrary[] = [];
+    for (const nick of nicks) {
+      if (taken.has(nick)) return fail('bad_args', `${op}: ${nick} is a library the island already serves`);
+      const libsOf = project.find(nick);
+      if (libsOf.length === 0) return fail('not_found', nick);
+      found.push(...libsOf);
+    }
+    if (closed) return fail('island_error', 'the frame closed');
+    if (engineBusy() || keysBlocked(w)) return fail('busy', op);
+    const t0 = Date.now();
+    try {
+      for (const lib of found) {
+        const first = project.registered(lib.kind, lib.nick) == null;
+        project.register(lib);
+        const uri = project.uri(lib);
+        if (first) {
+          // An empty file at the uri, as boot writes one for every library: the editor's save path stats it.
+          if (!FS.analyzePath(uri).exists) {
+            FS.mkdirTree(uri.slice(0, uri.lastIndexOf('/')));
+            FS.writeFile(uri, '');
+          }
+          await (mod.kicadLibsAddEntry as (k: string, n: string, u: string) => unknown)(lib.kind, lib.nick, uri);
+        }
+        await (mod.kicadLibsReload as (k: string, n: string) => unknown)(lib.kind, lib.nick);
+      }
+    } catch (err) {
+      return fail('island_error', describeError(err));
+    }
+    if (!(await applyIdle(w, timing.libsMs))) return fail('island_error', 'the engine did not load the libraries within the time limit');
+    console.debug('[libs]', `project.libs ${nicks.join(' ')}`, `${Date.now() - t0} ms`);
+    return ok({
+      symbol: nicks.filter((n) => found.some((l) => l.kind === 'symbol' && l.nick === n)),
+      footprint: nicks.filter((n) => found.some((l) => l.kind === 'footprint' && l.nick === n)),
+    });
+  }
+
+  /**
+   * footprint.models (PROTOCOL.md, bridge/models.ts): the checks, in order: the
+   * args (bad_args), the frame's kind (unsupported in a sch frame), the engine
+   * (not_ready, unsupported), a board (not_ready), busy as for select, the
+   * footprint (not_found). Then our engine's kicadFootprintSetModels queues
+   * the commit, and the answer waits for the apply queue to empty and the
+   * footprint's model lines to read back as sent.
+   */
+  async function footprintModels(args: unknown): Promise<Answer> {
+    const op = 'footprint.models';
+    const a = parseModelsArgs(args);
+    if (a == null) return fail('bad_args', op);
+    if (frame !== 'pcb') return fail('unsupported', 'a footprint\'s models change in a pcb frame');
+    const w = win;
+    if (w == null) return fail('not_ready', op);
+    const mod = (w.Module ?? {}) as Record<string, unknown>;
+    for (const name of MODEL_EXPORTS) if (typeof mod[name] !== 'function') return fail('unsupported', name);
+    if (staged == null || opened == null) return fail('not_ready', op);
+    if (engineBusy() || keysBlocked(w) || placeWatch?.hanging() === true) return fail('busy', op);
+    const blobOf = (): string => {
+      try { return String((mod.kicadCollabTestItemBlob as (id: string) => unknown)(a.uuid) ?? ''); } catch { return ''; }
+    };
+    if (readModels(blobOf()) == null) return fail('not_found', a.uuid);
+    const t0 = Date.now();
+    let queued: unknown;
+    try {
+      queued = await (mod.kicadFootprintSetModels as (id: string, json: string) => unknown)(a.uuid, modelsJson(a.models));
+    } catch (err) {
+      return fail('island_error', describeError(err));
+    }
+    if (queued !== true) return fail('not_applied', op);
+    const deadline = Date.now() + timing.modelsMs;
+    for (;;) {
+      if (closed) return fail('island_error', 'the frame closed');
+      if (await applyIdle(w, Math.max(0, deadline - Date.now()))) {
+        const got = readModels(blobOf());
+        if (got != null && sameModels(got, a.models)) break;
+      }
+      if (Date.now() >= deadline) return fail('not_applied', op);
+      await sleep(timing.applyPollMs);
+    }
+    console.debug('[models]', a.uuid, `${Date.now() - t0} ms`);
+    return ok();
+  }
+
   let ready = false;
   return {
     emit,
@@ -1505,7 +1666,9 @@ export function startResponder(opts: {
       ready = true;
       win = w;
       libs = source ?? null;
-      idOf = libs == null ? null : libIds(libs.source);
+      // A registered project library first (project.libs), then the source's own list.
+      const sourceIds = libs == null ? null : libIds(libs.source);
+      idOf = async (kind, nick) => projectLibs?.registered(kind, nick)?.id ?? (sourceIds == null ? null : sourceIds(kind, nick));
       // The editor's own frame, so any other window of KiCad's holds the place keys back.
       try { ownFrames = new Set((w.wxElementRegistry?.findAll({ visible: true }) ?? []).filter((e) => FRAME_TYPE_RE.test(e.typeName)).map((e) => e.name)); } catch { ownFrames = new Set(); }
       placeWatch = new PlacementWatch(w, { frame, timing, depth: () => undoDepth(w), blocked: () => keysBlocked(w), press: (k) => pressKey(w, k) });
@@ -1564,6 +1727,9 @@ export function startResponder(opts: {
       }
       // project.write needs only the file system, which is up by now.
       caps.push(WRITE_CAP);
+      // project.libs: the run time library rows; footprint.models: our engine's export.
+      if (projectLibs != null && LIBS_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(PROJECT_LIBS_CAP);
+      if (MODEL_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(MODELS_CAP);
       caps.sort();
       // ev.edited: polled only when the engine has the undo depth export at
       // boot; an older build is never polled and nothing is said about it.
