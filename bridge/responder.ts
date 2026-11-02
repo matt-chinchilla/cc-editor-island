@@ -17,6 +17,8 @@ import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
 import { ALTIUM_PROJECT, ALTIUM_SHEET, DOCUMENT_EXTENSION as EXT, driveImport, emptySheet, hasExtension, importable, importCall, importTarget } from './import';
 import { dialogUp, dismissPopups, keysBlocked, watchMenus } from './modal';
 import { MODEL_EXPORTS, modelsJson, parseModelsArgs, readModels, sameModels } from './models';
+import REQUEST_OPS from './ops.json';
+import { parsePlotArgs, plotFailure, plotJson, plotNotes, PLOT_DONE, PLOT_EXPORTS, PLOT_ROOT, readPlotDone, readPlotFolder, type PlotDone } from './plot';
 import { placeBlob, PlacementWatch } from './place';
 import { parseSelectArgs, SELECT_EXPORTS, selectItems, SelectionFeed, type Selection, type SelectionWindow } from './selection';
 import { FitWatch, sampleDrawing, settleView, surfaceKey } from './view';
@@ -55,7 +57,8 @@ export interface Responder {
   close(): void;
 }
 
-type Answer = { ok: true; result: Record<string, unknown> } | { ok: false; code: string; message: string };
+/** An answer; `transfer` lists the buffers of fresh copies the result carries (project.plot's files). */
+type Answer = { ok: true; result: Record<string, unknown>; transfer?: ArrayBuffer[] } | { ok: false; code: string; message: string };
 
 /**
  * The engine window with the callback slots the fork calls: the save one
@@ -174,6 +177,12 @@ export const timing = {
   applyPollMs: 10,
   libsMs: 10_000,
   modelsMs: 5_000,
+  /**
+   * project.plot: how long the plot may take, from the export's call to its
+   * record in the folder (a 6-layer board with pours; Glasgow measured in
+   * tests/e2e/plot.spec.ts). Its queue and record are read every applyPollMs.
+   */
+  plotMs: 120_000,
 };
 /** KiCad's Next Sheet (eeschema's PgDn, by virtual page number, the top-level sheets included). */
 const NEXT_SHEET_KEY: KeyPress = { key: 'PageDown', code: 'PageDown', ctrl: false, shift: false, alt: false };
@@ -187,7 +196,12 @@ const STEER_EVENTS = ['wheel', 'pointerdown', 'keydown'] as const;
 const SAVE_KEY: KeyPress = { key: 's', code: 'KeyS', ctrl: true, shift: false, alt: false };
 /** KiCad's window chrome as the element registry names it (measured with chrome.show on, 2026-10-01). */
 const CHROME_RE = /^wx(MenuBar|AuiToolBar|ToolBar|StatusBar)$|InfoBar/i;
-const OPS = new Set(['project.open', 'project.import', 'project.save', 'project.forget', 'project.write', 'chrome.show', 'readonly', 'shutdown', 'key.press', 'view.fit', 'sheet.tree', 'sheet.enter', 'layers.get', 'layers.visible', 'layers.active', 'lib.index', 'lib.item', 'lib.prefetch', 'place', 'select', 'project.libs', 'footprint.models']);
+/**
+ * The request ops this island answers, from bridge/ops.json: the one list, which
+ * scripts/build.mjs also writes into island.json as `ops` (sorted), so a host
+ * learns what a release answers before any engine boots.
+ */
+const OPS: ReadonlySet<string> = new Set(REQUEST_OPS);
 /**
  * The picker's library reads: answered as they arrive, off the request queue
  * (they never touch the engine), so a read waiting on a bundle never holds up
@@ -237,6 +251,12 @@ export const LIBS_EXPORTS = ['kicadLibsAddEntry', 'kicadLibsReload', 'kicadColla
  * back. An island on an engine without it lists no `models`.
  */
 export const MODELS_CAP = 'models';
+/**
+ * The pseudo-cap ev.ready lists for project.plot (island v0.2.3-cc13): the
+ * engine has our kicadPlotBoard (pcbjam cc/main 924d67c, engine run 7) and the
+ * apply queue probe, in either frame's kind (a sch frame answers unsupported).
+ */
+export const PLOT_CAP = 'plot';
 /** A wx top-level window: the editor's own frame, or another window of KiCad's (its footprint chooser is a frame, not a dialog). */
 const FRAME_TYPE_RE = /Frame/;
 /**
@@ -483,7 +503,8 @@ export function startResponder(opts: {
 
   const reply = (id: number, a: Answer): void => {
     if (closed) return;
-    port?.postMessage(a.ok ? { id, ok: true, result: a.result } : { id, ok: false, error: { code: a.code, message: a.message } });
+    if (a.ok && a.transfer != null) port?.postMessage({ id, ok: true, result: a.result }, a.transfer);
+    else port?.postMessage(a.ok ? { id, ok: true, result: a.result } : { id, ok: false, error: { code: a.code, message: a.message } });
   };
 
   const onConnect = (e: MessageEvent): void => {
@@ -713,6 +734,7 @@ export function startResponder(opts: {
       case 'select': return selectOp(args);
       case 'project.libs': return projectLibsOp(args);
       case 'footprint.models': return footprintModels(args);
+      case 'project.plot': return projectPlot(args);
     }
     return fail('unknown_op', op);
   }
@@ -1661,6 +1683,101 @@ export function startResponder(opts: {
     return ok();
   }
 
+  /** The plots this frame ran: each takes the next folder under PLOT_ROOT. */
+  let plotRuns = 0;
+
+  /** Removes a plot folder and anything in it; a failure here never changes an answer. */
+  function dropPlotFolder(FS: EmscriptenFS, dir: string): void {
+    try { removeTree(FS, dir); } catch (err) { console.debug('[plot]', 'could not remove', dir, describeError(err)); }
+  }
+
+  /**
+   * project.plot (PROTOCOL.md, bridge/plot.ts): the checks, in order, every one
+   * before any effect: the args (bad_args), the frame's kind (unsupported in a
+   * sch frame), the engine (not_ready, unsupported), a board (not_ready), busy
+   * as for footprint.models. Then our engine's kicadPlotBoard queues the plot
+   * into a fresh folder outside the project folder, and the answer waits for
+   * the apply queue to empty and the run's record (.cc-plot.json, written
+   * last), reads every file, removes the folder and answers. Nothing in the
+   * board changes: KiCad's plot reads the board the editor holds.
+   */
+  async function projectPlot(args: unknown): Promise<Answer> {
+    const op = 'project.plot';
+    const a = parsePlotArgs(args);
+    if (a == null) return fail('bad_args', op);
+    if (frame !== 'pcb') return fail('unsupported', 'a board plots in a pcb frame');
+    const w = win;
+    if (w == null) return fail('not_ready', op);
+    const mod = (w.Module ?? {}) as Record<string, unknown>;
+    for (const name of PLOT_EXPORTS) if (typeof mod[name] !== 'function') return fail('unsupported', name);
+    if (staged == null || opened == null) return fail('not_ready', op);
+    if (engineBusy() || keysBlocked(w) || placeWatch?.hanging() === true) return fail('busy', op);
+    const FS = w.FS;
+    if (FS == null) return fail('island_error', 'the engine has no file system');
+    plotRuns += 1;
+    const dir = `${PLOT_ROOT}/${plotRuns}`;
+    try {
+      // A fresh folder: an earlier run that outlived its answer leaves nothing behind.
+      if (FS.analyzePath(PLOT_ROOT).exists) {
+        for (const name of FS.readdir(PLOT_ROOT)) {
+          if (name === '.' || name === '..') continue;
+          const stale = `${PLOT_ROOT}/${name}`;
+          if (FS.isDir(FS.stat(stale).mode)) removeTree(FS, stale); else FS.unlink(stale);
+        }
+      }
+      FS.mkdirTree(dir);
+    } catch (err) {
+      return fail('island_error', describeError(err));
+    }
+    const t0 = Date.now();
+    let queued: unknown;
+    try {
+      queued = await (mod.kicadPlotBoard as (json: string) => unknown)(plotJson(dir, a));
+    } catch (err) {
+      dropPlotFolder(FS, dir);
+      return fail('island_error', describeError(err));
+    }
+    if (queued !== true) {
+      dropPlotFolder(FS, dir);
+      return fail('not_applied', op);
+    }
+    const deadline = Date.now() + timing.plotMs;
+    let done: PlotDone | null = null;
+    for (;;) {
+      if (closed) return fail('island_error', 'the frame closed');
+      if (await applyIdle(w, Math.max(0, deadline - Date.now()))) {
+        done = readPlotDone(readBytes(FS, `${dir}/${PLOT_DONE}`));
+        if (done != null) break;
+      }
+      if (Date.now() >= deadline) {
+        dropPlotFolder(FS, dir);
+        return fail('not_applied', op);
+      }
+      await sleep(timing.applyPollMs);
+    }
+    const failure = plotFailure(done, a, dir);
+    if (failure != null) {
+      dropPlotFolder(FS, dir);
+      return fail('plot_failed', failure);
+    }
+    let read: ReturnType<typeof readPlotFolder>;
+    try {
+      read = readPlotFolder(FS, dir);
+    } catch (err) {
+      dropPlotFolder(FS, dir);
+      return fail('island_error', describeError(err));
+    }
+    dropPlotFolder(FS, dir);
+    if ('error' in read) return fail('island_error', 'the plot wrote more than the protocol carries');
+    const notes = plotNotes(done, dir);
+    console.debug('[plot]', a.preset, `${read.files.length} files`, `${Date.now() - t0} ms`);
+    return {
+      ok: true,
+      result: { files: read.files.map((f) => ({ path: f.path, bytes: f.bytes })), notes },
+      transfer: read.files.map((f) => f.bytes.buffer as ArrayBuffer),
+    };
+  }
+
   let ready = false;
   return {
     emit,
@@ -1733,6 +1850,8 @@ export function startResponder(opts: {
       // project.libs: the run time library rows; footprint.models: our engine's export.
       if (projectLibs != null && LIBS_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(PROJECT_LIBS_CAP);
       if (MODEL_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(MODELS_CAP);
+      // project.plot: our engine's kicadPlotBoard.
+      if (PLOT_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(PLOT_CAP);
       caps.sort();
       // ev.edited: polled only when the engine has the undo depth export at
       // boot; an older build is never polled and nothing is said about it.

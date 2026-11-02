@@ -3271,3 +3271,186 @@ describe('footprint.models (island v0.2.3-cc12)', () => {
     }
   });
 });
+
+describe('project.plot (island v0.2.3-cc13)', () => {
+  const started: Array<{ close: () => void }> = [];
+  afterEach(() => { for (const r of started.splice(0)) r.close(); });
+  const OPEN_PCB = { name: 'x', files: [{ path: 'blink.kicad_pcb', bytes: b('(kicad_pcb)') }] };
+  const FAB = { preset: 'fab', drill: true, job: true };
+  /** What a fab plot of a two-layer board writes, as kicadPlotBoard names the files. */
+  const FAB_FILES: Record<string, string> = {
+    'blink-F_Cu.gbr': '%TF.FileFunction,Copper,L1,Top*%',
+    'blink-B_Cu.gbr': '%TF.FileFunction,Copper,L2,Bot*%',
+    'blink-Edge_Cuts.gbr': '%TF.FileFunction,Profile,NP*%',
+    'blink-PTH.drl': 'M48\n',
+    'blink-NPTH.drl': 'M48\n',
+    'blink-job.gbrjob': '{"Header": {}}',
+  };
+
+  /**
+   * A board engine whose kicadPlotBoard writes `files` into the folder it is
+   * handed `applyMs` after the call (never, at -1), then the run's record last,
+   * and holds its apply queue busy until then.
+   */
+  function board(opts: { frame?: 'sch' | 'pcb'; exports?: boolean; applyMs?: number; refuse?: boolean; files?: Record<string, string>; done?: Record<string, unknown> } = {}) {
+    const { page, parent } = fakePage(`?frame=${opts.frame ?? 'pcb'}&theme=day`);
+    const r = startResponder({ parentOrigin: PARENT, page });
+    started.push(r);
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    const queue = { until: 0 };
+    const calls: unknown[] = [];
+    const mod = eng.Module as Record<string, unknown>;
+    if (opts.exports !== false) {
+      mod.kicadCollabBusy = () => Date.now() < queue.until;
+      mod.kicadPlotBoard = vi.fn((json: string) => {
+        const args = JSON.parse(json) as { dir: string };
+        calls.push(args);
+        if (opts.refuse) return false;
+        const ms = opts.applyMs ?? 5;
+        if (ms >= 0) {
+          queue.until = Date.now() + ms;
+          setTimeout(() => {
+            eng.win.FS!.mkdirTree(args.dir);
+            for (const [name, text] of Object.entries(opts.files ?? FAB_FILES)) eng.win.FS!.writeFile(`${args.dir}/${name}`, text);
+            const done = opts.done ?? { gerbers: 0, drill: 0, lines: [{ severity: 'action', text: `Plotted to '${args.dir}/blink-F_Cu.gbr'.` }, { severity: 'warning', text: `A warning about '${args.dir}/blink-B_Cu.gbr'` }] };
+            eng.win.FS!.writeFile(`${args.dir}/.cc-plot.json`, JSON.stringify(done));
+          }, ms);
+        }
+        return true;
+      });
+    }
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    let id = 0;
+    const request = async (op: string, args?: unknown) => {
+      const n = ++id;
+      port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+      for (let i = 0; i < 200 && !got.some((m) => m.id === n); i++) await settle(5);
+      return got.find((m) => m.id === n);
+    };
+    const plotFolders = () => [...eng.dirs].filter((d) => d.startsWith('/tmp/cc-plot/'));
+    const plotFiles = () => [...eng.files.keys()].filter((p) => p.startsWith('/tmp/cc-plot/'));
+    return { eng, got, request, calls, plotFolders, plotFiles };
+  }
+
+  it('lists plot in ev.ready when the engine has kicadPlotBoard and the apply queue probe, in either frame\'s kind, and not on an engine without it', async () => {
+    for (const frame of ['pcb', 'sch'] as const) {
+      const s = board({ frame });
+      await settle();
+      const caps = s.got.find((m) => m.type === 'ev.ready')?.caps as string[];
+      expect(caps).toContain('plot');
+      expect(caps).toEqual([...caps].sort());
+    }
+    const old = board({ exports: false });
+    await settle();
+    expect(old.got.find((m) => m.type === 'ev.ready')?.caps).not.toContain('plot');
+    expect(await old.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await old.request('project.plot', FAB)).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadPlotBoard' } });
+  });
+
+  it('plots into a fresh folder outside the project folder, answers every file sorted with the warning and error lines, and removes the folder', async () => {
+    const s = board({ applyMs: 30 });
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    const t0 = Date.now();
+    const answer = await s.request('project.plot', FAB) as { ok: boolean; result: { files: Array<{ path: string; bytes: Uint8Array }>; notes: string[] } };
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(25);
+    expect(answer.ok).toBe(true);
+    expect(Object.keys(answer.result).sort()).toEqual(['files', 'notes']);
+    expect(answer.result.files.map((f) => f.path)).toEqual(Object.keys(FAB_FILES).sort());
+    for (const f of answer.result.files) {
+      expect(f.bytes).toBeInstanceOf(Uint8Array);
+      expect(new TextDecoder().decode(f.bytes)).toBe(FAB_FILES[f.path]);
+    }
+    // Only the warning and error lines, the run's folder never named.
+    expect(answer.result.notes).toEqual(["A warning about 'blink-B_Cu.gbr'"]);
+    expect(s.calls).toEqual([{ dir: '/tmp/cc-plot/1', preset: 'fab', drill: true, job: true }]);
+    expect(s.plotFolders()).toEqual([]);
+    expect(s.plotFiles()).toEqual([]);
+    // Nothing was written in the project folder.
+    expect([...s.eng.files.keys()].filter((p) => p.startsWith(`${ROOT}/`) && !p.endsWith('.kicad_pcb') && !p.endsWith('.kicad_prl') && !p.endsWith('.kicad_pro'))).toEqual([]);
+    // Each plot takes the next folder, and the board preset passes through.
+    expect(await s.request('project.plot', { preset: 'board', drill: false, job: false })).toMatchObject({ ok: true });
+    expect(s.calls[1]).toEqual({ dir: '/tmp/cc-plot/2', preset: 'board', drill: false, job: false });
+  });
+
+  it('clears what an earlier run left under the plot folder before it plots', async () => {
+    const s = board();
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    s.eng.win.FS!.mkdirTree('/tmp/cc-plot/7');
+    s.eng.win.FS!.writeFile('/tmp/cc-plot/7/late-F_Cu.gbr', 'x');
+    s.eng.win.FS!.writeFile('/tmp/cc-plot/stray', 'x');
+    const answer = await s.request('project.plot', FAB) as { result: { files: Array<{ path: string }> } };
+    expect(answer.result.files.map((f) => f.path)).not.toContain('late-F_Cu.gbr');
+    expect(s.plotFolders()).toEqual([]);
+    expect(s.plotFiles()).toEqual([]);
+  });
+
+  it('refuses whole, before any effect, in order: the args, the frame, the engine, the board, busy', async () => {
+    const sch = board({ frame: 'sch' });
+    expect(await sch.request('project.plot', { preset: 'fab', drill: true })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'project.plot' } });
+    expect(await sch.request('project.plot', FAB)).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'a board plots in a pcb frame' } });
+    const s = board();
+    for (const args of [undefined, {}, { ...FAB, extra: 1 }, { ...FAB, preset: 'gerber' }, { ...FAB, job: 'yes' }]) {
+      expect(await s.request('project.plot', args)).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    }
+    expect(await s.request('project.plot', FAB)).toMatchObject({ ok: false, error: { code: 'not_ready', message: 'project.plot' } });
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    s.eng.dialogs.push({ typeName: 'wxDialog', visible: true });
+    expect(await s.request('project.plot', FAB)).toMatchObject({ ok: false, error: { code: 'busy', message: 'project.plot' } });
+    s.eng.dialogs.length = 0;
+    expect(s.calls).toEqual([]);
+    expect(s.plotFolders()).toEqual([]);
+    // Before ev.ready there is no engine at all.
+    const { page, parent } = fakePage('?frame=pcb&theme=day');
+    const early = startResponder({ parentOrigin: PARENT, page });
+    started.push(early);
+    const c = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    c.port.postMessage({ id: 1, op: 'project.plot', args: FAB });
+    for (let i = 0; i < 50 && !c.got.some((m) => m.id === 1); i++) await settle(5);
+    expect(c.got.find((m) => m.id === 1)).toMatchObject({ ok: false, error: { code: 'not_ready' } });
+  });
+
+  it('not_applied when the engine refuses the plot, or its record never comes; the folder removed', async () => {
+    const refused = board({ refuse: true });
+    expect(await refused.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await refused.request('project.plot', FAB)).toMatchObject({ ok: false, error: { code: 'not_applied', message: 'project.plot' } });
+    expect(refused.plotFolders()).toEqual([]);
+    const plotMs = timing.plotMs;
+    timing.plotMs = 60;
+    try {
+      const lost = board({ applyMs: -1 });
+      expect(await lost.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+      expect(await lost.request('project.plot', FAB)).toMatchObject({ ok: false, error: { code: 'not_applied' } });
+      expect(lost.plotFolders()).toEqual([]);
+    } finally {
+      timing.plotMs = plotMs;
+    }
+  });
+
+  it('plot_failed when a job ended nonzero, with its first error line; island_error when the plot wrote more than the protocol carries', async () => {
+    const failed = board({ done: { gerbers: 4, drill: 0, lines: [{ severity: 'info', text: 'x' }, { severity: 'error', text: "Failed to plot to '/tmp/cc-plot/1/blink-F_Cu.gbr'." }, { severity: 'error', text: 'second' }] } });
+    expect(await failed.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await failed.request('project.plot', FAB)).toMatchObject({ ok: false, error: { code: 'plot_failed', message: "Failed to plot to 'blink-F_Cu.gbr'." } });
+    expect(failed.plotFolders()).toEqual([]);
+    const drill = board({ done: { gerbers: 0, drill: 4, lines: [] } });
+    expect(await drill.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await drill.request('project.plot', FAB)).toMatchObject({ ok: false, error: { code: 'plot_failed', message: 'the drill job ended with code 4' } });
+    // No drill asked for: its null code is no failure.
+    const gerbersOnly = board({ done: { gerbers: 0, drill: null, lines: [] } });
+    expect(await gerbersOnly.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await gerbersOnly.request('project.plot', { ...FAB, drill: false })).toMatchObject({ ok: true });
+    const many = board({ files: Object.fromEntries(Array.from({ length: 129 }, (_, i) => [`blink-${i}.gbr`, 'x'])) });
+    expect(await many.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await many.request('project.plot', FAB)).toMatchObject({ ok: false, error: { code: 'island_error', message: 'the plot wrote more than the protocol carries' } });
+    expect(many.plotFolders()).toEqual([]);
+  });
+
+  it('answers every op bridge/ops.json lists (the list island.json carries as ops), and none other', async () => {
+    const ops = (await import('./ops.json')).default as string[];
+    expect(ops).toContain('project.plot');
+    expect(new Set(ops).size).toBe(ops.length);
+    const s = board();
+    for (const op of ops) expect((await s.request(op, 1) as { error?: { code: string } }).error?.code).not.toBe('unknown_op');
+    expect(await s.request('project.export', {})).toMatchObject({ ok: false, error: { code: 'unknown_op', message: 'project.export' } });
+  });
+});

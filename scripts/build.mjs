@@ -86,7 +86,12 @@ execSync('npx vite build', { stdio: 'inherit' });
 execSync(`node scripts/notices.mjs ${rel}`, { stdio: 'inherit' });
 
 // 3. island.json, twice: inside the release and at the root for the no-cache route.
-const island = { id, tag: pin.pcbjam.tag, kicadCommit: sources.kicad, source: `https://github.com/matt-chinchilla/cc-editor-island/releases/tag/${id}` };
+// `ops` (island v0.2.3-cc13): the request ops this release answers, sorted, from
+// bridge/ops.json, the list the responder's OPS set is built from; a host reads it
+// to know what the island answers before any engine boots (PROTOCOL.md).
+const ops = JSON.parse(readFileSync(join('bridge', 'ops.json'), 'utf8'));
+if (!Array.isArray(ops) || ops.length === 0 || !ops.every((op) => typeof op === 'string' && /^[a-z]+(\.[a-z]+)?$/i.test(op))) throw new Error('bridge/ops.json must list the request ops as strings');
+const island = { id, tag: pin.pcbjam.tag, kicadCommit: sources.kicad, source: `https://github.com/matt-chinchilla/cc-editor-island/releases/tag/${id}`, ops: [...new Set(ops)].sort() };
 writeFileSync(join(rel, 'island.json'), JSON.stringify(island));
 writeFileSync(join('dist', 'island.json'), JSON.stringify(island));
 
