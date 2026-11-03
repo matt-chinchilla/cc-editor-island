@@ -253,7 +253,7 @@ export const LIBS_EXPORTS = ['kicadLibsAddEntry', 'kicadLibsReload', 'kicadColla
 export const MODELS_CAP = 'models';
 /**
  * The pseudo-cap ev.ready lists for project.plot (island v0.2.3-cc13): the
- * engine has our kicadPlotBoard (pcbjam cc/main 924d67c, engine run 7) and the
+ * engine has our kicadPlotBoard (pcbjam cc/main 924d67c; engine run 8) and the
  * apply queue probe, in either frame's kind (a sch frame answers unsupported).
  */
 export const PLOT_CAP = 'plot';

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
 // project.plot (PROTOCOL.md): the board's Gerbers and drill files plotted with
-// no KiCad dialog, through our engine's kicadPlotBoard (pcbjam cc/main 924d67c,
-// engine run 7). The export runs KiCad's own JOB_EXPORT_PCB_GERBERS and
+// no KiCad dialog, through our engine's kicadPlotBoard (pcbjam cc/main 924d67c;
+// engine run 8 serves it). The export runs KiCad's own JOB_EXPORT_PCB_GERBERS and
 // JOB_EXPORT_PCB_DRILL on the editor's apply coroutine and answers before they
 // run; the run writes .cc-plot.json LAST in its folder, so the answer waits for
 // the apply queue to empty and for that file, then reads the folder whole.
