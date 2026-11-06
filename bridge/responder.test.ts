@@ -1202,6 +1202,44 @@ describe('ev.menu', () => {
   });
 });
 
+describe('ev.chrome', () => {
+  type Slot = { kicadChrome?: { onChange?: (shown: unknown) => void } };
+  it("says the engine's chrome state after ev.ready and each time the engine reports a flip, once per flip", async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    let shown = false;
+    (eng.win.Module as Record<string, unknown>).kicadChromeShown = () => shown;
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    await settle(30);
+    const chrome = () => got.filter((m) => m.type === 'ev.chrome');
+    const types = got.map((m) => m.type);
+    expect(types.indexOf('ev.chrome')).toBeGreaterThan(types.indexOf('ev.ready'));
+    expect(chrome()).toEqual([{ type: 'ev.chrome', shown: false }]);
+    const slot = (eng.win as unknown as Slot).kicadChrome;
+    shown = true;
+    slot?.onChange?.(true);
+    slot?.onChange?.(true);
+    slot?.onChange?.('yes');
+    await settle(30);
+    expect(chrome()).toEqual([{ type: 'ev.chrome', shown: false }, { type: 'ev.chrome', shown: true }]);
+    r.close();
+  });
+
+  it('an engine without kicadChromeShown says nothing and leaves the slot alone', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    await settle(30);
+    expect(got.filter((m) => m.type === 'ev.chrome')).toEqual([]);
+    expect((eng.win as unknown as Slot).kicadChrome).toBeUndefined();
+    r.close();
+  });
+});
+
 describe('ev.edited', () => {
   const OPEN = { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] };
   /** Every responder edits() started: closed after each test, so no 5 ms poll outlives its test. */

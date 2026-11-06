@@ -47,8 +47,8 @@ for arg in "$@"; do
 done
 
 case "$NAME" in
-  pristine) ROOT_REF=$PCBJAM_PIN; KICAD_REF=$KICAD_PIN; BUILD_DEPS=1 ;;
-  cc8)      ROOT_REF=cc/main;     KICAD_REF=cc/main;    BUILD_DEPS=$FORCE_DEPS ;;
+  pristine) ROOT_REF=$PCBJAM_PIN; KICAD_REF=$KICAD_PIN; WX_REF=$WX_PIN;  BUILD_DEPS=1 ;;
+  cc8)      ROOT_REF=cc/main;     KICAD_REF=cc/main;    WX_REF=cc/main; BUILD_DEPS=$FORCE_DEPS ;;
   *) usage ;;
 esac
 
@@ -68,7 +68,7 @@ sha_of() {
 }
 ROOT_SHA=$(sha_of pcbjam "$ROOT_REF")
 KICAD_SHA=$(sha_of kicad-source-mirror "$KICAD_REF")
-WX_SHA=$(sha_of wxWidgets "$WX_PIN")
+WX_SHA=$(sha_of wxWidgets "$WX_REF")
 SHARED_SHA=$(sha_of pcbjam-shared "$SHARED_PIN")
 
 # ensure_worktree <clone> <path> <sha> [branch]: add the worktree, or verify an

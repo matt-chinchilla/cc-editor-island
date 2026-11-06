@@ -32,6 +32,7 @@ export type IslandEvent =
   | { type: 'ev.openTool'; frame: Frame }
   | { type: 'ev.help'; topic: string }
   | { type: 'ev.menu'; open: boolean }
+  | { type: 'ev.chrome'; shown: boolean }
   | { type: 'ev.edited'; depth: number }
   | { type: 'ev.pick'; kind: PickKind; power?: true }
   | ({ type: 'ev.selected' } & Selection)
@@ -66,6 +67,8 @@ type Answer = { ok: true; result: Record<string, unknown>; transfer?: ArrayBuffe
  * (eeschema_embind.cpp): onSheetChanged(absPath) once KiCad shows another
  * sheet, onSheetsState(json) whenever the sheet panel's state is pushed.
  */
+/** The engine's chrome report slot (pcbjam kicad_editor_embind.cpp reportChrome). */
+type ChromeWindow = ToolWindow & { kicadChrome?: { onChange?: (shown: boolean) => void } };
 type CollabWindow = ToolWindow & { kicadCollab?: { onSave?: (absPath: string) => void; onSheetChanged?: (absPath: string) => void; onSheetsState?: (json: string) => void } };
 /** A project.import that passed its checks: the source, the files, and an Altium project's sheets and project file (sch frame). */
 type CheckedImport = { w: ToolWindow; FS: EmscriptenFS; open: string; files: Array<{ path: string; bytes: Uint8Array }>; altium?: { project: string; sheets: string[] } };
@@ -395,6 +398,8 @@ export function startResponder(opts: {
    * (src/main.ts, spec D16); chrome.show changes it for this boot.
    */
   let chromeOn = false;
+  /** Reads the engine's chrome state and sends ev.chrome when it differs from the last one sent; set by engineReady. */
+  let chromeSay: (() => void) | null = null;
 
   /** While a host save-all runs: every path its ev.saved carried, in order, with when it arrived. */
   let collecting: Array<{ path: string; at: number }> | null = null;
@@ -485,6 +490,9 @@ export function startResponder(opts: {
         return;
       case 'ev.menu':
         port.postMessage({ type: ev.type, open: ev.open });
+        return;
+      case 'ev.chrome':
+        port.postMessage({ type: ev.type, shown: ev.shown });
         return;
       case 'ev.edited':
         port.postMessage({ type: ev.type, depth: ev.depth });
@@ -1810,6 +1818,19 @@ export function startResponder(opts: {
       };
       // Popup menus and dialogs over the canvas: the host hides what it draws there.
       stopMenus = watchMenus(w, (open) => emit({ type: 'ev.menu', open }));
+      // KiCad's own chrome as the engine says it is (our engine from run 9:
+      // window.kicadChrome.onChange each time it flips), so the host's menus
+      // control tells the truth. An engine without kicadChromeShown says nothing.
+      if (typeof w.Module?.kicadChromeShown === 'function') {
+        let shown: boolean | null = null;
+        const say = (now: unknown): void => {
+          if (typeof now !== 'boolean' || now === shown) return;
+          shown = now;
+          if (ready) emit({ type: 'ev.chrome', shown: now });
+        };
+        (w as ChromeWindow).kicadChrome = { onChange: say };
+        chromeSay = () => { try { say(w.Module?.kicadChromeShown?.()); } catch { /* the next flip says it */ } };
+      }
       // A fitted view stays fitted through resizes and a replaced drawing
       // surface until the reader steers (bridge/view.ts). The fit watch reads
       // nothing while an import or a save runs (the import fits for itself).
@@ -1862,6 +1883,8 @@ export function startResponder(opts: {
       const n = help.attempts();
       if (n > 0) emit({ type: 'ev.state', phase: 'booting', detail: popupNote(n) });
       emit({ type: 'ev.ready', caps, engine });
+      // The boot hid the chrome before the listener was there: its state now.
+      chromeSay?.();
     },
     busy() {
       return inFlight > 0 || importing;

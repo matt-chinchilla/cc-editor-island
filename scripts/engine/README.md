@@ -44,14 +44,14 @@ trees share one compose project and its volumes.
 ```bash
 export CC_ENGINE_ROOT=<the folder holding the four clones>   # pcbjam, kicad-source-mirror, wxWidgets, pcbjam-shared
 bash scripts/engine/build.sh pristine   # the pinned v0.2.3 commits, unchanged; runs the deps stage
-bash scripts/engine/build.sh cc8        # cc/main of pcbjam and kicad-source-mirror (wx, shared: the pins)
+bash scripts/engine/build.sh cc8        # cc/main of pcbjam, kicad-source-mirror and wxWidgets (shared: the pin)
 bash scripts/engine/build.sh cc8 --build-deps   # cc8, rerunning the deps stage too
 ```
 
 | tree       | pcbjam                       | kicad                        | wxwidgets  | pcbjam-shared | recipe args                         |
 |------------|------------------------------|------------------------------|------------|---------------|-------------------------------------|
 | `pristine` | `7ec51c1c55aab45b21cd2956af413b4420520838` | `48f1e865216623283579984110a80210e7ccc789` | `8bad5f58e9b51050d3678f5c98cb0dc41b4595b2` | `7791275bdfbf54e1500e303121dacaa2c3fd7d00` | `kicad_editor --build-deps -j 6` |
-| `cc8`      | `cc/main`                    | `cc/main`                    | the pin    | the pin       | `kicad_editor -j 6`                 |
+| `cc8`      | `cc/main`                    | `cc/main`                    | `cc/main`  | the pin       | `kicad_editor -j 6`                 |
 
 Long: about 54 minutes for the first tree on empty volumes (it builds the Docker image
 and the deps, OpenCASCADE among them), then about 25 minutes for each later build (a
