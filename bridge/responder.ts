@@ -16,10 +16,13 @@ import { isProjectNick, MAX_PROJECT_LIBS, type ProjectLibrary, type ProjectLibs 
 import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
 import { ALTIUM_PROJECT, ALTIUM_SHEET, DOCUMENT_EXTENSION as EXT, driveImport, emptySheet, hasExtension, importable, importCall, importTarget } from './import';
 import { dialogUp, dismissPopups, keysBlocked, watchMenus } from './modal';
+import { ANNOTATE_DONE, ANNOTATE_EXPORTS, ANNOTATE_ROOT, annotateJson, MAX_CHANGES, parseAnnotateArgs, readAnnotateDone, runNotes, runText, type AnnotateDone } from './annotate';
+import { CHECK_DONE, CHECK_EXPORTS, CHECK_REPORT, CHECK_ROOT, readCheckDone, readCheckReport, type CheckDone } from './check';
 import { MODEL_EXPORTS, modelsJson, parseModelsArgs, readModels, sameModels } from './models';
 import REQUEST_OPS from './ops.json';
 import { parsePlotArgs, plotFailure, plotJson, plotNotes, PLOT_DONE, PLOT_EXPORTS, PLOT_ROOT, readPlotDone, readPlotFolder, type PlotDone } from './plot';
 import { placeBlob, PlacementWatch } from './place';
+import { misfit, parseSymbolGetArgs, parseSymbolSetArgs, readSymbolSheet, showsSet, SYMBOL_EXPORTS, symbolSetJson, type SymbolSheet } from './symbol';
 import { parseSelectArgs, SELECT_EXPORTS, selectItems, SelectionFeed, type Selection, type SelectionWindow } from './selection';
 import { FitWatch, sampleDrawing, settleView, surfaceKey } from './view';
 
@@ -186,6 +189,16 @@ export const timing = {
    * tests/e2e/plot.spec.ts). Its queue and record are read every applyPollMs.
    */
   plotMs: 120_000,
+  /**
+   * symbol.set: how long the symbol may take to read back as set, from the
+   * export's call (one commit; measured about 210 ms on Glasgow,
+   * tests/e2e/symbol.spec.ts). sheet.annotate and sheet.check: how long the
+   * run may take to its record (the numbering 355 to 570 ms on Glasgow; the
+   * check 15.6 to 21 s there in engine run 10, a debug build of KiCad's ERC).
+   */
+  symbolMs: 5_000,
+  annotateMs: 60_000,
+  checkMs: 60_000,
 };
 /** KiCad's Next Sheet (eeschema's PgDn, by virtual page number, the top-level sheets included). */
 const NEXT_SHEET_KEY: KeyPress = { key: 'PageDown', code: 'PageDown', ctrl: false, shift: false, alt: false };
@@ -260,6 +273,24 @@ export const MODELS_CAP = 'models';
  * apply queue probe, in either frame's kind (a sch frame answers unsupported).
  */
 export const PLOT_CAP = 'plot';
+/**
+ * The pseudo-caps ev.ready lists for the Editing window's ops (island
+ * v0.2.3-cc15), in either frame's kind (a pcb frame answers unsupported):
+ * `symbol` for symbol.get and symbol.set (our engine's kicadSymbolGet and
+ * kicadSymbolSet, pcbjam cc/main e8b2abe; engine run 10), `annotate` for
+ * sheet.annotate (kicadAnnotate) and `check` for sheet.check (kicadCheckSheet),
+ * each with the apply queue probe.
+ */
+export const SYMBOL_CAP = 'symbol';
+export const ANNOTATE_CAP = 'annotate';
+export const CHECK_CAP = 'check';
+/**
+ * While a sheet.check runs (its run holds the editor for seconds: KiCad's ERC
+ * on the apply coroutine), every op that would change the document, its view
+ * or the editor's state answers busy at once instead of queueing behind it.
+ * Only these still run: the reads, and shutdown.
+ */
+const CHECK_PASSES: ReadonlySet<string> = new Set(['symbol.get', 'sheet.tree', 'layers.get', 'shutdown']);
 /** A wx top-level window: the editor's own frame, or another window of KiCad's (its footprint chooser is a frame, not a dialog). */
 const FRAME_TYPE_RE = /Frame/;
 /**
@@ -422,6 +453,8 @@ export function startResponder(opts: {
   let stopSignaled = false;
   /** A project.import is running: every request but shutdown answers busy until it answers. */
   let importing = false;
+  /** A sheet.check is running: every op that would change the document answers busy until it answers (CHECK_PASSES). */
+  let checking = false;
   /** A shutdown request passed its checks: the port closes once it is answered. */
   let shutdownStarted = false;
   /** Requests received and not yet answered: the chain's queue and the one it runs (ev.edited reads nothing meanwhile). */
@@ -580,9 +613,12 @@ export function startResponder(opts: {
     // An import runs off the request chain (it may take a minute): what arrives
     // meanwhile is answered at once, busy, except a shutdown, which ends it.
     if (importing && op !== 'shutdown') return reply(id, fail('busy', op));
+    // A check runs off the request chain as well (it holds the editor for seconds).
+    if (checking && !CHECK_PASSES.has(op)) return reply(id, fail('busy', op));
     // A stopped engine is never entered again: the host reloads the frame.
     if (stopped != null && op !== 'shutdown') return reply(id, fail('not_ready', 'the engine stopped'));
     if (op === 'project.import') return startImport(id, data.args);
+    if (op === 'sheet.check') return startCheck(id, data.args);
     try {
       reply(id, await run(op, data.args));
     } catch (err) {
@@ -689,7 +725,7 @@ export function startResponder(opts: {
    * or a forget is the baseline; a later read that differs is sent.
    */
   function pollEdits(w: ToolWindow): void {
-    if (closed || opened == null || staged == null || importing || inFlight > 0 || collecting != null) return;
+    if (closed || opened == null || staged == null || importing || checking || inFlight > 0 || collecting != null) return;
     if (engineBusy() || dialogUp(w, true)) return;
     const depth = undoDepth(w);
     if (depth == null) return;
@@ -743,6 +779,9 @@ export function startResponder(opts: {
       case 'project.libs': return projectLibsOp(args);
       case 'footprint.models': return footprintModels(args);
       case 'project.plot': return projectPlot(args);
+      case 'symbol.get': return symbolGet(args);
+      case 'symbol.set': return symbolSet(args);
+      case 'sheet.annotate': return sheetAnnotate(args);
     }
     return fail('unknown_op', op);
   }
@@ -1786,6 +1825,219 @@ export function startResponder(opts: {
     };
   }
 
+
+  /**
+   * The checks every Editing window op makes, in order, every one before any
+   * effect, after its args: the frame's kind (unsupported in a pcb frame), the
+   * engine (not_ready before ev.ready; unsupported naming a missing export), a
+   * schematic opened by project.open or project.import (not_ready), and busy
+   * while a load is parked, a popup menu or a dialog is up, or an item placed
+   * by place hangs off the pointer.
+   */
+  function schematicGate(op: string, exports: readonly string[]): Answer | { w: ToolWindow; mod: Record<string, unknown> } {
+    if (frame !== 'sch') return fail('unsupported', 'a schematic edits in a sch frame');
+    const w = win;
+    if (w == null) return fail('not_ready', op);
+    const mod = (w.Module ?? {}) as Record<string, unknown>;
+    for (const name of exports) if (typeof mod[name] !== 'function') return fail('unsupported', name);
+    if (staged == null || opened == null) return fail('not_ready', op);
+    if (engineBusy() || keysBlocked(w) || placeWatch?.hanging() === true) return fail('busy', op);
+    return { w, mod };
+  }
+
+  /** kicadSymbolGet's raw answer: '' for no such symbol; a throw reads as ''. */
+  function symbolText(mod: Record<string, unknown>, uuid: string, sheetPath: string): string {
+    try { return String((mod.kicadSymbolGet as (u: string, p: string) => unknown)(uuid, sheetPath) ?? ''); } catch { return ''; }
+  }
+
+  /**
+   * symbol.get (PROTOCOL.md, bridge/symbol.ts): the checks (bad_args, then
+   * schematicGate), then the engine's synchronous read of the symbol: on the
+   * asked sheet path when it holds it, else on the sheet the editor shows,
+   * else on the first path holding it. not_found when no sheet holds it.
+   */
+  function symbolGet(args: unknown): Answer {
+    const op = 'symbol.get';
+    const a = parseSymbolGetArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = schematicGate(op, SYMBOL_EXPORTS);
+    if ('ok' in gate) return gate;
+    const raw = symbolText(gate.mod, a.uuid, a.sheetPath ?? '');
+    if (raw === '') return fail('not_found', a.uuid);
+    const sheet = readSymbolSheet(raw);
+    if (sheet == null) return fail('island_error', 'the engine answered a symbol of another shape');
+    return ok(sheet as unknown as Record<string, unknown>);
+  }
+
+  /**
+   * symbol.set (PROTOCOL.md, bridge/symbol.ts): the checks (bad_args, then
+   * schematicGate), the symbol on that sheet path (not_found), the bounds the
+   * symbol sets (bad_args: a field it lacks, a unit past its units). Then our
+   * engine's kicadSymbolSet queues ONE commit (one undo step), and the answer
+   * is the symbol read back once the apply queue is empty and it shows the
+   * change; not_applied when the engine refuses the set or the read back does
+   * not show it within timing.symbolMs. An ev.edited follows the answer.
+   */
+  async function symbolSet(args: unknown): Promise<Answer> {
+    const op = 'symbol.set';
+    const a = parseSymbolSetArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = schematicGate(op, SYMBOL_EXPORTS);
+    if ('ok' in gate) return gate;
+    const { w, mod } = gate;
+    const raw = symbolText(mod, a.uuid, a.sheetPath);
+    if (raw === '') return fail('not_found', a.uuid);
+    const before = readSymbolSheet(raw);
+    if (before == null) return fail('island_error', 'the engine answered a symbol of another shape');
+    // The engine falls back to another sheet when the asked one does not hold the symbol: the asked instance is not there.
+    if (before.sheetPath !== a.sheetPath) return fail('not_found', `${a.uuid} on ${a.sheetPath}`);
+    const why = misfit(a.set, before);
+    if (why != null) return fail('bad_args', `${op}: ${why}`);
+    const t0 = Date.now();
+    let queued: unknown;
+    try {
+      queued = (mod.kicadSymbolSet as (json: string) => unknown)(symbolSetJson(a));
+    } catch (err) {
+      return fail('island_error', describeError(err));
+    }
+    if (queued !== true) return fail('not_applied', op);
+    const deadline = Date.now() + timing.symbolMs;
+    let after: SymbolSheet | null = null;
+    for (;;) {
+      if (closed) return fail('island_error', 'the frame closed');
+      if (await applyIdle(w, Math.max(0, deadline - Date.now()))) {
+        after = readSymbolSheet(symbolText(mod, a.uuid, a.sheetPath));
+        if (after != null && showsSet(a.set, before, after)) break;
+      }
+      if (Date.now() >= deadline) return fail('not_applied', op);
+      await sleep(timing.applyPollMs);
+    }
+    console.debug('[symbol]', a.uuid, Object.keys(a.set).join(' '), `${Date.now() - t0} ms`);
+    return ok(after as unknown as Record<string, unknown>);
+  }
+
+  /** The runs this frame made: each takes the next folder under its root. */
+  let runs = 0;
+
+  /** A fresh folder under `rootDir` for the next run: what an earlier run left there is removed first. */
+  function freshRunFolder(FS: EmscriptenFS, rootDir: string): string {
+    if (FS.analyzePath(rootDir).exists) {
+      for (const name of FS.readdir(rootDir)) {
+        if (name === '.' || name === '..') continue;
+        const stale = `${rootDir}/${name}`;
+        if (FS.isDir(FS.stat(stale).mode)) removeTree(FS, stale); else FS.unlink(stale);
+      }
+    }
+    runs += 1;
+    const dir = `${rootDir}/${runs}`;
+    FS.mkdirTree(dir);
+    return dir;
+  }
+
+  /** Removes a run's folder and anything in it; a failure here never changes an answer. */
+  function dropRunFolder(FS: EmscriptenFS, dir: string): void {
+    try { removeTree(FS, dir); } catch (err) { console.debug('[run]', 'could not remove', dir, describeError(err)); }
+  }
+
+  /**
+   * One queued run of the engine (sheet.annotate, sheet.check): `call` queues
+   * it with the folder it writes in, and its record is read once the apply
+   * queue is empty and the record is there. not_applied when the engine
+   * refused the run or no record came within `ms` (the folder then removed).
+   */
+  async function queuedRun<T>(op: string, w: ToolWindow, FS: EmscriptenFS, dir: string, ms: number, call: () => unknown, record: () => T | null): Promise<{ done: T } | Answer> {
+    let queued: unknown;
+    try {
+      queued = await call();
+    } catch (err) {
+      dropRunFolder(FS, dir);
+      return fail('island_error', describeError(err));
+    }
+    if (queued !== true) { dropRunFolder(FS, dir); return fail('not_applied', op); }
+    const deadline = Date.now() + ms;
+    for (;;) {
+      if (closed) return fail('island_error', 'the frame closed');
+      if (await applyIdle(w, Math.max(0, deadline - Date.now()))) {
+        const done = record();
+        if (done != null) return { done };
+      }
+      if (Date.now() >= deadline) { dropRunFolder(FS, dir); return fail('not_applied', op); }
+      await sleep(timing.applyPollMs);
+    }
+  }
+
+  /**
+   * sheet.annotate (PROTOCOL.md, bridge/annotate.ts): the checks (bad_args,
+   * then schematicGate). Then our engine's kicadAnnotate numbers the parts in
+   * a fresh folder under /tmp/cc-annotate/ as ONE commit (none when nothing
+   * moved), and the answer is every designator that moved and the warning and
+   * error lines, once its record (.cc-annotate.json) is there; the folder is
+   * removed. An ev.edited follows when anything moved.
+   */
+  async function sheetAnnotate(args: unknown): Promise<Answer> {
+    const op = 'sheet.annotate';
+    const a = parseAnnotateArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = schematicGate(op, ANNOTATE_EXPORTS);
+    if ('ok' in gate) return gate;
+    const { w, mod } = gate;
+    const FS = w.FS;
+    if (FS == null) return fail('island_error', 'the engine has no file system');
+    let dir: string;
+    try { dir = freshRunFolder(FS, ANNOTATE_ROOT); } catch (err) { return fail('island_error', describeError(err)); }
+    const t0 = Date.now();
+    const run = await queuedRun<AnnotateDone>(op, w, FS, dir, timing.annotateMs,
+      () => (mod.kicadAnnotate as (json: string) => unknown)(annotateJson(runs, dir, a)),
+      () => readAnnotateDone(readBytes(FS, `${dir}/${ANNOTATE_DONE}`)));
+    if (!('done' in run)) return run;
+    dropRunFolder(FS, dir);
+    if (run.done.changes.length > MAX_CHANGES) return fail('island_error', 'the numbering changed more than the protocol carries');
+    console.debug('[annotate]', `${run.done.changes.length} changes`, `${Date.now() - t0} ms`);
+    return ok({ changes: run.done.changes, notes: runNotes(run.done.lines, dir) });
+  }
+
+  /** Starts a checked sheet.check off the request chain; its answer is sent when it ends. */
+  function startCheck(id: number, args: unknown): void {
+    const op = 'sheet.check';
+    if (!noArgs(args)) return reply(id, fail('bad_args', op));
+    const gate = schematicGate(op, CHECK_EXPORTS);
+    if ('ok' in gate) return reply(id, gate);
+    checking = true;
+    void sheetCheck(gate.w, gate.mod)
+      .catch((err: unknown) => fail('island_error', describeError(err)))
+      .then((a) => { checking = false; reply(id, a); });
+  }
+
+  /**
+   * sheet.check (PROTOCOL.md, bridge/check.ts), past its checks (startCheck):
+   * our engine's kicadCheckSheet runs KiCad's ERC in a fresh folder under
+   * /tmp/cc-erc/, and once its record (.cc-erc.json) is there the answer is
+   * KiCad's report (erc.json) read into sheets and findings; the folder is
+   * removed. Nothing in the document changes (no undo step, no ev.edited);
+   * KiCad's own marks stay on the drawing.
+   */
+  async function sheetCheck(w: ToolWindow, mod: Record<string, unknown>): Promise<Answer> {
+    const op = 'sheet.check';
+    const FS = w.FS;
+    if (FS == null) return fail('island_error', 'the engine has no file system');
+    let dir: string;
+    try { dir = freshRunFolder(FS, CHECK_ROOT); } catch (err) { return fail('island_error', describeError(err)); }
+    const t0 = Date.now();
+    const run = await queuedRun<CheckDone>(op, w, FS, dir, timing.checkMs,
+      () => (mod.kicadCheckSheet as (json: string) => unknown)(JSON.stringify({ run: runs, dir })),
+      () => readCheckDone(readBytes(FS, `${dir}/${CHECK_DONE}`)));
+    if (!('done' in run)) return run;
+    const report = readCheckReport(readBytes(FS, `${dir}/${CHECK_REPORT}`));
+    dropRunFolder(FS, dir);
+    if (run.done.code !== 0) {
+      const first = run.done.lines.find((l) => l.severity === 'error');
+      return fail('island_error', first != null ? runText(first.text, dir) : `the check ended with code ${run.done.code}`);
+    }
+    if (report == null) return fail('island_error', 'the check report was of another shape');
+    console.debug('[check]', `${report.errors} errors ${report.warnings} warnings`, `${Date.now() - t0} ms`);
+    return ok(report as unknown as Record<string, unknown>);
+  }
+
   let ready = false;
   return {
     emit,
@@ -1873,6 +2125,10 @@ export function startResponder(opts: {
       if (MODEL_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(MODELS_CAP);
       // project.plot: our engine's kicadPlotBoard.
       if (PLOT_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(PLOT_CAP);
+      // The Editing window's ops: our engine's symbol, numbering and check exports.
+      if (SYMBOL_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(SYMBOL_CAP);
+      if (ANNOTATE_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(ANNOTATE_CAP);
+      if (CHECK_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(CHECK_CAP);
       caps.sort();
       // ev.edited: polled only when the engine has the undo depth export at
       // boot; an older build is never polled and nothing is said about it.
@@ -1887,7 +2143,7 @@ export function startResponder(opts: {
       chromeSay?.();
     },
     busy() {
-      return inFlight > 0 || importing;
+      return inFlight > 0 || importing || checking;
     },
     popupBlocked(attempts) {
       // Before ev.ready the count travels once, in the booting note above.

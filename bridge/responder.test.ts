@@ -3492,3 +3492,254 @@ describe('project.plot (island v0.2.3-cc13)', () => {
     expect(await s.request('project.export', {})).toMatchObject({ ok: false, error: { code: 'unknown_op', message: 'project.export' } });
   });
 });
+
+describe('the Editing window: symbol.get, symbol.set, sheet.annotate and sheet.check (island v0.2.3-cc15)', () => {
+  const started: Array<{ close: () => void }> = [];
+  afterEach(() => { for (const r of started.splice(0)) r.close(); });
+  const OPEN_SCH = { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] };
+  const R1 = 'ca2704bd-cd2e-427d-8825-1d89e09f5ad7';
+  const SUB = '/00000000-0000-0000-0000-00005c7b59b0/';
+  const ROOT_UUID = '8f38e89c-17d2-45bd-b2a9-83bd9bb08903';
+  const sheetOf = (o: Record<string, unknown> = {}) => ({
+    uuid: R1, sheetPath: '/', sheetName: 'blink', ref: 'R1', value: '10k', footprint: 'Resistor_SMD:R_0402_1005Metric', libId: 'Device:R',
+    fields: [
+      { name: 'Reference', value: 'R1', shown: true, kind: 'reference' },
+      { name: 'Value', value: '10k', shown: true, kind: 'value' },
+      { name: 'Footprint', value: 'Resistor_SMD:R_0402_1005Metric', shown: false, kind: 'footprint' },
+      { name: 'Datasheet', value: '', shown: false, kind: 'datasheet' },
+      { name: 'Description', value: '', shown: false, kind: 'description' },
+    ],
+    inBom: true, onBoard: true, inSim: true, dnp: false, rotation: 0, mirror: 'none', x: 100, y: 50,
+    unit: 1, units: 1, bodyStyle: 1, bodyStyles: 1, filters: ['R_*'], ...o,
+  });
+  const REPORT = {
+    $schema: 'https://schemas.kicad.org/erc.v1.json', coordinate_units: 'mm', date: 'd', ignored_checks: [], included_severities: ['error', 'warning'], kicad_version: '10.0.4', source: 'blink.kicad_sch',
+    sheets: [{ path: '/', uuid_path: `/${ROOT_UUID}`, violations: [
+      { description: 'Pin not connected', severity: 'error', type: 'pin_not_connected', items: [{ description: 'Symbol R1 Pin 2 [Passive, Line]', pos: { x: 0, y: 0 }, uuid: 'c9054f05-06f5-43bd-826d-6eb0fa5bcb73' }] },
+    ] }],
+  };
+
+  /**
+   * A schematic engine with our Editing window exports: a symbol R1 held on
+   * "/" (and, with `reused`, on SUB too); kicadSymbolSet queues the change
+   * `applyMs` later on its apply queue (the read back then shows it, unless
+   * `ignore`); kicadAnnotate and kicadCheckSheet write their record (and the
+   * check its report) into the folder they are handed `applyMs` later.
+   */
+  function editor(opts: { frame?: 'sch' | 'pcb'; exports?: boolean; applyMs?: number; refuse?: boolean; ignore?: boolean; reused?: boolean; annotate?: unknown; check?: unknown; report?: unknown } = {}) {
+    const { page, parent } = fakePage(`?frame=${opts.frame ?? 'sch'}&theme=day`);
+    const r = startResponder({ parentOrigin: PARENT, page });
+    started.push(r);
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    const queue = { until: 0 };
+    const state = { sheet: sheetOf() as Record<string, unknown>, depth: 0, gets: [] as string[][], sets: [] as unknown[], runs: [] as Array<{ op: string; args: Record<string, unknown> }> };
+    const mod = eng.Module as Record<string, unknown>;
+    const later = (fn: () => void): void => {
+      const ms = opts.applyMs ?? 5;
+      queue.until = Date.now() + ms;
+      setTimeout(fn, ms);
+    };
+    if (opts.exports !== false) {
+      mod.kicadCollabBusy = () => Date.now() < queue.until;
+      mod.kicadCollabTestUndoDepth = () => state.depth;
+      mod.kicadSymbolGet = vi.fn((uuid: string, path: string) => {
+        state.gets.push([uuid, path]);
+        if (uuid !== R1) return '';
+        const on = opts.reused && path === SUB ? SUB : '/';
+        return JSON.stringify({ ...state.sheet, sheetPath: on });
+      });
+      mod.kicadSymbolSet = vi.fn((json: string) => {
+        const a = JSON.parse(json) as { set: Record<string, unknown> };
+        state.sets.push(a);
+        if (opts.refuse) return false;
+        later(() => {
+          if (!opts.ignore) state.sheet = { ...state.sheet, ...a.set };
+          state.depth += 1;
+        });
+        return true;
+      });
+      const run = (op: string, done: unknown, report?: unknown) => vi.fn((json: string) => {
+        const args = JSON.parse(json) as { dir: string };
+        state.runs.push({ op, args });
+        if (opts.refuse) return false;
+        if (opts.applyMs === -1) return true;
+        later(() => {
+          eng.win.FS!.mkdirTree(args.dir);
+          if (report !== undefined) eng.win.FS!.writeFile(`${args.dir}/erc.json`, JSON.stringify(report));
+          eng.win.FS!.writeFile(`${args.dir}/${op === 'annotate' ? '.cc-annotate.json' : '.cc-erc.json'}`, JSON.stringify(done));
+          if (op === 'annotate' && (done as { changes: unknown[] }).changes.length > 0) state.depth += 1;
+        });
+        return true;
+      });
+      mod.kicadAnnotate = run('annotate', opts.annotate ?? { changes: [{ uuid: R1, sheetPath: '/', from: 'R?', to: 'R1' }], lines: [{ severity: 'action', text: 'Updated R?' }, { severity: 'error', text: 'Duplicate items U30E' }] });
+      mod.kicadCheckSheet = run('check', opts.check ?? { code: 0, lines: [{ severity: 'info', text: 'Found 1 violations' }] }, opts.report === undefined ? REPORT : opts.report);
+    }
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    let id = 0;
+    const send = (op: string, args?: unknown): number => {
+      const n = ++id;
+      port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+      return n;
+    };
+    const answer = async (n: number) => {
+      for (let i = 0; i < 400 && !got.some((m) => m.id === n); i++) await settle(5);
+      return got.find((m) => m.id === n);
+    };
+    const request = (op: string, args?: unknown) => answer(send(op, args));
+    const runFiles = () => [...eng.files.keys(), ...eng.dirs].filter((p) => p.startsWith('/tmp/cc-annotate/') || p.startsWith('/tmp/cc-erc/'));
+    return { eng, got, state, send, answer, request, runFiles };
+  }
+
+  it('lists symbol, annotate and check in ev.ready when the engine has the exports, in either frame\'s kind, and none on an engine without them', async () => {
+    for (const frame of ['sch', 'pcb'] as const) {
+      const s = editor({ frame });
+      await settle();
+      const caps = s.got.find((m) => m.type === 'ev.ready')?.caps as string[];
+      expect(caps).toEqual(expect.arrayContaining(['symbol', 'annotate', 'check']));
+      expect(caps).toEqual([...caps].sort());
+    }
+    const old = editor({ exports: false });
+    await settle();
+    const caps = old.got.find((m) => m.type === 'ev.ready')?.caps as string[];
+    for (const cap of ['symbol', 'annotate', 'check']) expect(caps).not.toContain(cap);
+    expect(await old.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(await old.request('symbol.get', { uuid: R1 })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadSymbolGet' } });
+    expect(await old.request('sheet.annotate', { scope: 'all', order: 'x', reset: false, keep: [] })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadAnnotate' } });
+    expect(await old.request('sheet.check', {})).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadCheckSheet' } });
+    const ops = (await import('./ops.json')).default as string[];
+    expect(ops).toEqual(expect.arrayContaining(['symbol.get', 'symbol.set', 'sheet.annotate', 'sheet.check']));
+  });
+
+  it('every op refuses whole, before any effect, in order: the args, the frame, the engine, the schematic, busy', async () => {
+    const pcb = editor({ frame: 'pcb' });
+    expect(await pcb.request('symbol.get', { uuid: 'R1' })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'symbol.get' } });
+    for (const [op, args] of [['symbol.get', { uuid: R1 }], ['symbol.set', { uuid: R1, sheetPath: '/', set: { value: 'x' } }], ['sheet.annotate', { scope: 'all', order: 'x', reset: false, keep: [] }], ['sheet.check', {}]] as const) {
+      expect(await pcb.request(op, args)).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'a schematic edits in a sch frame' } });
+    }
+    const s = editor();
+    for (const [op, args] of [['symbol.get', {}], ['symbol.set', { uuid: R1, set: { value: 'x' } }], ['symbol.set', { uuid: R1, sheetPath: '/', set: {} }], ['sheet.annotate', { scope: 'all' }], ['sheet.check', { run: 1 }]] as const) {
+      expect(await s.request(op, args)).toMatchObject({ ok: false, error: { code: 'bad_args', message: op } });
+    }
+    expect(await s.request('symbol.get', { uuid: R1 })).toMatchObject({ ok: false, error: { code: 'not_ready', message: 'symbol.get' } });
+    expect(await s.request('sheet.check', {})).toMatchObject({ ok: false, error: { code: 'not_ready', message: 'sheet.check' } });
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    s.eng.dialogs.push({ typeName: 'wxDialog', visible: true });
+    for (const [op, args] of [['symbol.get', { uuid: R1 }], ['symbol.set', { uuid: R1, sheetPath: '/', set: { value: 'x' } }], ['sheet.annotate', { scope: 'all', order: 'x', reset: false, keep: [] }], ['sheet.check', {}]] as const) {
+      expect(await s.request(op, args)).toMatchObject({ ok: false, error: { code: 'busy', message: op } });
+    }
+    s.eng.dialogs.length = 0;
+    expect(s.state.sets).toEqual([]);
+    expect(s.state.runs).toEqual([]);
+    expect(s.runFiles()).toEqual([]);
+  });
+
+  it('symbol.get answers the engine\'s sheet, on the asked path or the engine\'s fallback; not_found for a symbol no sheet holds', async () => {
+    const s = editor({ reused: true });
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    const got = await s.request('symbol.get', { uuid: R1 }) as { ok: boolean; result: Record<string, unknown> };
+    expect(got).toEqual({ id: expect.any(Number), ok: true, result: sheetOf() });
+    expect((await s.request('symbol.get', { uuid: R1, sheetPath: SUB }) as { result: { sheetPath: string } }).result.sheetPath).toBe(SUB);
+    expect(s.state.gets).toEqual([[R1, ''], [R1, SUB]]);
+    expect(await s.request('symbol.get', { uuid: '00000000-0000-0000-0000-000000000001' })).toMatchObject({ ok: false, error: { code: 'not_found', message: '00000000-0000-0000-0000-000000000001' } });
+    (s.eng.Module as Record<string, unknown>).kicadSymbolGet = () => '{"uuid": 1}';
+    expect(await s.request('symbol.get', { uuid: R1 })).toMatchObject({ ok: false, error: { code: 'island_error' } });
+  });
+
+  it('symbol.set queues one change, waits for the apply queue and answers the read back; an ev.edited follows', async () => {
+    const s = editor({ applyMs: 30 });
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    await settle(30);   // the open's baseline read
+    const t0 = Date.now();
+    const got = await s.request('symbol.set', { uuid: R1, sheetPath: '/', set: { value: '4k7', dnp: true } }) as { ok: boolean; result: Record<string, unknown> };
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(25);
+    expect(got.ok).toBe(true);
+    expect(got.result).toEqual(sheetOf({ value: '4k7', dnp: true }));
+    expect(s.state.sets).toEqual([{ uuid: R1, sheetPath: '/', set: { value: '4k7', dnp: true } }]);
+    for (let i = 0; i < 40 && !s.got.some((m) => m.type === 'ev.edited'); i++) await settle(5);
+    expect(s.got.filter((m) => m.type === 'ev.edited')).toEqual([{ type: 'ev.edited', depth: 1 }]);
+  });
+
+  it('symbol.set: not_found off its sheet path, bad_args past the symbol\'s own bounds, not_applied when refused or never read back', async () => {
+    const s = editor({ reused: false });
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(await s.request('symbol.set', { uuid: '00000000-0000-0000-0000-000000000001', sheetPath: '/', set: { value: 'x' } })).toMatchObject({ ok: false, error: { code: 'not_found' } });
+    expect(await s.request('symbol.set', { uuid: R1, sheetPath: SUB, set: { value: 'x' } })).toMatchObject({ ok: false, error: { code: 'not_found', message: `${R1} on ${SUB}` } });
+    expect(await s.request('symbol.set', { uuid: R1, sheetPath: '/', set: { unit: 2 } })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'symbol.set: unit 2 of 1' } });
+    expect(await s.request('symbol.set', { uuid: R1, sheetPath: '/', set: { removeField: 'Value' } })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'symbol.set: Value is not a user field' } });
+    expect(s.state.sets).toEqual([]);
+    const refused = editor({ refuse: true });
+    expect(await refused.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(await refused.request('symbol.set', { uuid: R1, sheetPath: '/', set: { value: 'x' } })).toMatchObject({ ok: false, error: { code: 'not_applied', message: 'symbol.set' } });
+    const symbolMs = timing.symbolMs;
+    timing.symbolMs = 60;
+    try {
+      const ignored = editor({ ignore: true });
+      expect(await ignored.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+      expect(await ignored.request('symbol.set', { uuid: R1, sheetPath: '/', set: { value: 'x' } })).toMatchObject({ ok: false, error: { code: 'not_applied', message: 'symbol.set' } });
+    } finally {
+      timing.symbolMs = symbolMs;
+    }
+  });
+
+  it('sheet.annotate numbers in a fresh folder, answers the changes and the warning and error lines, and removes the folder', async () => {
+    const s = editor({ applyMs: 20 });
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    s.eng.win.FS!.mkdirTree('/tmp/cc-annotate/9');
+    s.eng.win.FS!.writeFile('/tmp/cc-annotate/9/.cc-annotate.json', '{"changes":[],"lines":[]}');
+    const got = await s.request('sheet.annotate', { scope: 'sheet', order: 'y', reset: true, keep: [R1, R1] });
+    expect(got).toMatchObject({ ok: true, result: { changes: [{ uuid: R1, sheetPath: '/', from: 'R?', to: 'R1' }], notes: ['Duplicate items U30E'] } });
+    expect(s.state.runs).toEqual([{ op: 'annotate', args: { run: 1, dir: '/tmp/cc-annotate/1', scope: 'sheet', order: 'y', reset: true, keep: [R1] } }]);
+    expect(s.runFiles()).toEqual([]);
+    const refused = editor({ refuse: true });
+    expect(await refused.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(await refused.request('sheet.annotate', { scope: 'all', order: 'x', reset: false, keep: [] })).toMatchObject({ ok: false, error: { code: 'not_applied', message: 'sheet.annotate' } });
+    expect(refused.runFiles()).toEqual([]);
+    const annotateMs = timing.annotateMs;
+    timing.annotateMs = 60;
+    try {
+      const lost = editor({ applyMs: -1 });
+      expect(await lost.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+      expect(await lost.request('sheet.annotate', { scope: 'all', order: 'x', reset: false, keep: [] })).toMatchObject({ ok: false, error: { code: 'not_applied' } });
+      expect(lost.runFiles()).toEqual([]);
+    } finally {
+      timing.annotateMs = annotateMs;
+    }
+  });
+
+  it('sheet.check answers KiCad\'s report read into sheets and findings, and removes the folder', async () => {
+    const s = editor({ applyMs: 20 });
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    const got = await s.request('sheet.check');
+    expect(got).toMatchObject({ ok: true, result: { errors: 1, warnings: 0, sheets: [{ path: '/', name: '/', violations: [{ type: 'pin_not_connected', severity: 'error', items: [{ uuid: 'c9054f05-06f5-43bd-826d-6eb0fa5bcb73', description: 'Symbol R1 Pin 2 [Passive, Line]' }] }] }] } });
+    expect(s.state.runs).toEqual([{ op: 'check', args: { run: 1, dir: '/tmp/cc-erc/1' } }]);
+    expect(s.runFiles()).toEqual([]);
+    const failed = editor({ check: { code: 1, lines: [{ severity: 'error', text: 'the report was not written' }] } });
+    expect(await failed.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(await failed.request('sheet.check', {})).toMatchObject({ ok: false, error: { code: 'island_error', message: 'the report was not written' } });
+    const odd = editor({ report: { sheets: [{ path: '/', uuid_path: 'root', violations: [] }] } });
+    expect(await odd.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(await odd.request('sheet.check', {})).toMatchObject({ ok: false, error: { code: 'island_error', message: 'the check report was of another shape' } });
+    expect(odd.runFiles()).toEqual([]);
+  });
+
+  it('while a check runs, every op that changes the document answers busy at once; the reads still run', async () => {
+    const s = editor({ applyMs: 150 });
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    const check = s.send('sheet.check');
+    await settle(20);
+    expect(await s.request('symbol.set', { uuid: R1, sheetPath: '/', set: { value: 'x' } })).toMatchObject({ ok: false, error: { code: 'busy', message: 'symbol.set' } });
+    expect(await s.request('sheet.annotate', { scope: 'all', order: 'x', reset: false, keep: [] })).toMatchObject({ ok: false, error: { code: 'busy', message: 'sheet.annotate' } });
+    expect(await s.request('sheet.check', {})).toMatchObject({ ok: false, error: { code: 'busy', message: 'sheet.check' } });
+    expect(await s.request('key.press', { key: 'a', code: 'KeyA' })).toMatchObject({ ok: false, error: { code: 'busy', message: 'key.press' } });
+    expect(await s.request('project.save')).toMatchObject({ ok: false, error: { code: 'busy', message: 'project.save' } });
+    expect(await s.request('symbol.get', { uuid: R1 })).toMatchObject({ ok: true });
+    expect(await s.request('sheet.tree')).toMatchObject({ ok: true });
+    expect(s.got.some((m) => m.id === check)).toBe(false);
+    expect(await s.answer(check)).toMatchObject({ ok: true, result: { errors: 1 } });
+    expect(s.state.sets).toEqual([]);
+    // After the answer the document takes changes again.
+    expect(await s.request('symbol.set', { uuid: R1, sheetPath: '/', set: { value: 'x' } })).toMatchObject({ ok: true });
+    expect(s.got.filter((m) => m.type === 'ev.edited').length).toBeLessThanOrEqual(1);
+  });
+});
