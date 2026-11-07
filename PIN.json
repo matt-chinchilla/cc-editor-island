@@ -1,5 +1,5 @@
 {
-  "islandId": "v0.2.3-cc14",
+  "islandId": "v0.2.3-cc15",
   "pcbjam": {
     "tag": "v0.2.3",
     "root": "7ec51c1c55aab45b21cd2956af413b4420520838",
@@ -19,7 +19,7 @@
     "toolTag": "v0.2.3",
     "build": {
       "recipe": "cc/main",
-      "pcbjam": "27d82c28b35a07a8dc75cefe8f8c0b86a40e2c88",
+      "pcbjam": "e8b2abe44812a2e7bdddadbdad6c883b3251fcb9",
       "kicad": "e767bb333475677bccf900c781ba7b91a67bb19b",
       "wxwidgets": "d235efd78f89a26b44b7785bf14f1b6c6c465939",
       "shared": "7791275bdfbf54e1500e303121dacaa2c3fd7d00",
@@ -33,7 +33,10 @@
         "kicadPlotBoard, the board's Gerbers and drill files plotted with no KiCad dialog through KiCad's own JOB_EXPORT_PCB_GERBERS and JOB_EXPORT_PCB_DRILL on the apply coroutine (pcbjam cc/main 924d67c; the island's project.plot, the plot cap)",
         "JobExportGerbers render settings repair, each plotted layer's PCB_RENDER_SETTINGS deleted with its plotter as PCB_PLOTTER::Plot does (kicad cc/main e767bb33, pinned by pcbjam cc/main 3798191; every plotted layer leaked one, and the editor's memory never shrinks)",
         "kicadSetChrome holds the hidden chrome: handlers on the frame's wxAuiManager render and size events hide any pane but the canvas, the menu bar and the status bar that come back while it is hidden, before the stale layout draws, and window.kicadChrome.onChange reports each flip of the real state, kicadChromeShown reads it (pcbjam cc/main 27d82c2; a pane toggle such as Ctrl+H, a pane's close button, which rebuilt the menu bar, a save, a load and a theme change had brought KiCad's chrome back over the canvas-only editor)",
-        "AUI caption offset repair, Repaint and the pane button hover no longer shift the WASM port's client DC by the client area origin it already starts at (wxwidgets cc/main d235efd; with KiCad's menus shown every pane caption drew one menu bar lower, over the pane's first row)"
+        "AUI caption offset repair, Repaint and the pane button hover no longer shift the WASM port's client DC by the client area origin it already starts at (wxwidgets cc/main d235efd; with KiCad's menus shown every pane caption drew one menu bar lower, over the pane's first row)",
+        "kicadSymbolGet and kicadSymbolSet, one symbol instance read by uuid as the island's SymbolSheet JSON (the asked sheet path, else the shown sheet, else the first path holding it, the footprint filters beside it) and changed through closed JSON as ONE SCH_COMMIT pushed as \"Edit symbol\" (one undo step; the symbol properties dialog's own setters, the other units kept in step) (pcbjam cc/main e8b2abe; the island's symbol.get and symbol.set, the symbol cap)",
+        "kicadAnnotate, the parts numbered through SCH_EDIT_FRAME::AnnotateSymbols, or with kept designators through its own reference lists with the kept ones as additional references, into one commit pushed as \"Number the parts\" (none when nothing moved), with the done file .cc-annotate.json written last (pcbjam cc/main e8b2abe; the island's sheet.annotate, the annotate cap)",
+        "kicadCheckSheet, KiCad's electrical rules check with the ERC dialog's preparation and the ERC job's body (ERC_TESTER, ERC_REPORT JSON in mm) without the job's library load wait, no commit and the modified flags kept, with the done file .cc-erc.json written last (pcbjam cc/main e8b2abe; the island's sheet.check, the check cap)"
       ],
       "reproduction": {
         "pristine": {
@@ -47,35 +50,35 @@
     },
     "files": {
       "kicad_editor.js": {
-        "sha256": "272447ee8c1022439ae78764481f2943180e2cbf929441fdf1ccb38eced7fcbd",
-        "bytes": 488668,
-        "source": "27d82c28b35a07a8dc75cefe8f8c0b86a40e2c88"
+        "sha256": "5f1f5d6ea49200cdcfebf407952c7d5a1a68279eb55951effc1639a6b2c238f9",
+        "bytes": 488669,
+        "source": "e8b2abe44812a2e7bdddadbdad6c883b3251fcb9"
       },
       "kicad_editor.wasm": {
-        "sha256": "2c5261f97a03ee64ed4fbdd05973813825ec46d741c5a3cee9e23b1522868d86",
-        "bytes": 63230604,
-        "source": "27d82c28b35a07a8dc75cefe8f8c0b86a40e2c88"
+        "sha256": "c01c7ab6aaa38ea1736ecb5fc27de84079eaa2c2b64da841f2305c0b0a0b49c8",
+        "bytes": 63288786,
+        "source": "e8b2abe44812a2e7bdddadbdad6c883b3251fcb9"
       },
       "wx.js": {
         "sha256": "42d6b547f9a024f187f1b7812b64a3f76ca322d35393531340cb316ff88da351",
         "bytes": 79808,
-        "source": "27d82c28b35a07a8dc75cefe8f8c0b86a40e2c88"
+        "source": "e8b2abe44812a2e7bdddadbdad6c883b3251fcb9"
       },
       "wx-dom.js": {
         "sha256": "7edabd5571c9f2fd0ea1acf7005fb3628f2e3cf6b8f430f8e473c328fb042a10",
         "bytes": 68699,
-        "source": "27d82c28b35a07a8dc75cefe8f8c0b86a40e2c88"
+        "source": "e8b2abe44812a2e7bdddadbdad6c883b3251fcb9"
       },
       "images.tar.gz": {
-        "sha256": "aa88573a47fb3f9a7d88073a152cd6ecb3bf17f86a3fa5ea554ef95a9c40551a",
-        "bytes": 5369020,
-        "source": "27d82c28b35a07a8dc75cefe8f8c0b86a40e2c88"
+        "sha256": "1db1633c58d0581273c03e8eadefaca47c7c92566d5126f2504737e1f5f88c59",
+        "bytes": 5369842,
+        "source": "e8b2abe44812a2e7bdddadbdad6c883b3251fcb9"
       }
     }
   },
   "icons": {
-    "stockArchiveSha256": "aa88573a47fb3f9a7d88073a152cd6ecb3bf17f86a3fa5ea554ef95a9c40551a",
-    "repackedSha256": "269ff66d9435b2407cbfb6ca4174058f3e3ee23713e51ae943149f17225faefb",
+    "stockArchiveSha256": "1db1633c58d0581273c03e8eadefaca47c7c92566d5126f2504737e1f5f88c59",
+    "repackedSha256": "dde77ff13f357d4856467fed890e7f277cdf6c61834806535ade934ed95d40fd",
     "inputs": {
       "theme/icons/src/add_component.svg": "d8d2dfa56f179658a3b2bd458090683161f188ad13d84d89fdb82f1a0f2a12e6",
       "theme/icons/src/add_line.svg": "64db6c023211cd897ea1f3613fcc4d338bf86fbca3086cf832bf3bf25dd516f0",
