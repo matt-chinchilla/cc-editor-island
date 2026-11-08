@@ -1240,6 +1240,70 @@ describe('ev.chrome', () => {
   });
 });
 
+describe('ev.properties', () => {
+  type Slot = { kicadProperties?: { onRequest?: (json: unknown) => boolean } };
+  const U = '0b9b3c55-6d0e-4c6c-9e86-2f3f1d6f7a01';
+  const ask = (eng: { win: unknown }, o: Record<string, unknown>) => (eng.win as Slot).kicadProperties?.onRequest?.(JSON.stringify(o));
+  const SYM = { type: 'symbol', uuid: U, sheetPath: '/' };
+  const started: Array<{ close: () => void }> = [];
+  afterEach(() => { for (const r of started.splice(0)) r.close(); });
+
+  /** A connected responder over a booted engine; `marker` gives it kicadHostProperties. */
+  function booted(opts: { search?: string; marker?: boolean } = {}) {
+    const { page, parent } = fakePage(opts.search ?? '?frame=sch&theme=day');
+    const r = startResponder({ parentOrigin: PARENT, page });
+    started.push(r);
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    if (opts.marker !== false) (eng.win.Module as Record<string, unknown>).kicadHostProperties = () => true;
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    let id = 0;
+    const request = async (op: string, args?: unknown) => {
+      const n = ++id;
+      port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+      for (let i = 0; i < 100 && !got.some((m) => m.id === n); i++) await settle(5);
+      return got.find((m) => m.id === n);
+    };
+    const props = () => got.filter((m) => m.type === 'ev.properties');
+    const open = () => request('project.open', { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] });
+    return { r, eng, got, request, props, open };
+  }
+
+  it('takes a symbol request in a sch frame with a document open: true, and ev.properties once with exactly its keys', async () => {
+    const s = booted();
+    await settle();
+    expect(s.got.find((m) => m.type === 'ev.ready')?.caps).toContain('properties');
+    expect(await s.open()).toMatchObject({ ok: true });
+    expect(ask(s.eng, { ...SYM, field: 'Value' })).toBe(true);
+    await settle();
+    expect(s.props()).toEqual([{ type: 'ev.properties', uuids: [U], sheetPath: '/' }]);
+    expect(Object.keys(s.props()[0]).sort()).toEqual(['sheetPath', 'type', 'uuids']);
+  });
+
+  it('refuses before a document opens, for anything but a symbol, and after the close: false, nothing sent', async () => {
+    const s = booted();
+    await settle();
+    expect(ask(s.eng, SYM)).toBe(false);
+    expect(await s.open()).toMatchObject({ ok: true });
+    expect(ask(s.eng, { ...SYM, type: 'label' })).toBe(false);
+    expect(ask(s.eng, { ...SYM, uuid: 'U1' })).toBe(false);
+    expect(ask(s.eng, { ...SYM, sheetPath: 'root' })).toBe(false);
+    expect((s.eng.win as Slot).kicadProperties?.onRequest?.('{')).toBe(false);
+    s.r.close();
+    expect(ask(s.eng, SYM)).toBe(false);
+    await settle();
+    expect(s.props()).toEqual([]);
+  });
+
+  it('a pcb frame, or an engine without kicadHostProperties, lists no properties cap and leaves the slot alone', async () => {
+    for (const s of [booted({ search: '?frame=pcb&theme=day' }), booted({ marker: false })]) {
+      await settle();
+      expect(s.got.find((m) => m.type === 'ev.ready')?.caps).not.toContain('properties');
+      expect((s.eng.win as Slot).kicadProperties).toBeUndefined();
+    }
+  });
+});
+
 describe('ev.edited', () => {
   const OPEN = { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] };
   /** Every responder edits() started: closed after each test, so no 5 ms poll outlives its test. */

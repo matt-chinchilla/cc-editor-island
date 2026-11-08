@@ -22,6 +22,7 @@ import { MODEL_EXPORTS, modelsJson, parseModelsArgs, readModels, sameModels } fr
 import REQUEST_OPS from './ops.json';
 import { parsePlotArgs, plotFailure, plotJson, plotNotes, PLOT_DONE, PLOT_EXPORTS, PLOT_ROOT, readPlotDone, readPlotFolder, type PlotDone } from './plot';
 import { placeBlob, PlacementWatch } from './place';
+import { installProperties, PROPERTIES_CAP, PROPERTIES_EXPORT, type PropertiesWindow } from './properties';
 import { misfit, parseSymbolGetArgs, parseSymbolSetArgs, readSymbolSheet, showsSet, SYMBOL_EXPORTS, symbolSetJson, type SymbolSheet } from './symbol';
 import { parseSelectArgs, SELECT_EXPORTS, selectItems, SelectionFeed, type Selection, type SelectionWindow } from './selection';
 import { FitWatch, sampleDrawing, settleView, surfaceKey } from './view';
@@ -39,6 +40,7 @@ export type IslandEvent =
   | { type: 'ev.edited'; depth: number }
   | { type: 'ev.pick'; kind: PickKind; power?: true }
   | ({ type: 'ev.selected' } & Selection)
+  | { type: 'ev.properties'; uuids: string[]; sheetPath: string }
   | { type: 'ev.closing' };
 
 export interface Responder {
@@ -535,6 +537,9 @@ export function startResponder(opts: {
         return;
       case 'ev.selected':
         port.postMessage({ type: ev.type, uuids: [...ev.uuids], fpPaths: [...ev.fpPaths] });
+        return;
+      case 'ev.properties':
+        port.postMessage({ type: ev.type, uuids: [...ev.uuids], sheetPath: ev.sheetPath });
         return;
       case 'ev.closing':
         port.postMessage({ type: ev.type });
@@ -2039,6 +2044,8 @@ export function startResponder(opts: {
   }
 
   let ready = false;
+  /** ev.ready went out: only then does a properties request reach the host. */
+  let readySent = false;
   return {
     emit,
     engineReady(w, engine, help, source) {
@@ -2129,6 +2136,16 @@ export function startResponder(opts: {
       if (SYMBOL_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(SYMBOL_CAP);
       if (ANNOTATE_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(ANNOTATE_CAP);
       if (CHECK_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(CHECK_CAP);
+      // ev.properties: our engine (run 11) asks the page before KiCad's symbol
+      // properties dialog opens; a sch frame takes the request while a document
+      // is open, so the host's own window edits that symbol instead.
+      if (frame === 'sch' && typeof mod[PROPERTIES_EXPORT] === 'function') {
+        caps.push(PROPERTIES_CAP);
+        installProperties(w as unknown as PropertiesWindow, {
+          admit: () => readySent && !closed && !importing && staged != null && opened != null,
+          send: (req) => emit({ type: 'ev.properties', uuids: [req.uuid], sheetPath: req.sheetPath }),
+        });
+      }
       caps.sort();
       // ev.edited: polled only when the engine has the undo depth export at
       // boot; an older build is never polled and nothing is said about it.
@@ -2139,6 +2156,7 @@ export function startResponder(opts: {
       const n = help.attempts();
       if (n > 0) emit({ type: 'ev.state', phase: 'booting', detail: popupNote(n) });
       emit({ type: 'ev.ready', caps, engine });
+      readySent = true;
       // The boot hid the chrome before the listener was there: its state now.
       chromeSay?.();
     },
