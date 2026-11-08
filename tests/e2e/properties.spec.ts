@@ -32,6 +32,10 @@ const events = (page: Page): Promise<Ev[]> => page.evaluate(() => (window as unk
 const of = async (page: Page, type: string): Promise<Ev[]> => (await events(page)).filter((e) => e.type === type);
 const request = (page: Page, op: string, args?: unknown): Promise<Record<string, unknown>> =>
   page.evaluate(([o, a]) => (window as unknown as Harness).__bridge.request(o as string, a), [op, args] as const);
+/** The visible wx elements the engine's registry reports, in the frame's coordinates. */
+const visibleWx = (frame: Frame, filter: { type?: string; label?: string }) =>
+  frame.evaluate((f) => (window as unknown as { wxElementRegistry: { findAll(f: object): Array<{ typeName: string; label: string; centerX: number; centerY: number }> } }).wxElementRegistry
+    .findAll({ ...f, visible: true }).map((e) => ({ typeName: e.typeName, label: e.label, x: e.centerX, y: e.centerY })), filter);
 const median = (xs: number[]): number => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
 
 /** The unnumbered sheet with one local label "SIG" added above the resistors. */
@@ -135,6 +139,13 @@ test('a symbol double-clicked or E over it goes to the host as ev.properties, se
   await page.mouse.dblclick(label.x, label.y);
   await expect.poll(async () => (await of(page, 'ev.menu')).map((e) => e.open), { timeout: 10_000 }).toEqual([true]);
   expect((await of(page, 'ev.properties')).length).toBe(before);
-  await page.keyboard.press('Escape');
+  // It is KiCad's label dialog; its Cancel closes it.
+  expect((await visibleWx(frame, { type: 'wxDialog' })).length).toBe(1);
+  expect((await visibleWx(frame, { label: 'Cancel' })).length).toBeGreaterThan(0);
+  const [cancel] = await visibleWx(frame, { label: 'Cancel' });
+  const box = await page.locator('iframe').boundingBox();
+  if (box == null) throw new Error('no iframe box');
+  await page.mouse.click(box.x + cancel.x, box.y + cancel.y);
   await expect.poll(async () => (await of(page, 'ev.menu')).map((e) => e.open), { timeout: 10_000 }).toEqual([true, false]);
+  expect((await of(page, 'ev.properties')).length).toBe(before);
 });
