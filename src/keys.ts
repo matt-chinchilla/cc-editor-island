@@ -25,10 +25,25 @@ export function parseKeyPress(args: unknown): KeyPress | null {
   return { key: a.key, code: a.code, ctrl, shift, alt };
 }
 
+/**
+ * The key events the island itself dispatches (pressKey): the host keys'
+ * filter (host-keys.ts) never takes one, so a key.press of a claimed chord
+ * still reaches KiCad.
+ */
+const islandKeys = new WeakSet<Event>();
+
+/** Whether this key event is one the island dispatched itself. */
+export function isIslandKey(e: Event): boolean {
+  return islandKeys.has(e);
+}
+
 export function pressKey(win: Window, k: KeyPress): void {
   const init: KeyboardEventInit = { key: k.key, code: k.code, ctrlKey: k.ctrl, shiftKey: k.shift, altKey: k.alt, bubbles: true, cancelable: true };
-  win.dispatchEvent(new KeyboardEvent('keydown', init));
-  win.dispatchEvent(new KeyboardEvent('keyup', init));
+  for (const type of ['keydown', 'keyup']) {
+    const e = new KeyboardEvent(type, init);
+    islandKeys.add(e);
+    win.dispatchEvent(e);
+  }
 }
 
 /** A synthetic click near the canvas's right edge (clear of any item): wx moves keyboard focus to the canvas. */

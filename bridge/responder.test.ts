@@ -361,7 +361,7 @@ describe('startResponder', () => {
     await settle();
     expect(got).toEqual([
       { type: 'ev.state', phase: 'booting', detail: '2 popup attempts blocked' },
-      { type: 'ev.ready', caps: ['kicadLayersGetState', 'kicadLayersSetActive', 'kicadLayersSetVisible', 'kicadOpenFile', 'kicadOpenFileBusy', 'kicadSaveBoard', 'kicadSaveSchematic', 'kicadSetChrome', 'kicadSetReadOnly', 'kicadSheetsEnter', 'kicadSheetsGetTree', 'write'], engine: { tag: 'v0.2.3-cc1', kicad: '10.0' } },
+      { type: 'ev.ready', caps: ['hostKeys', 'kicadLayersGetState', 'kicadLayersSetActive', 'kicadLayersSetVisible', 'kicadOpenFile', 'kicadOpenFileBusy', 'kicadSaveBoard', 'kicadSaveSchematic', 'kicadSetChrome', 'kicadSetReadOnly', 'kicadSheetsEnter', 'kicadSheetsGetTree', 'write'], engine: { tag: 'v0.2.3-cc1', kicad: '10.0' } },
     ]);
     got.length = 0;
 
@@ -1301,6 +1301,111 @@ describe('ev.properties', () => {
       expect(s.got.find((m) => m.type === 'ev.ready')?.caps).not.toContain('properties');
       expect((s.eng.win as Slot).kicadProperties).toBeUndefined();
     }
+  });
+});
+
+describe('keys.claim and ev.key (island v0.2.3-cc17)', () => {
+  const started: Array<{ close: () => void }> = [];
+  afterEach(() => { for (const r of started.splice(0)) r.close(); });
+
+  /** A connected responder; `ready` hands it a booted engine. Keys reach the page as the frame's window gets them. */
+  function claiming(opts: { ready?: boolean } = {}) {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    started.push(r);
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    if (opts.ready !== false) r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    let id = 0;
+    const request = async (op: string, args?: unknown) => {
+      const n = ++id;
+      port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+      for (let i = 0; i < 100 && !got.some((m) => m.id === n); i++) await settle(5);
+      return got.find((m) => m.id === n);
+    };
+    /** A real key on the frame's window: answers whether it went on to KiCad (not canceled). */
+    const fire = (type: string, o: Record<string, unknown>): boolean => {
+      const e = new KeyboardEvent(type, { key: 'x', bubbles: true, cancelable: true, ...o } as KeyboardEventInit);
+      page.dispatch(type, e);
+      return !e.defaultPrevented;
+    };
+    const keys = () => got.filter((m) => m.type === 'ev.key');
+    return { r, eng, page, got, request, fire, keys };
+  }
+
+  it('lists the hostKeys cap in ev.ready, sorted with the rest, and keys.claim in ops.json', async () => {
+    const s = claiming();
+    await settle();
+    const caps = s.got.find((m) => m.type === 'ev.ready')?.caps as string[];
+    expect(caps).toContain('hostKeys');
+    expect(caps).toEqual([...caps].sort());
+    expect((await import('./ops.json')).default as string[]).toContain('keys.claim');
+  });
+
+  it("answers the count claimed and KiCad's own chords refused; a claimed Alt chord becomes one ev.key with exactly its keys", async () => {
+    const s = claiming();
+    expect(await s.request('keys.claim', { chords: [{ code: 'KeyM' }, { code: 'Slash', shift: true }, { code: 'KeyS' }, { code: 'Comma', shift: true }] }))
+      .toEqual({ id: 1, ok: true, result: { claimed: 2, refused: [{ code: 'KeyS', shift: false }, { code: 'Comma', shift: true }] } });
+    expect(s.fire('keydown', { code: 'KeyM', altKey: true })).toBe(false);
+    expect(s.fire('keydown', { code: 'KeyM', altKey: true, repeat: true })).toBe(false);
+    expect(s.fire('keyup', { code: 'KeyM' })).toBe(false);
+    expect(s.fire('keydown', { code: 'Slash', altKey: true, shiftKey: true })).toBe(false);
+    expect(s.fire('keyup', { code: 'Slash', altKey: true, shiftKey: true })).toBe(false);
+    expect(s.fire('keydown', { code: 'KeyS', altKey: true })).toBe(true);
+    expect(s.fire('keydown', { code: 'KeyM' })).toBe(true);
+    expect(s.fire('keydown', { code: 'KeyM', altKey: true, ctrlKey: true })).toBe(true);
+    await settle();
+    expect(s.keys()).toEqual([{ type: 'ev.key', code: 'KeyM', shift: false }, { type: 'ev.key', code: 'Slash', shift: true }]);
+    expect(Object.keys(s.keys()[0]).sort()).toEqual(['code', 'shift', 'type']);
+  });
+
+  it('a claim replaces the last; an empty claim claims nothing; a bad claim changes nothing', async () => {
+    const s = claiming();
+    expect(await s.request('keys.claim', { chords: [{ code: 'KeyM' }] })).toMatchObject({ ok: true, result: { claimed: 1, refused: [] } });
+    for (const bad of [undefined, {}, { chords: 'KeyM' }, { chords: [{ code: 'F1' }] }, { chords: [{ code: 'KeyN', ctrl: true }] }, { chords: [], x: 1 }, { chords: Array.from({ length: 65 }, () => ({ code: 'KeyN' })) }]) {
+      expect(await s.request('keys.claim', bad)).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'keys.claim' } });
+    }
+    expect(s.fire('keydown', { code: 'KeyM', altKey: true })).toBe(false);
+    s.fire('keyup', { code: 'KeyM', altKey: true });
+    expect(await s.request('keys.claim', { chords: [{ code: 'KeyN' }] })).toMatchObject({ ok: true, result: { claimed: 1 } });
+    expect(s.fire('keydown', { code: 'KeyM', altKey: true })).toBe(true);
+    expect(await s.request('keys.claim', { chords: [] })).toMatchObject({ ok: true, result: { claimed: 0, refused: [] } });
+    expect(s.fire('keydown', { code: 'KeyN', altKey: true })).toBe(true);
+    await settle();
+    expect(s.keys()).toEqual([{ type: 'ev.key', code: 'KeyM', shift: false }]);
+  });
+
+  it('answers before the engine is up, and the claim holds from then on', async () => {
+    const early = claiming({ ready: false });
+    expect(await early.request('keys.claim', { chords: [{ code: 'KeyM' }] })).toMatchObject({ ok: true, result: { claimed: 1 } });
+    expect(early.fire('keydown', { code: 'KeyM', altKey: true })).toBe(false);
+  });
+
+  it("the host's own key.press of a claimed chord still reaches the engine and sends no ev.key", async () => {
+    const s = claiming();
+    expect(await s.request('keys.claim', { chords: [{ code: 'KeyM' }] })).toMatchObject({ ok: true });
+    const engine: string[] = [];
+    // The engine window is the frame's window: its dispatch runs the page's listeners, then KiCad's.
+    s.eng.win.dispatchEvent = vi.fn((e: Event) => {
+      s.page.dispatch(e.type, e);
+      if (!e.defaultPrevented) engine.push(`${e.type}:${(e as KeyboardEvent).code}`);
+      return true;
+    });
+    expect(await s.request('key.press', { key: 'm', code: 'KeyM', alt: true })).toMatchObject({ ok: true });
+    expect(engine).toEqual(['keydown:KeyM', 'keyup:KeyM']);
+    await settle();
+    expect(s.keys()).toEqual([]);
+  });
+
+  it('with no claim (an older host) every key goes on to KiCad and no ev.key is ever sent; after the close none either', async () => {
+    const s = claiming();
+    await settle();
+    expect(s.fire('keydown', { code: 'KeyM', altKey: true })).toBe(true);
+    expect(await s.request('keys.claim', { chords: [{ code: 'KeyM' }] })).toMatchObject({ ok: true });
+    s.r.close();
+    expect(s.fire('keydown', { code: 'KeyM', altKey: true })).toBe(true);
+    await settle();
+    expect(s.keys()).toEqual([]);
   });
 });
 

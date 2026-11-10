@@ -9,6 +9,7 @@ import { buildInteractiveImport } from '../loader/src/wasm/import-item';
 import { registerSaveHook, SAVE_COMMITTED, type SaveHookHandle } from '../loader/src/wasm/save-flow';
 import { parseBoot } from '../src/cc-config';
 import { focusCanvas, parseKeyPress, pressKey, type KeyPress } from '../src/keys';
+import { installHostKeys, parseKeysClaim } from '../src/host-keys';
 import { installPickKeys, kindOf, libIds, parseIndexArgs, parseItemArgs, parsePlaceArgs, parsePrefetchArgs, pickFor, takesText, warmLibrary, type KeyPick, type PickerLibs, type PickKind } from '../src/picker';
 import { fileConflict, normalizePath, openStaged, PROJECT_ROOT, stageLocalSettings, stageProject, writeProjectFiles, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
@@ -41,6 +42,7 @@ export type IslandEvent =
   | { type: 'ev.pick'; kind: PickKind; power?: true }
   | ({ type: 'ev.selected' } & Selection)
   | { type: 'ev.properties'; uuids: string[]; sheetPath: string }
+  | { type: 'ev.key'; code: string; shift: boolean }
   | { type: 'ev.closing' };
 
 export interface Responder {
@@ -226,6 +228,18 @@ const OPS: ReadonlySet<string> = new Set(REQUEST_OPS);
  * a key.press, a view.fit or a place sent after it.
  */
 const LIB_OPS = new Set(['lib.index', 'lib.item', 'lib.prefetch']);
+/**
+ * keys.claim: answered as it arrives, off the request queue as well (it changes
+ * only which keys the frame hands to the host, never the engine), so a claim
+ * is never held up by an import, a check or a slow save.
+ */
+const KEYS_CLAIM_OP = 'keys.claim';
+/**
+ * The pseudo-cap ev.ready lists for keys.claim and ev.key (island
+ * v0.2.3-cc17): the op needs nothing of the engine, so every island that
+ * knows it lists it. A host gates its claim on this word.
+ */
+export const HOST_KEYS_CAP = 'hostKeys';
 /** The pseudo-cap ev.ready lists when the picker is available: the place op, ev.pick and a library mirror. */
 export const PICKER_CAP = 'picker';
 /**
@@ -541,6 +555,9 @@ export function startResponder(opts: {
       case 'ev.properties':
         port.postMessage({ type: ev.type, uuids: [...ev.uuids], sheetPath: ev.sheetPath });
         return;
+      case 'ev.key':
+        port.postMessage({ type: ev.type, code: ev.code, shift: ev.shift });
+        return;
       case 'ev.closing':
         port.postMessage({ type: ev.type });
         return;
@@ -568,6 +585,11 @@ export function startResponder(opts: {
         void handleLib(m.data).catch((err: unknown) => answerIslandError(m.data, err));
         return;
       }
+      // So does a key claim: it is answered at once, whatever runs on the queue.
+      if (isKeysClaim(m.data)) {
+        try { keysClaim(m.data); } catch (err) { answerIslandError(m.data, err); }
+        return;
+      }
       // A handler that rejects answers island_error for its own request; the
       // chain itself never rejects, so every later request is still answered.
       // A request is in flight from its arrival to its answer (ev.edited waits).
@@ -581,6 +603,10 @@ export function startResponder(opts: {
   };
   page.addEventListener('message', onConnect);
   page.parent.postMessage({ type: 'cc.hello', proto: 1, nonce, island: __ISLAND_ID__ }, parentOrigin);
+  // The host's Alt chords become ev.key (PROTOCOL.md keys.claim): installed now,
+  // before the engine's scripts load and before the place keys, so these
+  // capture listeners on the window run before any of KiCad's own (src/host-keys.ts).
+  const hostKeys = installHostKeys(page, { onKey: (c) => { if (!closed) emit({ type: 'ev.key', code: c.code, shift: c.shift }); } });
   // KiCad's place keys become ev.pick (PICKER.md): installed now, before the
   // engine's scripts load, so these capture listeners run before KiCad's own.
   installPickKeys(page, {
@@ -602,6 +628,21 @@ export function startResponder(opts: {
     if (!onlyKeys(data as unknown as Record<string, unknown>, ['id', 'op', 'args'])) return reply(id, fail('bad_args', op));
     const a = op === 'lib.index' ? libIndex(data.args) : op === 'lib.item' ? libItem(data.args) : Promise.resolve(libPrefetch(data.args));
     reply(id, await a.catch((err: unknown) => fail('island_error', describeError(err))));
+  }
+
+  /** A well-formed request for keys.claim. */
+  function isKeysClaim(data: unknown): data is { id: number; op: string; args?: unknown } {
+    return isObj(data) && typeof data.id === 'number' && Number.isSafeInteger(data.id) && data.op === KEYS_CLAIM_OP;
+  }
+
+  /** keys.claim (PROTOCOL.md): the whole claimed set replaced; KiCad's own Alt chords answered back as refused. */
+  function keysClaim(data: { id: number; op: string; args?: unknown }): void {
+    if (closed) return;
+    const { id, op } = data;
+    const chords = onlyKeys(data as unknown as Record<string, unknown>, ['id', 'op', 'args']) ? parseKeysClaim(data.args) : null;
+    if (chords == null) return reply(id, fail('bad_args', op));
+    const { claimed, refused } = hostKeys.claim(chords);
+    reply(id, ok({ claimed: claimed.length, refused: refused.map((c) => ({ code: c.code, shift: c.shift })) }));
   }
 
   function answerIslandError(data: unknown, err: unknown): void {
@@ -675,6 +716,7 @@ export function startResponder(opts: {
     if (closed) return;
     stopBridge();
     closed = true;
+    hostKeys.stop();   // every key is KiCad's again
     queued.length = 0;
     page.removeEventListener('message', onConnect);
     if (port != null) {
@@ -2127,6 +2169,8 @@ export function startResponder(opts: {
       }
       // project.write needs only the file system, which is up by now.
       caps.push(WRITE_CAP);
+      // keys.claim and ev.key need nothing of the engine.
+      caps.push(HOST_KEYS_CAP);
       // project.libs: the run time library rows; footprint.models: our engine's export.
       if (projectLibs != null && LIBS_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(PROJECT_LIBS_CAP);
       if (MODEL_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(MODELS_CAP);

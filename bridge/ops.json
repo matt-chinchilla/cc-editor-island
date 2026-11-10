@@ -25,5 +25,6 @@
   "symbol.get",
   "symbol.set",
   "sheet.annotate",
-  "sheet.check"
+  "sheet.check",
+  "keys.claim"
 ]
