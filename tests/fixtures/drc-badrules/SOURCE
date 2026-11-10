@@ -1,0 +1,8 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (c) 2026 Chirichella Inc.
+
+Written by hand for this repository on 2026-11-10: drc-small's rules file
+replaced by one that does not compile (its constraint type misspelled
+"clearence"). The e2e stages drc-small's other files beside it, so the
+check answers rules_invalid. The KiCad file carries no comment, so this
+file holds its license.

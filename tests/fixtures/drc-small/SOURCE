@@ -1,0 +1,21 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (c) 2026 Chirichella Inc.
+
+Written by hand for this repository on 2026-11-10 (engine run A's design,
+section 10), no third-party content but KiCad's Device:R as the unnumbered
+fixture carries it: a two-layer board, 20 by 20 mm (an Edge.Cuts rectangle),
+with R1 and R2 in 0603 and these findings on purpose:
+- a clearance: the VCC track (net class Power, by the pattern VCC in the
+  project file) runs 0.15 mm above R1 pad 1 (SIG), against the custom rule
+  "Tight" of drc-small.kicad_dru (A.NetClass == 'Power', clearance at least
+  0.25 mm; the track is the rule's A in KiCad's track test);
+- a connection not made: R1 pad 1 and R2 pad 2 share SIG, unrouted;
+- a footprint with no symbol: R2 is on the board, not on the schematic (the
+  schematic holds R1 alone, between the global labels SIG and VCC);
+- an excluded finding with its comment: the VCC stub below R2 pad 1 ends in
+  nothing (track_dangling), excluded in the project file;
+plus a board text, a copper area (no net, B.Cu, never filled in the file, so
+a check that fills makes one undo step) and the project file's severities:
+the two library-original checks and isolated copper turned off.
+ids.json names the items' uuids for the tests. The KiCad files carry no
+comment (their formats have none), so this file holds their license.

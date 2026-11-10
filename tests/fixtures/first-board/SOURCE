@@ -1,0 +1,13 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (c) 2026 Chirichella Inc.
+
+Written by hand for this repository on 2026-11-10 (the Update spec's
+fixture, section 9.4), no third-party content but KiCad's Device:R as the
+unnumbered fixture carries it and a plain Device:LED drawn here: a one-sheet
+schematic with R1 (1k, Resistor_SMD:R_0603_1608Metric) and D1 (Red,
+LED_SMD:LED_0603_1608Metric) in series, R1 pin 1 on the global label VIN, R1
+pin 2 wired to D1's anode, D1's cathode on the global label GND; an empty
+two-layer board with a 30 by 20 mm Edge.Cuts outline; the project file. The
+e2e makes its variants at test time (R1 as "R?", the board alone). The KiCad
+files carry no comment (their formats have none), so this file holds their
+license.

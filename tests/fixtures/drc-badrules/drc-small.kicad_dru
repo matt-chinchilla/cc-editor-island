@@ -1,0 +1,4 @@
+(version 1)
+(rule "Broken"
+	(condition "A.NetClass == 'Power'")
+	(constraint clearence (min 0.25mm)))
