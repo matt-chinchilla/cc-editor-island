@@ -237,7 +237,7 @@ export function readExplain(text: unknown): { rule: ExplainResult } | { none: tr
     return null;
   }
   if (!exactKeys(v, EXPLAIN_KEYS) || typeof v.constraint !== 'string' || !CONSTRAINTS.includes(v.constraint)) return null;
-  if ((v.unit !== 'mm' && v.unit !== 'deg') || !numOrNull(v.min) || !numOrNull(v.opt) || !numOrNull(v.max)) return null;
+  if (v.unit !== (v.constraint === 'track_angle' ? 'deg' : 'mm') || !numOrNull(v.min) || !numOrNull(v.opt) || !numOrNull(v.max)) return null;
   if (typeof v.source !== 'string' || !RULE_SOURCES.includes(v.source) || !isText(v.name) || !isText(v.condition, CONDITION_MAX) || !isLayerOrNone(v.layer)) return null;
   if (!Array.isArray(v.items) || v.items.length > 2) return null;
   const items: ExplainResult['items'] = [];
@@ -247,7 +247,7 @@ export function readExplain(text: unknown): { rule: ExplainResult } | { none: tr
   }
   return {
     rule: {
-      constraint: v.constraint as ConstraintKind, unit: v.unit, min: v.min, opt: v.opt, max: v.max,
+      constraint: v.constraint as ConstraintKind, unit: v.unit as ExplainResult['unit'], min: v.min, opt: v.opt, max: v.max,
       source: v.source as RuleSource, name: v.name, condition: v.condition, layer: v.layer, items,
     },
   };

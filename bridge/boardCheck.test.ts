@@ -148,6 +148,7 @@ describe('board.explain', () => {
     expect(readExplain('{"constraint":"none","error":"rules_invalid"}')).toEqual({ none: true, rulesInvalid: true });
     for (const bad of ['', '{', '[]', '{"constraint":"none","error":"other"}', '{"constraint":"none","x":1}',
       explained({ constraint: 'width' }), explained({ unit: 'in' }), explained({ min: 'x' }), explained({ opt: true }), explained({ source: 'magic' }),
+      explained({ unit: 'deg' }), explained({ constraint: 'track_angle', unit: 'mm' }),
       explained({ condition: 'c'.repeat(2049) }), explained({ name: 'n'.repeat(1025) }), explained({ items: [{ uuid: R1_PAD, netclass: 'a' }, { uuid: TRACK, netclass: 'b' }, { uuid: R1, netclass: 'c' }] }),
       explained({ items: [{ uuid: 'x', netclass: 'a' }] }), explained({ extra: 1 })]) {
       expect(readExplain(bad), bad.slice(0, 60)).toBeNull();

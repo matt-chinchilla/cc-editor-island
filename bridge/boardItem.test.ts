@@ -30,7 +30,9 @@ const items = (...xs: unknown[]) => JSON.stringify({ items: xs });
 
 describe('board.item.get args', () => {
   it('takes 1 to 512 lower case uuids and nothing else', () => {
-    expect(parseBoardItemGetArgs({ uuids: [U(1), U(1)] })).toEqual({ uuids: [U(1), U(1)] });
+    expect(parseBoardItemGetArgs({ uuids: [U(1)] })).toEqual({ uuids: [U(1)] });
+    // A uuid asked twice is asked once: an answer never names a uuid twice.
+    expect(parseBoardItemGetArgs({ uuids: [U(2), U(1), U(2)] })).toEqual({ uuids: [U(2), U(1)] });
     expect(parseBoardItemGetArgs({ uuids: Array.from({ length: MAX_GET_UUIDS }, (_, i) => U(i)) })?.uuids).toHaveLength(512);
     for (const bad of [undefined, {}, { uuids: [] }, { uuids: Array.from({ length: 513 }, (_, i) => U(i)) }, { uuids: [U(1).toUpperCase()] }, { uuids: 'x' }, { uuids: [U(1)], extra: 1 }]) {
       expect(parseBoardItemGetArgs(bad)).toBeNull();
@@ -57,10 +59,12 @@ describe('board items', () => {
       track({ layer: 'F Cu' }), track({ width: -1 }), track({ net: 'n'.repeat(513) }), track({ kind: 'wire' }),
       via({ viaType: 'laser' }), via({ top: '' }),
       zone({ padConnection: 'spokes' }), zone({ priority: 1.5 }), zone({ layers: 'F.Cu' }), zone({ netChoices: Array.from({ length: 4097 }, (_, i) => `n${i}`) }),
-      text({ hAlign: 'justify' }), text({ text: 't'.repeat(4097) }), text({ mirrored: 'no' }),
+      text({ hAlign: 'justify' }), text({ text: 't'.repeat(4097) }), text({ text: '' }), text({ mirrored: 'no' }),
       other({ type: 'widget' }), other({ extra: 1 }),
     ];
     for (const b of bad) expect(readBoardItems(items(b)), JSON.stringify(b).slice(0, 80)).toBeNull();
+    // An answer that names one uuid twice is of another shape.
+    expect(readBoardItems(items(footprint(), track({ uuid: U(1) })))).toBeNull();
     for (const raw of ['', '{', '[]', '{"items":{}}', '{"items":[],"x":1}', JSON.stringify({ items: Array.from({ length: 513 }, () => other()) })]) {
       expect(readBoardItems(raw)).toBeNull();
     }
@@ -86,7 +90,7 @@ describe('board.item.set args', () => {
       {}, { x: 1, y: 2 }, { tint: 'red' }, { x: 50_001 }, { x: Number.NaN }, { x: '1' }, { rotation: 361 }, { locked: 'yes' }, { side: 'top' },
       { ref: '' }, { ref: 'R'.repeat(65) }, { ref: 'R\u00011' }, { value: 'v'.repeat(1025) }, { value: 'a\nb' }, { width: 0 }, { width: 1000.5 },
       { layer: '' }, { layer: 'F Cu' }, { priority: -1 }, { priority: 0.5 }, { priority: 1_000_001 }, { padConnection: 'spokes' },
-      { text: 't'.repeat(4097) }, { text: 'a\u0000b' }, { hAlign: 'justify' }, { net: 'n'.repeat(513) }, { name: 'a\u0007' },
+      { text: 't'.repeat(4097) }, { text: '' }, { text: 'a\u0000b' }, { hAlign: 'justify' }, { net: 'n'.repeat(513) }, { name: 'a\u0007' },
     ];
     for (const s of bad) expect(set(s), JSON.stringify(s)).toBeNull();
     for (const a of [undefined, {}, { uuid: U(1) }, { uuid: 'x', set: { x: 1 } }, { uuid: U(1), set: { x: 1 }, extra: 1 }, { uuid: U(1), set: [] }]) {

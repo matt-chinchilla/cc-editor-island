@@ -94,11 +94,15 @@ const H_ALIGNS = ['left', 'center', 'right'] as const;
 const VIA_TYPES = ['through', 'blind', 'buried', 'micro'] as const;
 const OTHER_TYPES = ['pad', 'shape', 'dimension', 'textbox', 'table', 'group', 'image', 'barcode', 'rulearea', 'marker', 'other'] as const;
 
-/** board.item.get's args: exactly `{ uuids }`, 1 to MAX_GET_UUIDS lower case uuids; null for anything else. */
+/**
+ * board.item.get's args: exactly `{ uuids }`, 1 to MAX_GET_UUIDS lower case
+ * uuids, a uuid asked twice kept once (an answer never names a uuid twice);
+ * null for anything else.
+ */
 export function parseBoardItemGetArgs(args: unknown): { uuids: string[] } | null {
   if (!isObj(args) || !exactKeys(args, ['uuids']) || !Array.isArray(args.uuids)) return null;
   if (args.uuids.length < 1 || args.uuids.length > MAX_GET_UUIDS || !args.uuids.every(isUuid)) return null;
-  return { uuids: [...args.uuids] as string[] };
+  return { uuids: [...new Set(args.uuids as string[])] };
 }
 
 const FOOTPRINT_KEYS = ['kind', 'uuid', 'locked', 'ref', 'value', 'libId', 'side', 'x', 'y', 'rotation', 'inBom', 'inPos', 'dnp', 'boardOnly', 'variant', 'symbolPath'];
@@ -143,7 +147,7 @@ function readItem(v: unknown): BoardItemSheet | null {
       };
     }
     case 'text':
-      if (!exactKeys(v, TEXT_KEYS) || !isBool(v.locked) || !isText(v.text, BOARD_TEXT_MAX) || !isLayer(v.layer) || !isPos(v.x) || !isPos(v.y)) return null;
+      if (!exactKeys(v, TEXT_KEYS) || !isBool(v.locked) || !isText(v.text, BOARD_TEXT_MAX) || v.text === '' || !isLayer(v.layer) || !isPos(v.x) || !isPos(v.y)) return null;
       if (!isNum(v.rotation) || Math.abs(v.rotation) > ROTATION_MAX || !isSize(v.height) || !isSize(v.width) || !isSize(v.thickness)) return null;
       if (!isBool(v.bold) || !isBool(v.italic) || !isBool(v.knockout) || !isBool(v.mirrored) || !oneOf(v.hAlign, H_ALIGNS)) return null;
       return {
@@ -162,7 +166,8 @@ function readItem(v: unknown): BoardItemSheet | null {
  * kicadBoardItemGet's answer (`{"items":[...]}`) read closed: every item in
  * the order the engine listed it (the order asked; a uuid the board does not
  * hold left out, a field or a text inside a footprint answered as its
- * footprint once). Null for the empty answer or any other shape.
+ * footprint once). Null for the empty answer, an answer naming one uuid
+ * twice, or any other shape.
  */
 export function readBoardItems(text: unknown): BoardItemSheet[] | null {
   if (typeof text !== 'string' || text === '') return null;
@@ -170,9 +175,11 @@ export function readBoardItems(text: unknown): BoardItemSheet[] | null {
   try { v = JSON.parse(text); } catch { return null; }
   if (!isObj(v) || !exactKeys(v, ['items']) || !Array.isArray(v.items) || v.items.length > MAX_GET_UUIDS) return null;
   const out: BoardItemSheet[] = [];
+  const seen = new Set<string>();
   for (const it of v.items as unknown[]) {
     const item = readItem(it);
-    if (item == null) return null;
+    if (item == null || seen.has(item.uuid)) return null;
+    seen.add(item.uuid);
     out.push(item);
   }
   return out;
@@ -202,7 +209,7 @@ const SET_KEYS: Readonly<Record<string, (v: unknown) => boolean>> = Object.freez
   padConnection: (v: unknown) => oneOf(v, PAD_CONNECTIONS),
   thermalGap: (v: unknown) => isNum(v) && v >= SIZE_MIN_MM && v <= SIZE_MAX_MM,
   spokeWidth: (v: unknown) => isNum(v) && v >= SIZE_MIN_MM && v <= SIZE_MAX_MM,
-  text: (v: unknown) => isText(v, BOARD_TEXT_MAX) && !TEXT_CONTROL_RE.test(v),
+  text: (v: unknown) => isText(v, BOARD_TEXT_MAX) && v !== '' && !TEXT_CONTROL_RE.test(v),
   height: (v: unknown) => isNum(v) && v >= SIZE_MIN_MM && v <= SIZE_MAX_MM,
   thickness: (v: unknown) => isNum(v) && v >= SIZE_MIN_MM && v <= SIZE_MAX_MM,
   bold: isBool,

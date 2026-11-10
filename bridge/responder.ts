@@ -212,12 +212,13 @@ export const timing = {
   /**
    * Engine run A (island v0.2.3-cc18): how long a board.check may take to its
    * record (five times gate 0's steady Glasgow time, at least 60 s, at most
-   * 300 s: the ceiling until the e2e measures it), a board.item.set to read
+   * 300 s: KiCad's own checker in this engine took 3.7 to 4.2 s on Glasgow
+   * with the refill, 2.2 s without, gate 0 2026-11-10), a board.item.set to read
    * back, and a board.preview or board.update to its record (five times the
    * slowest measured case, at least 30 s, at most 120 s: the ceiling until
    * measured).
    */
-  boardCheckMs: 300_000,
+  boardCheckMs: 60_000,
   boardItemMs: 5_000,
   boardUpdateMs: 120_000,
 };
