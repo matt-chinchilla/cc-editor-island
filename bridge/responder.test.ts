@@ -1274,10 +1274,20 @@ describe('ev.properties', () => {
     await settle();
     expect(s.got.find((m) => m.type === 'ev.ready')?.caps).toContain('properties');
     expect(await s.open()).toMatchObject({ ok: true });
-    expect(ask(s.eng, { ...SYM, field: 'Value' })).toBe(true);
+    expect(ask(s.eng, SYM)).toBe(true);
     await settle();
     expect(s.props()).toEqual([{ type: 'ev.properties', uuids: [U], sheetPath: '/' }]);
     expect(Object.keys(s.props()[0]).sort()).toEqual(['sheetPath', 'type', 'uuids']);
+  });
+
+  it('passes the field KiCad named (U, V and F, engine run 12) as field, and only when it named one', async () => {
+    const s = booted();
+    await settle();
+    expect(await s.open()).toMatchObject({ ok: true });
+    expect(ask(s.eng, { ...SYM, field: 'Value' })).toBe(true);
+    expect(ask(s.eng, { ...SYM, field: 'f'.repeat(129) })).toBe(true);
+    await settle();
+    expect(s.props()).toEqual([{ type: 'ev.properties', uuids: [U], sheetPath: '/', field: 'Value' }, { type: 'ev.properties', uuids: [U], sheetPath: '/' }]);
   });
 
   it('refuses before a document opens, for anything but a symbol, and after the close: false, nothing sent', async () => {
@@ -3910,5 +3920,381 @@ describe('the Editing window: symbol.get, symbol.set, sheet.annotate and sheet.c
     // After the answer the document takes changes again.
     expect(await s.request('symbol.set', { uuid: R1, sheetPath: '/', set: { value: 'x' } })).toMatchObject({ ok: true });
     expect(s.got.filter((m) => m.type === 'ev.edited').length).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('engine run A: the board check, the board items, the update, the held keys (island v0.2.3-cc18)', () => {
+  const started: Array<{ close: () => void }> = [];
+  afterEach(() => { for (const r of started.splice(0)) r.close(); });
+  const OPEN_PCB = { name: 'x', files: [{ path: 'card.kicad_pcb', bytes: b('(kicad_pcb)') }, { path: 'card.kicad_sch', bytes: b('(kicad_sch)') }] };
+  const OPEN_PCB_ALONE = { name: 'x', files: [{ path: 'card.kicad_pcb', bytes: b('(kicad_pcb)') }] };
+  const OPEN_SCH = { name: 'x', files: [{ path: 'card.kicad_sch', bytes: b('(kicad_sch)') }] };
+  const FP = 'bbbbbbbb-0000-4000-8000-000000000001';
+  const PAD = 'bbbbbbbb-0000-4000-8000-000000000002';
+  const MARK = 'aaaaaaaa-0000-4000-8000-000000000001';
+  const CHECK = { fill: true, parity: true, allTrackErrors: false };
+  const OPTS = { replaceFootprints: true, deleteExtra: false, relinkByReference: false };
+  const footprint = (o: Record<string, unknown> = {}) => ({
+    kind: 'footprint', uuid: FP, locked: false, ref: 'U3', value: 'STM32', libId: 'Package_QFP:LQFP-48', side: 'front', x: 10, y: 20, rotation: 0,
+    inBom: true, inPos: true, dnp: false, boardOnly: false, variant: '', symbolPath: '', ...o,
+  });
+  const drc = {
+    violations: [{ marker: MARK, type: 'clearance', severity: 'error', excluded: false, comment: '', layer: 'F.Cu', x: 1, y: 2,
+      items: [{ uuid: PAD, kind: 'pad', ref: 'U3', pad: '1', net: 'GND', layer: 'F.Cu', parent: FP, description: 'Pad 1 of U3' }],
+      rule: { source: 'netclass', name: 'Power' }, actual: 0.15, message: 'Clearance violation' }],
+    unconnected: [], parity: [], parityRun: 'yes', filled: false, skipped: [], ignored: [], errors: 1, warnings: 0, excludedCount: 0, depth: 0,
+  };
+  const updateReport = (run: number, o: Record<string, unknown> = {}) => ({
+    run, ok: true, token: 'tok', blocked: '', sheets: [`${ROOT}/card.kicad_sch`],
+    changes: [{ kind: 'add', ref: 'U1', footprint: 'x:y', pins: [], extraPads: [], sameName: false, message: 'Add U1' }],
+    added: [], warnings: 0, errors: 0, truncated: false, unmapped: 0, ...o,
+  });
+
+  /**
+   * A booted engine with run A's exports. kicadCheckBoard and
+   * kicadUpdateBoardFromSchematic write their report and record into the
+   * folder they are handed `applyMs` later (never at -1), holding the apply
+   * queue busy until then; kicadBoardItemSet changes the item `applyMs` later
+   * (unless `ignore`) and raises the undo depth.
+   */
+  function engine(opts: { frame?: 'sch' | 'pcb'; exports?: boolean; applyMs?: number; refuse?: boolean; ignore?: boolean; drcDone?: unknown; drcReport?: unknown; explain?: string; updateDone?: (run: number) => unknown; updateReport?: (run: number) => unknown; dialogDuring?: boolean } = {}) {
+    const { page, parent } = fakePage(`?frame=${opts.frame ?? 'pcb'}&theme=day`);
+    const r = startResponder({ parentOrigin: PARENT, page });
+    started.push(r);
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    const queue = { until: 0, hold: false };
+    const state = { item: footprint() as Record<string, unknown>, depth: 0, sets: [] as unknown[], runs: [] as Array<Record<string, unknown>> };
+    const mod = eng.Module as Record<string, unknown>;
+    const later = (fn: () => void): void => {
+      const ms = opts.applyMs ?? 5;
+      if (ms < 0) { queue.hold = true; return; }
+      queue.until = Date.now() + ms;
+      setTimeout(fn, ms);
+    };
+    const dialog = (): void => {
+      if (!opts.dialogDuring) return;
+      const m = eng.showModal({ id: 'd1', title: 'Save Changes?', x: 10, y: 10, w: 200, h: 100, buttons: [{ label: 'Save' }, { label: 'Cancel', on: () => eng.hideModal(m) }] });
+    };
+    if (opts.exports !== false) {
+      mod.kicadCollabBusy = () => queue.hold || Date.now() < queue.until || eng.modals.length > 0;
+      mod.kicadCollabTestUndoDepth = () => state.depth;
+      mod.kicadCheckBoard = vi.fn((json: string) => {
+        const a = JSON.parse(json) as { dir: string };
+        state.runs.push({ op: 'check', ...a });
+        if (opts.refuse) return false;
+        dialog();
+        later(() => {
+          eng.win.FS!.mkdirTree(a.dir);
+          if (opts.drcReport !== null) eng.win.FS!.writeFile(`${a.dir}/drc.json`, JSON.stringify(opts.drcReport ?? drc));
+          eng.win.FS!.writeFile(`${a.dir}/.cc-drc.json`, JSON.stringify(opts.drcDone ?? { code: 0, error: '', message: '', lines: [] }));
+        });
+        return true;
+      });
+      mod.kicadExplainViolation = vi.fn((m: string) => (m === MARK ? (opts.explain ?? JSON.stringify({ constraint: 'clearance', unit: 'mm', min: 0.2, opt: null, max: null, source: 'netclass', name: 'Power', condition: '', layer: 'F.Cu', items: [] })) : ''));
+      mod.kicadBoardItemGet = vi.fn((json: string) => {
+        const uuids = JSON.parse(json) as string[];
+        return JSON.stringify({ items: uuids.includes(FP) || uuids.includes(PAD) ? [state.item] : [] });
+      });
+      mod.kicadBoardItemSet = vi.fn((json: string) => {
+        const a = JSON.parse(json) as { uuid: string; set: Record<string, unknown> };
+        state.sets.push(a);
+        if (opts.refuse) return false;
+        later(() => { if (!opts.ignore) state.item = { ...state.item, ...a.set }; state.depth += 1; });
+        return true;
+      });
+      mod.kicadUpdateBoardFromSchematic = vi.fn((json: string) => {
+        const a = JSON.parse(json) as { run: number; dir: string; apply: boolean };
+        state.runs.push({ op: 'update', ...a });
+        if (opts.refuse) return false;
+        dialog();
+        later(() => {
+          eng.win.FS!.mkdirTree(a.dir);
+          const rep = opts.updateReport ? opts.updateReport(a.run) : updateReport(a.run, a.apply ? { added: ['U1'] } : {});
+          if (rep !== null) eng.win.FS!.writeFile(`${a.dir}/report.json`, JSON.stringify(rep));
+          eng.win.FS!.writeFile(`${a.dir}/.cc-update.json`, JSON.stringify(opts.updateDone ? opts.updateDone(a.run) : { error: '', message: '', lines: [] }));
+          if (a.apply) state.depth += 1;
+        });
+        return true;
+      });
+      mod.kicadHostBoardProperties = () => true;
+      mod.kicadHostProperties = () => true;
+      mod.kicadHostActions = () => true;
+    }
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    let id = 0;
+    const send = (op: string, args?: unknown): number => {
+      const n = ++id;
+      port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+      return n;
+    };
+    const answer = async (n: number) => {
+      for (let i = 0; i < 400 && !got.some((m) => m.id === n); i++) await settle(5);
+      return got.find((m) => m.id === n);
+    };
+    const request = (op: string, args?: unknown) => answer(send(op, args));
+    const runFiles = () => [...eng.files.keys(), ...eng.dirs].filter((p) => p.startsWith('/tmp/cc-drc/') || p.startsWith('/tmp/cc-update/'));
+    type Slots = { kicadHostAction?: { onRequest?: (j: unknown) => boolean }; kicadProperties?: { onRequest?: (j: unknown) => boolean } };
+    const slots = eng.win as unknown as Slots;
+    return { r, page, eng, got, state, send, answer, request, runFiles, slots, queue };
+  }
+  const NEW_CAPS = ['boardItem', 'boardProperties', 'boardUpdate', 'drc', 'explain', 'heldKeys'];
+  const NEW_OPS = ['board.preview', 'board.update', 'board.check', 'board.explain', 'board.item.get', 'board.item.set'];
+
+  it('lists the six caps in either frame\'s kind when the engine has the exports, none on an older engine, and the six ops in ops.json', async () => {
+    for (const frame of ['pcb', 'sch'] as const) {
+      const s = engine({ frame });
+      await settle();
+      const caps = s.got.find((m) => m.type === 'ev.ready')?.caps as string[];
+      expect(caps).toEqual(expect.arrayContaining(NEW_CAPS));
+      expect(caps).toEqual([...caps].sort());
+    }
+    const old = engine({ exports: false });
+    await settle();
+    const caps = old.got.find((m) => m.type === 'ev.ready')?.caps as string[];
+    for (const cap of NEW_CAPS) expect(caps).not.toContain(cap);
+    expect(old.slots.kicadHostAction).toBeUndefined();
+    expect(old.slots.kicadProperties).toBeUndefined();
+    expect(await old.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await old.request('board.check', CHECK)).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadCheckBoard' } });
+    expect(await old.request('board.explain', { marker: MARK })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadExplainViolation' } });
+    expect(await old.request('board.item.get', { uuids: [FP] })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadBoardItemGet' } });
+    expect(await old.request('board.preview', OPTS)).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadUpdateBoardFromSchematic' } });
+    const ops = (await import('./ops.json')).default as string[];
+    expect(ops).toEqual(expect.arrayContaining(NEW_OPS));
+  });
+
+  it('every board op refuses whole, before any effect, in order: the args, the frame, the engine, the board, busy', async () => {
+    const valid: Array<[string, unknown]> = [['board.check', CHECK], ['board.explain', { marker: MARK }], ['board.item.get', { uuids: [FP] }], ['board.item.set', { uuid: FP, set: { x: 1 } }], ['board.preview', OPTS], ['board.update', { ...OPTS, token: 't' }]];
+    const sch = engine({ frame: 'sch' });
+    for (const [op] of valid) expect(await sch.request(op, { bad: 1 })).toMatchObject({ ok: false, error: { code: 'bad_args', message: op } });
+    for (const [op, args] of valid) expect(await sch.request(op, args)).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'a board op runs in a pcb frame' } });
+    const s = engine();
+    for (const [op, args] of valid) expect(await s.request(op, args)).toMatchObject({ ok: false, error: { code: 'not_ready', message: op } });
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    s.eng.dialogs.push({ typeName: 'wxDialog', visible: true });
+    for (const [op, args] of valid) expect(await s.request(op, args)).toMatchObject({ ok: false, error: { code: 'busy', message: op } });
+    s.eng.dialogs.length = 0;
+    expect(s.state.sets).toEqual([]);
+    expect(s.state.runs).toEqual([]);
+    expect(s.runFiles()).toEqual([]);
+  });
+
+  it('board.check runs in a fresh folder and answers the report read into its three lists; the folder removed', async () => {
+    const s = engine({ applyMs: 20 });
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    s.eng.win.FS!.mkdirTree('/tmp/cc-drc/9');
+    s.eng.win.FS!.writeFile('/tmp/cc-drc/9/.cc-drc.json', '{}');
+    const got = await s.request('board.check', CHECK) as { ok: boolean; result: Record<string, unknown> };
+    expect(got).toMatchObject({ ok: true, result: { errors: 1, warnings: 0, excludedCount: 0, parityRun: 'yes', depth: 0, violations: [{ marker: MARK, type: 'clearance', rule: { source: 'netclass', name: 'Power' } }] } });
+    expect(s.state.runs).toEqual([{ op: 'check', run: 1, dir: '/tmp/cc-drc/1', ...CHECK }]);
+    expect(s.runFiles()).toEqual([]);
+  });
+
+  it('board.check answers rules_invalid from its record, island_error for a report of another shape, not_applied when refused or never recorded', async () => {
+    const bad = engine({ drcDone: { code: -1, error: 'rules_invalid', message: 'Expected ( in line 3', lines: [] }, drcReport: null });
+    expect(await bad.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await bad.request('board.check', CHECK)).toMatchObject({ ok: false, error: { code: 'rules_invalid', message: 'Expected ( in line 3' } });
+    const odd = engine({ drcReport: { violations: 'none' } });
+    expect(await odd.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await odd.request('board.check', CHECK)).toMatchObject({ ok: false, error: { code: 'island_error', message: 'the check report was of another shape' } });
+    expect(odd.runFiles()).toEqual([]);
+    const refused = engine({ refuse: true });
+    expect(await refused.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await refused.request('board.check', CHECK)).toMatchObject({ ok: false, error: { code: 'not_applied', message: 'board.check' } });
+    const boardCheckMs = timing.boardCheckMs;
+    timing.boardCheckMs = 60;
+    try {
+      const lost = engine({ applyMs: -1 });
+      expect(await lost.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+      expect(await lost.request('board.check', CHECK)).toMatchObject({ ok: false, error: { code: 'not_applied', message: 'board.check' } });
+      expect(lost.runFiles()).toEqual([]);
+    } finally {
+      timing.boardCheckMs = boardCheckMs;
+    }
+  });
+
+  it('board.check closes a dialog met during the run without accepting it and answers island_error with its title', async () => {
+    const s = engine({ applyMs: 30, dialogDuring: true });
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await s.request('board.check', CHECK)).toMatchObject({ ok: false, error: { code: 'island_error', message: 'Save Changes?' } });
+    expect(s.eng.clicks).toEqual(['Save Changes?:Cancel']);
+    expect(s.eng.modals).toEqual([]);
+  });
+
+  it('while a board check runs, a change answers busy at once; the reads are still answered, and the check after', async () => {
+    const s = engine({ applyMs: 150 });
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    const check = s.send('board.check', CHECK);
+    await settle(20);
+    expect(await s.request('board.item.set', { uuid: FP, set: { x: 1 } })).toMatchObject({ ok: false, error: { code: 'busy', message: 'board.item.set' } });
+    expect(await s.request('board.preview', OPTS)).toMatchObject({ ok: false, error: { code: 'busy', message: 'board.preview' } });
+    expect(await s.request('board.check', CHECK)).toMatchObject({ ok: false, error: { code: 'busy', message: 'board.check' } });
+    expect(await s.request('key.press', { key: 'a', code: 'KeyA' })).toMatchObject({ ok: false, error: { code: 'busy', message: 'key.press' } });
+    expect(await s.request('board.item.get', { uuids: [FP] })).toMatchObject({ ok: true });
+    expect(await s.request('board.explain', { marker: MARK })).toMatchObject({ ok: true });
+    expect(await s.request('layers.get')).toMatchObject({ ok: true });
+    expect(s.got.some((m) => m.id === check)).toBe(false);
+    expect(await s.answer(check)).toMatchObject({ ok: true, result: { errors: 1 } });
+    expect(s.state.sets).toEqual([]);
+  });
+
+  it('board.explain answers the rule, no_rule, rules_invalid and not_found', async () => {
+    const s = engine();
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await s.request('board.explain', { marker: MARK })).toMatchObject({ ok: true, result: { constraint: 'clearance', min: 0.2, source: 'netclass', name: 'Power' } });
+    expect(await s.request('board.explain', { marker: PAD })).toMatchObject({ ok: false, error: { code: 'not_found', message: PAD } });
+    for (const [text, code] of [['{"constraint":"none"}', 'no_rule'], ['{"constraint":"none","error":"rules_invalid"}', 'rules_invalid'], ['{"constraint":7}', 'island_error']] as const) {
+      const e = engine({ explain: text });
+      expect(await e.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+      expect(await e.request('board.explain', { marker: MARK })).toMatchObject({ ok: false, error: { code } });
+    }
+  });
+
+  it('board.item.get answers the items the board holds (none is an answer too); island_error for an unreadable one', async () => {
+    const s = engine();
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await s.request('board.item.get', { uuids: [PAD] })).toEqual({ id: expect.any(Number), ok: true, result: { items: [footprint()] } });
+    expect(await s.request('board.item.get', { uuids: [MARK] })).toMatchObject({ ok: true, result: { items: [] } });
+    (s.eng.Module as Record<string, unknown>).kicadBoardItemGet = () => '';
+    expect(await s.request('board.item.get', { uuids: [FP] })).toMatchObject({ ok: false, error: { code: 'island_error' } });
+  });
+
+  it('board.item.set queues one change, waits for the apply queue and answers the item read back; an ev.edited follows', async () => {
+    const s = engine({ applyMs: 30 });
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    await settle(30);
+    const got = await s.request('board.item.set', { uuid: FP, set: { rotation: -90 } });
+    expect(got).toEqual({ id: expect.any(Number), ok: true, result: { item: footprint({ rotation: -90 }) } });
+    expect(s.state.sets).toEqual([{ uuid: FP, set: { rotation: -90 } }]);
+    for (let i = 0; i < 40 && !s.got.some((m) => m.type === 'ev.edited'); i++) await settle(5);
+    expect(s.got.filter((m) => m.type === 'ev.edited')).toEqual([{ type: 'ev.edited', depth: 1 }]);
+  });
+
+  it('board.item.set: not_found for an item the board lacks, bad_args for the item\'s own refusals and the engine\'s, not_applied when never read back', async () => {
+    const s = engine();
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await s.request('board.item.set', { uuid: MARK, set: { x: 1 } })).toMatchObject({ ok: false, error: { code: 'not_found', message: MARK } });
+    expect(await s.request('board.item.set', { uuid: FP, set: { width: 1 } })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'board.item.set: width does not fit a footprint' } });
+    expect(await s.request('board.item.set', { uuid: FP, set: { ref: 'U9' } })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'board.item.set: U3 takes its designator from the schematic' } });
+    expect(s.state.sets).toEqual([]);
+    const refused = engine({ refuse: true });
+    expect(await refused.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await refused.request('board.item.set', { uuid: FP, set: { x: 1 } })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'board.item.set' } });
+    const boardItemMs = timing.boardItemMs;
+    timing.boardItemMs = 60;
+    try {
+      const ignored = engine({ ignore: true });
+      expect(await ignored.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+      expect(await ignored.request('board.item.set', { uuid: FP, set: { x: 1 } })).toMatchObject({ ok: false, error: { code: 'not_applied', message: 'board.item.set' } });
+    } finally {
+      timing.boardItemMs = boardItemMs;
+    }
+  });
+
+  it('board.preview answers the report with the sheets as project paths; board.update the changes and the parts added; the folder removed', async () => {
+    const s = engine({ applyMs: 10 });
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    const preview = await s.request('board.preview', OPTS);
+    expect(preview).toMatchObject({ ok: true, result: { token: 'tok', blocked: '', sheets: ['card.kicad_sch'], changes: [{ kind: 'add', ref: 'U1' }], unmapped: 0 } });
+    const update = await s.request('board.update', { ...OPTS, token: 'tok' });
+    expect(update).toMatchObject({ ok: true, result: { added: ['U1'], changes: [{ kind: 'add' }] } });
+    expect(Object.keys((update as { result: object }).result).sort()).toEqual(['added', 'changes', 'errors', 'truncated', 'unmapped', 'warnings']);
+    expect(s.state.runs).toEqual([
+      { op: 'update', run: 1, dir: '/tmp/cc-update/1', apply: false, ...OPTS, token: '' },
+      { op: 'update', run: 2, dir: '/tmp/cc-update/2', apply: true, ...OPTS, token: 'tok' },
+    ]);
+    expect(s.runFiles()).toEqual([]);
+  });
+
+  it('board.preview and board.update: no_schematic naming the path before the call; the engine\'s stale, not_annotated and schematic_unreadable passed through; a preview\'s blocked list answered', async () => {
+    const alone = engine();
+    expect(await alone.request('project.open', OPEN_PCB_ALONE)).toMatchObject({ ok: true });
+    expect(await alone.request('board.preview', OPTS)).toMatchObject({ ok: false, error: { code: 'no_schematic', message: 'card.kicad_sch' } });
+    expect(alone.state.runs).toEqual([]);
+    for (const code of ['stale', 'not_annotated', 'schematic_unreadable']) {
+      const e = engine({ updateDone: () => ({ error: code, message: `why ${code}`, lines: [] }), updateReport: () => null });
+      expect(await e.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+      expect(await e.request('board.update', { ...OPTS, token: 't' })).toMatchObject({ ok: false, error: { code, message: `why ${code}` } });
+    }
+    const blocked = engine({ updateDone: () => ({ error: 'not_annotated', message: '', lines: [] }), updateReport: (run) => updateReport(run, { blocked: 'not_annotated', token: '', changes: [{ kind: 'problem', code: 'unannotated', severity: 'error', ref: 'R?', pin: '', footprint: '', net: '', name: '', message: '' }] }) });
+    expect(await blocked.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await blocked.request('board.preview', OPTS)).toMatchObject({ ok: true, result: { blocked: 'not_annotated', changes: [{ kind: 'problem', code: 'unannotated' }] } });
+    const other = engine({ updateReport: (run) => updateReport(run + 1) });
+    expect(await other.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await other.request('board.preview', OPTS)).toMatchObject({ ok: false, error: { code: 'island_error' } });
+  });
+
+  it('board.preview closes a dialog met during the run without accepting it and answers schematic_unreadable with its title', async () => {
+    const s = engine({ applyMs: 30, dialogDuring: true });
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await s.request('board.preview', OPTS)).toMatchObject({ ok: false, error: { code: 'schematic_unreadable', message: 'Save Changes?' } });
+    expect(s.eng.clicks).toEqual(['Save Changes?:Cancel']);
+  });
+
+  it('ev.held: a held key is taken once a document is open and sent with exactly its keys; an auto repeat is taken with no event; KiCad keeps the rest', async () => {
+    const s = engine();
+    await settle();
+    const ask = (action: string) => s.slots.kicadHostAction?.onRequest?.(JSON.stringify({ action }));
+    expect(ask('pcbnew.DRCTool.runDRC')).toBe(false);
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    s.page.dispatch('keydown', { type: 'keydown', key: 'F8', code: 'F8', repeat: false });
+    expect(ask('common.Control.updatePcbFromSchematic')).toBe(true);
+    s.page.dispatch('keydown', { type: 'keydown', key: 'F8', code: 'F8', repeat: true });
+    expect(ask('common.Control.updatePcbFromSchematic')).toBe(true);
+    s.page.dispatch('keydown', { type: 'keydown', key: '3', code: 'Digit3', repeat: false });
+    expect(ask('common.Control.show3DViewer')).toBe(true);
+    expect(ask('eeschema.InspectionTool.runERC')).toBe(false);
+    expect(ask('pcbnew.InteractiveEdit.FindMove')).toBe(false);
+    await settle();
+    expect(s.got.filter((m) => m.type === 'ev.held')).toEqual([
+      { type: 'ev.held', action: 'common.Control.updatePcbFromSchematic' },
+      { type: 'ev.held', action: 'common.Control.show3DViewer' },
+    ]);
+    s.r.close();
+    expect(ask('pcbnew.DRCTool.runDRC')).toBe(false);
+  });
+
+  it('ev.held waits on each action\'s own cap: without kicadCheckBoard the board check key stays KiCad\'s', async () => {
+    const s = engine();
+    delete (s.eng.Module as Record<string, unknown>).kicadCheckBoard;
+    const { page, parent } = fakePage('?frame=pcb&theme=day');
+    const r = startResponder({ parentOrigin: PARENT, page });
+    started.push(r);
+    const c = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    r.engineReady(s.eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    c.port.postMessage({ id: 1, op: 'project.open', args: OPEN_PCB });
+    for (let i = 0; i < 100 && !c.got.some((m) => m.id === 1); i++) await settle(5);
+    expect(c.got.find((m) => m.type === 'ev.ready')?.caps).not.toContain('drc');
+    expect(s.slots.kicadHostAction?.onRequest?.(JSON.stringify({ action: 'pcbnew.DRCTool.runDRC' }))).toBe(false);
+    expect(s.slots.kicadHostAction?.onRequest?.(JSON.stringify({ action: 'pcbnew.Control.showLayersManager' }))).toBe(true);
+  });
+
+  it('ev.boardProperties: a pcb frame takes a board item\'s request once a document is open and sends exactly its uuid and kind; a pad is KiCad\'s', async () => {
+    const s = engine();
+    await settle();
+    const ask = (o: Record<string, unknown>) => s.slots.kicadProperties?.onRequest?.(JSON.stringify(o));
+    expect(ask({ type: 'board', uuid: FP, kind: 'footprint' })).toBe(false);
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(ask({ type: 'board', uuid: FP, kind: 'footprint', field: 'Reference' })).toBe(true);
+    expect(ask({ type: 'board', uuid: MARK, kind: 'marker' })).toBe(true);
+    expect(ask({ type: 'board', uuid: PAD, kind: 'pad' })).toBe(false);
+    expect(ask({ type: 'symbol', uuid: FP, sheetPath: '/' })).toBe(false);
+    await settle();
+    expect(s.got.filter((m) => m.type === 'ev.boardProperties')).toEqual([
+      { type: 'ev.boardProperties', uuid: FP, kind: 'footprint' },
+      { type: 'ev.boardProperties', uuid: MARK, kind: 'marker' },
+    ]);
+    expect(s.got.some((m) => m.type === 'ev.properties')).toBe(false);
+  });
+
+  it('a sch frame keeps sending ev.properties for a symbol and never takes a board request', async () => {
+    const s = engine({ frame: 'sch' });
+    await settle();
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(s.slots.kicadProperties?.onRequest?.(JSON.stringify({ type: 'board', uuid: FP, kind: 'footprint' }))).toBe(false);
+    expect(s.slots.kicadProperties?.onRequest?.(JSON.stringify({ type: 'symbol', uuid: FP, sheetPath: '/', field: 'Footprint' }))).toBe(true);
+    await settle();
+    expect(s.got.filter((m) => m.type === 'ev.properties' || m.type === 'ev.boardProperties')).toEqual([{ type: 'ev.properties', uuids: [FP], sheetPath: '/', field: 'Footprint' }]);
   });
 });

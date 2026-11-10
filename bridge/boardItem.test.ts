@@ -83,7 +83,7 @@ describe('board.item.set args', () => {
 
   it('refuses two keys, no key, an unknown key, a wrong type or a value out of bounds', () => {
     const bad: Array<Record<string, unknown>> = [
-      {}, { x: 1, y: 2 }, { colour: 'red' }, { x: 50_001 }, { x: Number.NaN }, { x: '1' }, { rotation: 361 }, { locked: 'yes' }, { side: 'top' },
+      {}, { x: 1, y: 2 }, { tint: 'red' }, { x: 50_001 }, { x: Number.NaN }, { x: '1' }, { rotation: 361 }, { locked: 'yes' }, { side: 'top' },
       { ref: '' }, { ref: 'R'.repeat(65) }, { ref: 'R\u00011' }, { value: 'v'.repeat(1025) }, { value: 'a\nb' }, { width: 0 }, { width: 1000.5 },
       { layer: '' }, { layer: 'F Cu' }, { priority: -1 }, { priority: 0.5 }, { priority: 1_000_001 }, { padConnection: 'spokes' },
       { text: 't'.repeat(4097) }, { text: 'a\u0000b' }, { hAlign: 'justify' }, { net: 'n'.repeat(513) }, { name: 'a\u0007' },

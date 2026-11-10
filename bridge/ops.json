@@ -26,5 +26,11 @@
   "symbol.set",
   "sheet.annotate",
   "sheet.check",
-  "keys.claim"
+  "keys.claim",
+  "board.preview",
+  "board.update",
+  "board.check",
+  "board.explain",
+  "board.item.get",
+  "board.item.set"
 ]

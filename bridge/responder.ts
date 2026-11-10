@@ -15,15 +15,19 @@ import { fileConflict, normalizePath, openStaged, PROJECT_ROOT, stageLocalSettin
 import type { Frame } from '../src/types';
 import { isProjectNick, MAX_PROJECT_LIBS, type ProjectLibrary, type ProjectLibs } from '../src/project-libs';
 import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
-import { ALTIUM_PROJECT, ALTIUM_SHEET, DOCUMENT_EXTENSION as EXT, driveImport, emptySheet, hasExtension, importable, importCall, importTarget } from './import';
-import { dialogUp, dismissPopups, keysBlocked, watchMenus } from './modal';
+import { ALTIUM_PROJECT, ALTIUM_SHEET, closeDialog, dialogTitle, DOCUMENT_EXTENSION as EXT, driveImport, emptySheet, hasExtension, importable, importCall, importTarget } from './import';
+import { dialogUp, dismissPopups, isProgressDialog, keysBlocked, visibleDialogs, watchMenus } from './modal';
+import { BOARD_CHECK_DONE, BOARD_CHECK_EXPORTS, BOARD_CHECK_REPORT, BOARD_CHECK_ROOT, boardCheckJson, EXPLAIN_EXPORTS, parseBoardCheckArgs, parseExplainArgs, readBoardCheckDone, readDrcReport, readExplain, type BoardCheckArgs, type BoardCheckDone } from './boardCheck';
+import { BOARD_ITEM_EXPORTS, boardItemSetJson, parseBoardItemGetArgs, parseBoardItemSetArgs, readBoardItems, setMisfit, showsBoardSet, type BoardItemSheet } from './boardItem';
+import { BOARD_UPDATE_DONE, BOARD_UPDATE_EXPORTS, BOARD_UPDATE_REPORT, BOARD_UPDATE_ROOT, boardUpdateJson, parseBoardPreviewArgs, parseBoardUpdateArgs, previewAnswer, readBoardReport, readBoardUpdateDone, schematicBeside, updateAnswer, type BoardOptions, type BoardUpdateDone } from './boardUpdate';
+import { HELD_EXPORT, HELD_KEYS_CAP, installHeld, type HeldWindow } from './held';
 import { ANNOTATE_DONE, ANNOTATE_EXPORTS, ANNOTATE_ROOT, annotateJson, MAX_CHANGES, parseAnnotateArgs, readAnnotateDone, runNotes, runText, type AnnotateDone } from './annotate';
 import { CHECK_DONE, CHECK_EXPORTS, CHECK_REPORT, CHECK_ROOT, readCheckDone, readCheckReport, type CheckDone } from './check';
 import { MODEL_EXPORTS, modelsJson, parseModelsArgs, readModels, sameModels } from './models';
 import REQUEST_OPS from './ops.json';
 import { parsePlotArgs, plotFailure, plotJson, plotNotes, PLOT_DONE, PLOT_EXPORTS, PLOT_ROOT, readPlotDone, readPlotFolder, type PlotDone } from './plot';
 import { placeBlob, PlacementWatch } from './place';
-import { installProperties, PROPERTIES_CAP, PROPERTIES_EXPORT, type PropertiesWindow } from './properties';
+import { BOARD_PROPERTIES_CAP, BOARD_PROPERTIES_EXPORT, installProperties, PROPERTIES_CAP, PROPERTIES_EXPORT, type BoardPropertiesKind, type PropertiesWindow } from './properties';
 import { misfit, parseSymbolGetArgs, parseSymbolSetArgs, readSymbolSheet, showsSet, SYMBOL_EXPORTS, symbolSetJson, type SymbolSheet } from './symbol';
 import { parseSelectArgs, SELECT_EXPORTS, selectItems, SelectionFeed, type Selection, type SelectionWindow } from './selection';
 import { FitWatch, sampleDrawing, settleView, surfaceKey } from './view';
@@ -41,7 +45,9 @@ export type IslandEvent =
   | { type: 'ev.edited'; depth: number }
   | { type: 'ev.pick'; kind: PickKind; power?: true }
   | ({ type: 'ev.selected' } & Selection)
-  | { type: 'ev.properties'; uuids: string[]; sheetPath: string }
+  | { type: 'ev.properties'; uuids: string[]; sheetPath: string; field?: string }
+  | { type: 'ev.boardProperties'; uuid: string; kind: BoardPropertiesKind }
+  | { type: 'ev.held'; action: string }
   | { type: 'ev.key'; code: string; shift: boolean }
   | { type: 'ev.closing' };
 
@@ -203,6 +209,17 @@ export const timing = {
   symbolMs: 5_000,
   annotateMs: 60_000,
   checkMs: 60_000,
+  /**
+   * Engine run A (island v0.2.3-cc18): how long a board.check may take to its
+   * record (five times gate 0's steady Glasgow time, at least 60 s, at most
+   * 300 s: the ceiling until the e2e measures it), a board.item.set to read
+   * back, and a board.preview or board.update to its record (five times the
+   * slowest measured case, at least 30 s, at most 120 s: the ceiling until
+   * measured).
+   */
+  boardCheckMs: 300_000,
+  boardItemMs: 5_000,
+  boardUpdateMs: 120_000,
 };
 /** KiCad's Next Sheet (eeschema's PgDn, by virtual page number, the top-level sheets included). */
 const NEXT_SHEET_KEY: KeyPress = { key: 'PageDown', code: 'PageDown', ctrl: false, shift: false, alt: false };
@@ -301,12 +318,29 @@ export const SYMBOL_CAP = 'symbol';
 export const ANNOTATE_CAP = 'annotate';
 export const CHECK_CAP = 'check';
 /**
- * While a sheet.check runs (its run holds the editor for seconds: KiCad's ERC
- * on the apply coroutine), every op that would change the document, its view
- * or the editor's state answers busy at once instead of queueing behind it.
- * Only these still run: the reads, and shutdown.
+ * The pseudo-caps ev.ready lists for engine run A's ops (island
+ * v0.2.3-cc18), in either frame's kind (a sch frame answers the board ops
+ * unsupported): `boardUpdate` for board.preview and board.update (our
+ * engine's kicadUpdateBoardFromSchematic), `drc` for board.check
+ * (kicadCheckBoard), `explain` for board.explain (kicadExplainViolation),
+ * `boardItem` for board.item.get and board.item.set (kicadBoardItemGet and
+ * kicadBoardItemSet), the board's ops with the apply queue probe;
+ * `boardProperties` (bridge/properties.ts) and `heldKeys` (bridge/held.ts)
+ * from the engine's markers.
  */
-const CHECK_PASSES: ReadonlySet<string> = new Set(['symbol.get', 'sheet.tree', 'layers.get', 'shutdown']);
+export const BOARD_UPDATE_CAP = 'boardUpdate';
+export const DRC_CAP = 'drc';
+export const EXPLAIN_CAP = 'explain';
+export const BOARD_ITEM_CAP = 'boardItem';
+/** What a board op answers in a sch frame. */
+const BOARD_FRAME_ONLY = 'a board op runs in a pcb frame';
+/**
+ * While a sheet.check or a board.check runs (its run holds the editor for
+ * seconds: KiCad's checker on the apply coroutine), every op that would change
+ * the document, its view or the editor's state answers busy at once instead of
+ * queueing behind it. Only these still run: the reads, and shutdown.
+ */
+const CHECK_PASSES: ReadonlySet<string> = new Set(['symbol.get', 'sheet.tree', 'layers.get', 'board.item.get', 'board.explain', 'shutdown']);
 /** A wx top-level window: the editor's own frame, or another window of KiCad's (its footprint chooser is a frame, not a dialog). */
 const FRAME_TYPE_RE = /Frame/;
 /**
@@ -553,7 +587,15 @@ export function startResponder(opts: {
         port.postMessage({ type: ev.type, uuids: [...ev.uuids], fpPaths: [...ev.fpPaths] });
         return;
       case 'ev.properties':
-        port.postMessage({ type: ev.type, uuids: [...ev.uuids], sheetPath: ev.sheetPath });
+        port.postMessage(typeof ev.field === 'string'
+          ? { type: ev.type, uuids: [...ev.uuids], sheetPath: ev.sheetPath, field: ev.field }
+          : { type: ev.type, uuids: [...ev.uuids], sheetPath: ev.sheetPath });
+        return;
+      case 'ev.boardProperties':
+        port.postMessage({ type: ev.type, uuid: ev.uuid, kind: ev.kind });
+        return;
+      case 'ev.held':
+        port.postMessage({ type: ev.type, action: ev.action });
         return;
       case 'ev.key':
         port.postMessage({ type: ev.type, code: ev.code, shift: ev.shift });
@@ -616,6 +658,11 @@ export function startResponder(opts: {
     onPick: (pick) => emitPick(pick),
   });
 
+  // Whether the last key down in the frame was an auto repeat: a held key's
+  // repeats are taken with no ev.held (bridge/held.ts), so the host hears one press.
+  let keyRepeat = false;
+  page.addEventListener('keydown', (e: Event) => { keyRepeat = (e as KeyboardEvent).repeat === true; }, true);
+
   /** A well-formed request for one of the library reads. */
   function isLibRead(data: unknown): data is { id: number; op: string; args?: unknown } {
     return isObj(data) && typeof data.id === 'number' && Number.isSafeInteger(data.id) && typeof data.op === 'string' && LIB_OPS.has(data.op);
@@ -665,6 +712,7 @@ export function startResponder(opts: {
     if (stopped != null && op !== 'shutdown') return reply(id, fail('not_ready', 'the engine stopped'));
     if (op === 'project.import') return startImport(id, data.args);
     if (op === 'sheet.check') return startCheck(id, data.args);
+    if (op === 'board.check') return startBoardCheck(id, data.args);
     try {
       reply(id, await run(op, data.args));
     } catch (err) {
@@ -828,6 +876,11 @@ export function startResponder(opts: {
       case 'project.plot': return projectPlot(args);
       case 'symbol.get': return symbolGet(args);
       case 'symbol.set': return symbolSet(args);
+      case 'board.explain': return boardExplain(args);
+      case 'board.item.get': return boardItemGet(args);
+      case 'board.item.set': return boardItemSet(args);
+      case 'board.preview': return boardUpdate(op, args);
+      case 'board.update': return boardUpdate(op, args);
       case 'sheet.annotate': return sheetAnnotate(args);
     }
     return fail('unknown_op', op);
@@ -2085,6 +2138,246 @@ export function startResponder(opts: {
     return ok(report as unknown as Record<string, unknown>);
   }
 
+  /**
+   * The checks every board op makes after its args, in order, every one
+   * before any effect: the frame's kind (unsupported in a sch frame), the
+   * engine (not_ready before ev.ready; unsupported naming a missing export), a
+   * board opened by project.open or project.import (not_ready), and busy while
+   * a load is parked, a popup menu or a dialog is up, or an item placed by
+   * place hangs off the pointer.
+   */
+  function boardGate(op: string, exports: readonly string[]): Answer | { w: ToolWindow; mod: Record<string, unknown> } {
+    if (frame !== 'pcb') return fail('unsupported', BOARD_FRAME_ONLY);
+    const w = win;
+    if (w == null) return fail('not_ready', op);
+    const mod = (w.Module ?? {}) as Record<string, unknown>;
+    for (const name of exports) if (typeof mod[name] !== 'function') return fail('unsupported', name);
+    if (staged == null || opened == null) return fail('not_ready', op);
+    if (engineBusy() || keysBlocked(w) || placeWatch?.hanging() === true) return fail('busy', op);
+    return { w, mod };
+  }
+
+  /**
+   * Closes every dialog up but a progress dialog without accepting anything it
+   * asks (bridge/import.ts closeDialog: Cancel, No or Close, else a lone OK,
+   * else its close box). Answers the first one's title, or null when none was up.
+   */
+  function closeRunDialogs(w: ToolWindow): string | null {
+    let first: string | null = null;
+    for (const v of visibleDialogs(w)) {
+      if (isProgressDialog(v)) continue;
+      const title = dialogTitle(w, v);
+      first ??= title === '' ? 'a KiCad dialog' : title;
+      closeDialog(w, v);
+    }
+    return first;
+  }
+
+  /**
+   * One queued run of a board op (board.check, board.preview, board.update):
+   * as queuedRun, and while it runs every dialog met is closed without
+   * accepting it, the first one's title answered beside the record. The queue
+   * is read in short steps so a dialog is seen while the engine waits on it.
+   */
+  async function watchedRun<T>(op: string, w: ToolWindow, FS: EmscriptenFS, dir: string, ms: number, call: () => unknown, record: () => T | null): Promise<{ done: T; dialog: string | null } | Answer> {
+    let queued: unknown;
+    try {
+      queued = await call();
+    } catch (err) {
+      dropRunFolder(FS, dir);
+      return fail('island_error', describeError(err));
+    }
+    if (queued !== true) { dropRunFolder(FS, dir); return fail('not_applied', op); }
+    const deadline = Date.now() + ms;
+    let dialog: string | null = null;
+    for (;;) {
+      if (closed) return fail('island_error', 'the frame closed');
+      const met = closeRunDialogs(w);
+      dialog ??= met;
+      let busy = true;
+      try { busy = w.Module?.kicadCollabBusy?.() === true; } catch { busy = true; }
+      if (!busy) {
+        const done = record();
+        if (done != null) return { done, dialog };
+      }
+      if (Date.now() >= deadline) { closeRunDialogs(w); dropRunFolder(FS, dir); return fail('not_applied', op); }
+      await sleep(timing.applyPollMs);
+    }
+  }
+
+  /** Starts a checked board.check off the request chain; its answer is sent when it ends. */
+  function startBoardCheck(id: number, args: unknown): void {
+    const op = 'board.check';
+    const a = parseBoardCheckArgs(args);
+    if (a == null) return reply(id, fail('bad_args', op));
+    const gate = boardGate(op, BOARD_CHECK_EXPORTS);
+    if ('ok' in gate) return reply(id, gate);
+    checking = true;
+    void boardCheck(gate.w, gate.mod, a)
+      .catch((err: unknown) => fail('island_error', describeError(err)))
+      .then((answer) => { checking = false; reply(id, answer); });
+  }
+
+  /**
+   * board.check (PROTOCOL.md, bridge/boardCheck.ts), past its checks
+   * (startBoardCheck): our engine's kicadCheckBoard runs KiCad's design rules
+   * check in a fresh folder under /tmp/cc-drc/, and once its record
+   * (.cc-drc.json) is there the answer is its report (drc.json) read closed;
+   * the folder is removed. A dialog met meanwhile is closed without accepting
+   * it and the answer is island_error naming it. KiCad's own marks stay on the
+   * board; only the fill, when asked, makes an undo step.
+   */
+  async function boardCheck(w: ToolWindow, mod: Record<string, unknown>, a: BoardCheckArgs): Promise<Answer> {
+    const op = 'board.check';
+    const FS = w.FS;
+    if (FS == null) return fail('island_error', 'the engine has no file system');
+    let dir: string;
+    try { dir = freshRunFolder(FS, BOARD_CHECK_ROOT); } catch (err) { return fail('island_error', describeError(err)); }
+    const run = runs;
+    const t0 = Date.now();
+    const result = await watchedRun<BoardCheckDone>(op, w, FS, dir, timing.boardCheckMs,
+      () => (mod.kicadCheckBoard as (json: string) => unknown)(boardCheckJson(run, dir, a)),
+      () => readBoardCheckDone(readBytes(FS, `${dir}/${BOARD_CHECK_DONE}`)));
+    if (!('done' in result)) return result;
+    const report = readDrcReport(readBytes(FS, `${dir}/${BOARD_CHECK_REPORT}`));
+    dropRunFolder(FS, dir);
+    if (result.dialog != null) return fail('island_error', result.dialog);
+    const { done } = result;
+    if (done.error === 'rules_invalid') return fail('rules_invalid', runText(done.message, dir) || op);
+    if (done.code !== 0) {
+      const first = done.lines.find((l) => l.severity === 'error');
+      return fail('island_error', first != null ? runText(first.text, dir) : `the check ended with code ${done.code}`);
+    }
+    if (report == null) return fail('island_error', 'the check report was of another shape');
+    console.debug('[board-check]', `${report.errors} errors ${report.warnings} warnings`, `${Date.now() - t0} ms`);
+    return ok(report as unknown as Record<string, unknown>);
+  }
+
+  /**
+   * board.explain (PROTOCOL.md, bridge/boardCheck.ts): the checks (bad_args,
+   * then boardGate), then the engine's synchronous read of the rule behind one
+   * mark: not_found when no mark of the board has the uuid, no_rule when KiCad
+   * names no single rule for its code, rules_invalid when the board's custom
+   * rules do not compile.
+   */
+  function boardExplain(args: unknown): Answer {
+    const op = 'board.explain';
+    const a = parseExplainArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = boardGate(op, EXPLAIN_EXPORTS);
+    if ('ok' in gate) return gate;
+    let raw: unknown;
+    try { raw = (gate.mod.kicadExplainViolation as (m: string) => unknown)(a.marker); } catch (err) { return fail('island_error', describeError(err)); }
+    if (raw === '' || raw == null) return fail('not_found', a.marker);
+    const read = readExplain(raw);
+    if (read == null) return fail('island_error', 'the engine answered a rule of another shape');
+    if ('none' in read) return read.rulesInvalid === true ? fail('rules_invalid', op) : fail('no_rule', a.marker);
+    return ok(read.rule as unknown as Record<string, unknown>);
+  }
+
+  /** kicadBoardItemGet's answer read: the items, or null for an answer of another shape (a throw included). */
+  function boardItems(mod: Record<string, unknown>, uuids: readonly string[]): BoardItemSheet[] | null {
+    try { return readBoardItems((mod.kicadBoardItemGet as (json: string) => unknown)(JSON.stringify(uuids))); } catch { return null; }
+  }
+
+  /**
+   * board.item.get (PROTOCOL.md, bridge/boardItem.ts): the checks (bad_args,
+   * then boardGate), then the engine's synchronous read of the items, in the
+   * order asked; an empty list is an answer (the items are gone).
+   */
+  function boardItemGet(args: unknown): Answer {
+    const op = 'board.item.get';
+    const a = parseBoardItemGetArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = boardGate(op, BOARD_ITEM_EXPORTS);
+    if ('ok' in gate) return gate;
+    const items = boardItems(gate.mod, a.uuids);
+    if (items == null) return fail('island_error', 'the engine answered items of another shape');
+    return ok({ items });
+  }
+
+  /**
+   * board.item.set (PROTOCOL.md, bridge/boardItem.ts): the checks (bad_args,
+   * then boardGate), the item (not_found when the board does not hold it), the
+   * item's own refusals (bad_args). Then our engine's kicadBoardItemSet queues
+   * ONE commit (one undo step); bad_args when it refuses the set (a layer the
+   * board does not use, a bound KiCad keeps). The answer is the item read back
+   * once the apply queue is empty and it shows the change; not_applied when it
+   * does not within timing.boardItemMs. An ev.edited follows the answer.
+   */
+  async function boardItemSet(args: unknown): Promise<Answer> {
+    const op = 'board.item.set';
+    const a = parseBoardItemSetArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = boardGate(op, BOARD_ITEM_EXPORTS);
+    if ('ok' in gate) return gate;
+    const { w, mod } = gate;
+    const before = boardItems(mod, [a.uuid]);
+    if (before == null) return fail('island_error', 'the engine answered items of another shape');
+    if (before.length === 0) return fail('not_found', a.uuid);
+    const why = setMisfit(a.set, before[0]);
+    if (why != null) return fail('bad_args', `${op}: ${why}`);
+    const t0 = Date.now();
+    let queued: unknown;
+    try { queued = (mod.kicadBoardItemSet as (json: string) => unknown)(boardItemSetJson(a)); } catch (err) { return fail('island_error', describeError(err)); }
+    if (queued !== true) return fail('bad_args', op);
+    const deadline = Date.now() + timing.boardItemMs;
+    for (;;) {
+      if (closed) return fail('island_error', 'the frame closed');
+      if (await applyIdle(w, Math.max(0, deadline - Date.now()))) {
+        const after = boardItems(mod, [a.uuid]);
+        if (after != null && after.length > 0 && showsBoardSet(a.set, after[0])) {
+          console.debug('[board-item]', a.uuid, Object.keys(a.set).join(' '), `${Date.now() - t0} ms`);
+          return ok({ item: after[0] });
+        }
+      }
+      if (Date.now() >= deadline) return fail('not_applied', op);
+      await sleep(timing.applyPollMs);
+    }
+  }
+
+  /**
+   * board.preview and board.update (PROTOCOL.md, bridge/boardUpdate.ts): the
+   * checks (bad_args, then boardGate, then no_schematic when no schematic sits
+   * beside the opened board with its stem). Then our engine's
+   * kicadUpdateBoardFromSchematic runs KiCad's Update PCB from Schematic (a
+   * dry run for a preview) in a fresh folder under /tmp/cc-update/, and once
+   * its record (.cc-update.json) is there the answer is its report
+   * (report.json) read closed, the sheets as project paths; the folder is
+   * removed. A dialog met meanwhile is closed without accepting it and the
+   * answer is schematic_unreadable naming it. The engine's stale,
+   * not_annotated, schematic_unreadable and island_error pass through; a
+   * preview whose parts are not numbered answers its report, `blocked` saying so.
+   */
+  async function boardUpdate(op: 'board.preview' | 'board.update', args: unknown): Promise<Answer> {
+    const a: (BoardOptions & { token?: string }) | null = op === 'board.preview' ? parseBoardPreviewArgs(args) : parseBoardUpdateArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = boardGate(op, BOARD_UPDATE_EXPORTS);
+    if ('ok' in gate) return gate;
+    const { w, mod } = gate;
+    const FS = w.FS;
+    if (FS == null) return fail('island_error', 'the engine has no file system');
+    const sch = schematicBeside(opened as string);
+    if (!FS.analyzePath(`${root}/${sch}`).exists) return fail('no_schematic', sch);
+    let dir: string;
+    try { dir = freshRunFolder(FS, BOARD_UPDATE_ROOT); } catch (err) { return fail('island_error', describeError(err)); }
+    const run = runs;
+    const t0 = Date.now();
+    const result = await watchedRun<BoardUpdateDone>(op, w, FS, dir, timing.boardUpdateMs,
+      () => (mod.kicadUpdateBoardFromSchematic as (json: string) => unknown)(boardUpdateJson(run, dir, a, op === 'board.update' ? (a.token as string) : null)),
+      () => readBoardUpdateDone(readBytes(FS, `${dir}/${BOARD_UPDATE_DONE}`)));
+    if (!('done' in result)) return result;
+    const report = readBoardReport(readBytes(FS, `${dir}/${BOARD_UPDATE_REPORT}`), run, relInRoot);
+    dropRunFolder(FS, dir);
+    if (result.dialog != null) return fail('schematic_unreadable', result.dialog);
+    const { done } = result;
+    const previewBlocked = op === 'board.preview' && done.error === 'not_annotated' && report?.blocked === 'not_annotated';
+    if (done.error !== '' && !previewBlocked) return fail(done.error, runText(done.message, dir) || op);
+    if (report == null) return fail('island_error', 'the update report was of another shape');
+    console.debug('[board-update]', op, `${report.changes.length} changes`, `${Date.now() - t0} ms`);
+    return ok(op === 'board.preview' ? previewAnswer(report) : updateAnswer(report));
+  }
+
   let ready = false;
   /** ev.ready went out: only then does a properties request reach the host. */
   let readySent = false;
@@ -2180,17 +2473,43 @@ export function startResponder(opts: {
       if (SYMBOL_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(SYMBOL_CAP);
       if (ANNOTATE_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(ANNOTATE_CAP);
       if (CHECK_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(CHECK_CAP);
-      // ev.properties: our engine (run 11) asks the page before KiCad's symbol
-      // properties dialog opens; a sch frame takes the request while a document
-      // is open, so the host's own window edits that symbol instead.
-      if (frame === 'sch' && typeof mod[PROPERTIES_EXPORT] === 'function') {
-        caps.push(PROPERTIES_CAP);
+      // Engine run A: the board's update, check, rule and item exports.
+      if (BOARD_UPDATE_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(BOARD_UPDATE_CAP);
+      if (BOARD_CHECK_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(DRC_CAP);
+      if (EXPLAIN_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(EXPLAIN_CAP);
+      if (BOARD_ITEM_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(BOARD_ITEM_CAP);
+      if (typeof mod[BOARD_PROPERTIES_EXPORT] === 'function') caps.push(BOARD_PROPERTIES_CAP);
+      // ev.properties and ev.boardProperties: our engine asks the page before
+      // KiCad's properties dialogs open (the schematic's from run 11, the
+      // board's from run 12); each frame takes its own kind's request while a
+      // document is open, so the host's own window edits that item instead.
+      const admit = (): boolean => readySent && !closed && !importing && staged != null && opened != null;
+      if (frame === 'sch' && typeof mod[PROPERTIES_EXPORT] === 'function') caps.push(PROPERTIES_CAP);
+      if ((frame === 'sch' && typeof mod[PROPERTIES_EXPORT] === 'function') || (frame === 'pcb' && typeof mod[BOARD_PROPERTIES_EXPORT] === 'function')) {
         installProperties(w as unknown as PropertiesWindow, {
-          admit: () => readySent && !closed && !importing && staged != null && opened != null,
-          send: (req) => emit({ type: 'ev.properties', uuids: [req.uuid], sheetPath: req.sheetPath }),
+          frame,
+          admit,
+          send: (req) => {
+            if (req.type === 'board') emit({ type: 'ev.boardProperties', uuid: req.uuid, kind: req.kind });
+            else emit(req.field === undefined ? { type: 'ev.properties', uuids: [req.uuid], sheetPath: req.sheetPath } : { type: 'ev.properties', uuids: [req.uuid], sheetPath: req.sheetPath, field: req.field });
+          },
         });
       }
       caps.sort();
+      // ev.held: our engine (run 12) asks the page before a hotkey's action;
+      // the frame holds the actions whose windows the host replaces, each only
+      // under the cap its replacement needs (bridge/held.ts).
+      if (typeof mod[HELD_EXPORT] === 'function') {
+        caps.push(HELD_KEYS_CAP);
+        caps.sort();
+        installHeld(w as unknown as HeldWindow, {
+          frame,
+          caps,
+          admit,
+          repeating: () => keyRepeat,
+          send: (action) => emit({ type: 'ev.held', action }),
+        });
+      }
       // ev.edited: polled only when the engine has the undo depth export at
       // boot; an older build is never polled and nothing is said about it.
       if (typeof mod.kicadCollabTestUndoDepth === 'function') {

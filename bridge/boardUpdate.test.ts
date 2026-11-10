@@ -81,7 +81,7 @@ describe('report.json', () => {
       { changes: [{ ...CHANGES[0], kind: 'move' }] },
       { changes: [{ ...CHANGES[0], extra: 1 }] },
       { changes: [{ ...CHANGES[0], pins: [{ pin: '1', net: 'x' }] }] },
-      { changes: [{ ...CHANGES[5], topic: 'colour' }] },
+      { changes: [{ ...CHANGES[5], topic: 'tint' }] },
       { changes: [{ ...CHANGES[11], item: 'track' }] },
       { changes: [{ ...CHANGES[12], code: 'odd' }] },
       { changes: [{ ...CHANGES[12], severity: 'info' }] },
