@@ -1,5 +1,5 @@
 {
-  "islandId": "v0.2.3-cc18",
+  "islandId": "v0.2.3-cc19",
   "pcbjam": {
     "tag": "v0.2.3",
     "root": "7ec51c1c55aab45b21cd2956af413b4420520838",
@@ -19,8 +19,8 @@
     "toolTag": "v0.2.3",
     "build": {
       "recipe": "cc/main",
-      "pcbjam": "3dd83b23ac302367d5c7491fc3914165658fbc18",
-      "kicad": "88eece91dcec25f28da8585409ff5b04eb7b5ea1",
+      "pcbjam": "17cb482f80d4a4b0a90f6b0fc6ddd94f01c5ae1f",
+      "kicad": "8ea2dfa01fc02fa74bb115dfe620097de4a93eb9",
       "wxwidgets": "d235efd78f89a26b44b7785bf14f1b6c6c465939",
       "shared": "7791275bdfbf54e1500e303121dacaa2c3fd7d00",
       "patches": [
@@ -43,7 +43,8 @@
         "U, V and F to the host, SCH_EDIT_TOOL::editFieldText asks window.kicadProperties.onRequest with the symbol and the field's name before KiCad's field dialog (kicad cc/main 0858576f; the island's ev.properties field)",
         "Board properties to the host, EDIT_TOOL::Properties asks window.kicadProperties.onRequest {type: board, uuid, kind} for one footprint (its field or text asked as the footprint), track, arc, via, copper zone, board text or check mark before KiCad's dialogs (kicad cc/main df165234; the island's ev.boardProperties, the boardProperties cap)",
         "BOARD_NETLIST_UPDATER change log, every change, warning and error report also kept as a record for the host's Update the board page (kicad cc/main 88eece91; the island's board.preview and board.update)",
-        "kicadUpdateBoardFromSchematic, kicadCheckBoard, kicadExplainViolation, kicadBoardItemGet and kicadBoardItemSet, and the markers kicadHostBoardProperties and kicadHostActions: KiCad's Update PCB from Schematic through the hidden schematic editor's netlist, its design rules check as records with the board's own severities and exclusions, the rule behind one mark, and one board item read and changed as one undo step, each with no KiCad dialog and the run exports' done files written last (pcbjam cc/main 70fe8e2, bbdf4c6, e34d7a4, 3dd83b2; the island's board ops, the boardUpdate, drc, explain and boardItem caps)"
+        "kicadUpdateBoardFromSchematic, kicadCheckBoard, kicadExplainViolation, kicadBoardItemGet and kicadBoardItemSet, and the markers kicadHostBoardProperties and kicadHostActions: KiCad's Update PCB from Schematic through the hidden schematic editor's netlist, its design rules check as records with the board's own severities and exclusions, the rule behind one mark, and one board item read and changed as one undo step, each with no KiCad dialog and the run exports' done files written last (pcbjam cc/main 70fe8e2, bbdf4c6, e34d7a4, 3dd83b2; the island's board ops, the boardUpdate, drc, explain and boardItem caps)",
+        "VECTOR2I map and set keys under libc++ 22, a __make_transparent specialization so std::map and std::set of points keep KiCad's own std::less<VECTOR2I> where libc++ 22 (emscripten 6.0.6) looked keys up through less<>, which compares lengths, so a point at (x, y) and the one at (y, x) were one key and unrelated wires were joined into one net (kicad cc/main 8ea2dfa0, pinned by pcbjam cc/main 17cb482)"
       ],
       "reproduction": {
         "pristine": {
@@ -59,33 +60,33 @@
       "kicad_editor.js": {
         "sha256": "4ea492463ee8a85c9ad5c32c8c5430a61f57a8330623a9ae2a5a63b1b403b592",
         "bytes": 489614,
-        "source": "3dd83b23ac302367d5c7491fc3914165658fbc18"
+        "source": "17cb482f80d4a4b0a90f6b0fc6ddd94f01c5ae1f"
       },
       "kicad_editor.wasm": {
-        "sha256": "6bb6f54a5526485409f92d1f5963c937824989cfd676af0554044398773ddf64",
-        "bytes": 63456332,
-        "source": "3dd83b23ac302367d5c7491fc3914165658fbc18"
+        "sha256": "b644c0f43fcb83c03665313e66df15cab1f2b4bdc206f1aba78d32144cee295d",
+        "bytes": 63446086,
+        "source": "17cb482f80d4a4b0a90f6b0fc6ddd94f01c5ae1f"
       },
       "wx.js": {
         "sha256": "42d6b547f9a024f187f1b7812b64a3f76ca322d35393531340cb316ff88da351",
         "bytes": 79808,
-        "source": "3dd83b23ac302367d5c7491fc3914165658fbc18"
+        "source": "17cb482f80d4a4b0a90f6b0fc6ddd94f01c5ae1f"
       },
       "wx-dom.js": {
         "sha256": "7edabd5571c9f2fd0ea1acf7005fb3628f2e3cf6b8f430f8e473c328fb042a10",
         "bytes": 68699,
-        "source": "3dd83b23ac302367d5c7491fc3914165658fbc18"
+        "source": "17cb482f80d4a4b0a90f6b0fc6ddd94f01c5ae1f"
       },
       "images.tar.gz": {
-        "sha256": "576904b584ab983ad3e5ad0b9d1cc331b8da5733be2bc68ca9d8d5a244f79a95",
-        "bytes": 5369317,
-        "source": "3dd83b23ac302367d5c7491fc3914165658fbc18"
+        "sha256": "fc229ebfa764a366e34e5feaef24397c0b6d736e59af72aca1135b3da0cb4a00",
+        "bytes": 5369853,
+        "source": "17cb482f80d4a4b0a90f6b0fc6ddd94f01c5ae1f"
       }
     }
   },
   "icons": {
-    "stockArchiveSha256": "576904b584ab983ad3e5ad0b9d1cc331b8da5733be2bc68ca9d8d5a244f79a95",
-    "repackedSha256": "77ee38c52434058d6e09a8028746c88fb4738d2c63cd20af20613c70205a170a",
+    "stockArchiveSha256": "fc229ebfa764a366e34e5feaef24397c0b6d736e59af72aca1135b3da0cb4a00",
+    "repackedSha256": "f509d733051e3269c948c7c5dab57a62631623912a16582830f9910a66538908",
     "inputs": {
       "theme/icons/src/add_component.svg": "d8d2dfa56f179658a3b2bd458090683161f188ad13d84d89fdb82f1a0f2a12e6",
       "theme/icons/src/add_line.svg": "64db6c023211cd897ea1f3613fcc4d338bf86fbca3086cf832bf3bf25dd516f0",
