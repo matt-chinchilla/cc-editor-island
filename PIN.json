@@ -1,5 +1,5 @@
 {
-  "islandId": "v0.2.3-cc17",
+  "islandId": "v0.2.3-cc18",
   "pcbjam": {
     "tag": "v0.2.3",
     "root": "7ec51c1c55aab45b21cd2956af413b4420520838",
@@ -19,8 +19,8 @@
     "toolTag": "v0.2.3",
     "build": {
       "recipe": "cc/main",
-      "pcbjam": "b1b56352982449b7f8105d0aafaa05ef72359766",
-      "kicad": "ffe73d656123559b94c3b06fad7b2b2883106e2c",
+      "pcbjam": "3dd83b23ac302367d5c7491fc3914165658fbc18",
+      "kicad": "88eece91dcec25f28da8585409ff5b04eb7b5ea1",
       "wxwidgets": "d235efd78f89a26b44b7785bf14f1b6c6c465939",
       "shared": "7791275bdfbf54e1500e303121dacaa2c3fd7d00",
       "patches": [
@@ -38,7 +38,12 @@
         "kicadAnnotate, the parts numbered through SCH_EDIT_FRAME::AnnotateSymbols, or with kept designators through its own reference lists with the kept ones as additional references, into one commit pushed as \"Number the parts\" (none when nothing moved), with the done file .cc-annotate.json written last (pcbjam cc/main e8b2abe; the island's sheet.annotate, the annotate cap)",
         "kicadCheckSheet, KiCad's electrical rules check with the ERC dialog's preparation and the ERC job's body (ERC_TESTER, ERC_REPORT JSON in mm) without the job's library load wait, no commit and the modified flags kept, with the done file .cc-erc.json written last (pcbjam cc/main e8b2abe; the island's sheet.check, the check cap)",
         "Symbol properties to the host, SCH_EDIT_TOOL::Properties asks window.kicadProperties.onRequest with the symbol uuid, the current sheet path and a promoted field name before KiCad opens its symbol properties dialog; a truthy answer opens no dialog and keeps the symbol selected (a lone pin or field gives way to its symbol), anything else opens the dialog as before, other items untouched (kicad cc/main ffe73d65, pinned by pcbjam cc/main b1b5635; the double-click, the E key and the context menu opened KiCad dialog over the host Editing window)",
-        "kicadHostProperties, a marker export saying this engine asks the page before the symbol properties dialog (pcbjam cc/main b1b5635; the island ev.properties, the properties cap)"
+        "kicadHostProperties, a marker export saying this engine asks the page before the symbol properties dialog (pcbjam cc/main b1b5635; the island ev.properties, the properties cap)",
+        "RunHotKey asks the host before a hotkey's action: ACTION_MANAGER::RunHotKey calls window.kicadHostAction.onRequest({action}) just before the chosen context or global action runs, a truthy answer consuming the key with no action run (kicad cc/main 49d1ba55; keys only, menus untouched; the island's ev.held, the heldKeys cap)",
+        "U, V and F to the host, SCH_EDIT_TOOL::editFieldText asks window.kicadProperties.onRequest with the symbol and the field's name before KiCad's field dialog (kicad cc/main 0858576f; the island's ev.properties field)",
+        "Board properties to the host, EDIT_TOOL::Properties asks window.kicadProperties.onRequest {type: board, uuid, kind} for one footprint (its field or text asked as the footprint), track, arc, via, copper zone, board text or check mark before KiCad's dialogs (kicad cc/main df165234; the island's ev.boardProperties, the boardProperties cap)",
+        "BOARD_NETLIST_UPDATER change log, every change, warning and error report also kept as a record for the host's Update the board page (kicad cc/main 88eece91; the island's board.preview and board.update)",
+        "kicadUpdateBoardFromSchematic, kicadCheckBoard, kicadExplainViolation, kicadBoardItemGet and kicadBoardItemSet, and the markers kicadHostBoardProperties and kicadHostActions: KiCad's Update PCB from Schematic through the hidden schematic editor's netlist, its design rules check as records with the board's own severities and exclusions, the rule behind one mark, and one board item read and changed as one undo step, each with no KiCad dialog and the run exports' done files written last (pcbjam cc/main 70fe8e2, bbdf4c6, e34d7a4, 3dd83b2; the island's board ops, the boardUpdate, drc, explain and boardItem caps)"
       ],
       "reproduction": {
         "pristine": {
@@ -52,35 +57,35 @@
     },
     "files": {
       "kicad_editor.js": {
-        "sha256": "f49ee1d13a2a9036994a5045bf6705419865f46234f6c1841c9588bb6f7d5831",
-        "bytes": 488986,
-        "source": "b1b56352982449b7f8105d0aafaa05ef72359766"
+        "sha256": "4ea492463ee8a85c9ad5c32c8c5430a61f57a8330623a9ae2a5a63b1b403b592",
+        "bytes": 489614,
+        "source": "3dd83b23ac302367d5c7491fc3914165658fbc18"
       },
       "kicad_editor.wasm": {
-        "sha256": "28aa27aafc168f345e07bd503bbcbc40bb100827ee59014e5a7c2847fbf61a22",
-        "bytes": 63291244,
-        "source": "b1b56352982449b7f8105d0aafaa05ef72359766"
+        "sha256": "6bb6f54a5526485409f92d1f5963c937824989cfd676af0554044398773ddf64",
+        "bytes": 63456332,
+        "source": "3dd83b23ac302367d5c7491fc3914165658fbc18"
       },
       "wx.js": {
         "sha256": "42d6b547f9a024f187f1b7812b64a3f76ca322d35393531340cb316ff88da351",
         "bytes": 79808,
-        "source": "b1b56352982449b7f8105d0aafaa05ef72359766"
+        "source": "3dd83b23ac302367d5c7491fc3914165658fbc18"
       },
       "wx-dom.js": {
         "sha256": "7edabd5571c9f2fd0ea1acf7005fb3628f2e3cf6b8f430f8e473c328fb042a10",
         "bytes": 68699,
-        "source": "b1b56352982449b7f8105d0aafaa05ef72359766"
+        "source": "3dd83b23ac302367d5c7491fc3914165658fbc18"
       },
       "images.tar.gz": {
-        "sha256": "4641f7ba1be200825ecaf4329ec6ab03130f961fcb5215c66920f0d1ade78017",
-        "bytes": 5369402,
-        "source": "b1b56352982449b7f8105d0aafaa05ef72359766"
+        "sha256": "576904b584ab983ad3e5ad0b9d1cc331b8da5733be2bc68ca9d8d5a244f79a95",
+        "bytes": 5369317,
+        "source": "3dd83b23ac302367d5c7491fc3914165658fbc18"
       }
     }
   },
   "icons": {
-    "stockArchiveSha256": "4641f7ba1be200825ecaf4329ec6ab03130f961fcb5215c66920f0d1ade78017",
-    "repackedSha256": "49331cda0e1f5b16776032390db1987556f5034ca68e5c0496ebc2590e5ded41",
+    "stockArchiveSha256": "576904b584ab983ad3e5ad0b9d1cc331b8da5733be2bc68ca9d8d5a244f79a95",
+    "repackedSha256": "77ee38c52434058d6e09a8028746c88fb4738d2c63cd20af20613c70205a170a",
     "inputs": {
       "theme/icons/src/add_component.svg": "d8d2dfa56f179658a3b2bd458090683161f188ad13d84d89fdb82f1a0f2a12e6",
       "theme/icons/src/add_line.svg": "64db6c023211cd897ea1f3613fcc4d338bf86fbca3086cf832bf3bf25dd516f0",
