@@ -73,7 +73,7 @@
     (property "Footprint" "Resistor_SMD:R_0603_1608Metric" (at 99.82199999999999 81.28 90)
       (effects (font (size 1.27 1.27)) hide)
     )
-    (property "Datasheet" "~" (at 101.6 81.28 0)
+    (property "Datasheet" "" (at 101.6 81.28 0)
       (effects (font (size 1.27 1.27)) hide)
     )
     (pin "1" (uuid cc0d5a11-0000-4000-8000-000000000902))

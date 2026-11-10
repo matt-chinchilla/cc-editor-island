@@ -17,5 +17,9 @@ with R1 and R2 in 0603 and these findings on purpose:
 plus a board text, a copper area (no net, B.Cu, never filled in the file, so
 a check that fills makes one undo step) and the project file's severities:
 the two library-original checks and isolated copper turned off.
+R1's Datasheet field is empty on both sides (2026-11-10, engine run 12): with
+KiCad's "~" on both, the engine's netlist shows the symbol's as empty
+(GetShownText) while the footprint keeps "~", a fifth finding
+(footprint_symbol_field_mismatch) KiCad 10.0.8's kicad-cli does not report.
 ids.json names the items' uuids for the tests. The KiCad files carry no
 comment (their formats have none), so this file holds their license.
