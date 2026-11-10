@@ -4092,9 +4092,10 @@ describe('engine run A: the board check, the board items, the update, the held k
   });
 
   it('board.check answers rules_invalid from its record, island_error for a report of another shape, not_applied when refused or never recorded', async () => {
-    const bad = engine({ drcDone: { code: -1, error: 'rules_invalid', message: 'Expected ( in line 3', lines: [] }, drcReport: null });
+    const bad = engine({ drcDone: { code: -1, error: 'rules_invalid', message: `IO_ERROR: ERROR: Unrecognized item 'clearence'. in '${ROOT}/card.kicad_dru', line 7, offset 14.\nfrom drc_rule_parser.cpp : reportError() line 67`, lines: [] }, drcReport: null });
     expect(await bad.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
-    expect(await bad.request('board.check', CHECK)).toMatchObject({ ok: false, error: { code: 'rules_invalid', message: 'Expected ( in line 3' } });
+    // KiCad's first line, the frame's project folder taken out.
+    expect(await bad.request('board.check', CHECK)).toMatchObject({ ok: false, error: { code: 'rules_invalid', message: "IO_ERROR: ERROR: Unrecognized item 'clearence'. in 'card.kicad_dru', line 7, offset 14." } });
     const odd = engine({ drcReport: { violations: 'none' } });
     expect(await odd.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
     expect(await odd.request('board.check', CHECK)).toMatchObject({ ok: false, error: { code: 'island_error', message: 'the check report was of another shape' } });
@@ -4223,6 +4224,24 @@ describe('engine run A: the board check, the board items, the update, the held k
     const other = engine({ updateReport: (run) => updateReport(run + 1) });
     expect(await other.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
     expect(await other.request('board.preview', OPTS)).toMatchObject({ ok: false, error: { code: 'island_error' } });
+  });
+
+  it('gives the canvas the keyboard focus back with a middle press after a check that compared with the schematic, a preview and an update (opening the hidden schematic editor takes it); never after a check that did not compare', async () => {
+    const MouseLike = class extends Event { constructor(t: string, i: Record<string, unknown> = {}) { const { bubbles, cancelable, ...rest } = i; super(t, { bubbles: bubbles === true, cancelable: cancelable === true }); Object.assign(this, rest); } };
+    vi.stubGlobal('MouseEvent', MouseLike);
+    vi.stubGlobal('PointerEvent', MouseLike);
+    const s = engine();
+    const presses: number[] = [];
+    const canvas = Object.assign(new EventTarget(), { id: 'canvas', getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }) });
+    canvas.addEventListener('mousedown', (e) => presses.push((e as unknown as { button: number }).button));
+    (s.eng.win.document as unknown as { getElementById: (id: string) => unknown }).getElementById = (id: string) => (id === 'canvas' ? canvas : null);
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await s.request('board.check', { ...CHECK, parity: false })).toMatchObject({ ok: true });
+    expect(presses).toEqual([]);
+    expect(await s.request('board.check', CHECK)).toMatchObject({ ok: true });
+    expect(await s.request('board.preview', OPTS)).toMatchObject({ ok: true });
+    expect(await s.request('board.update', { ...OPTS, token: 'tok' })).toMatchObject({ ok: true });
+    expect(presses).toEqual([1, 1, 1]);
   });
 
   it('board.preview closes a dialog met during the run without accepting it and answers schematic_unreadable with its title', async () => {

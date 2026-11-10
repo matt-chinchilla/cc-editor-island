@@ -8,7 +8,7 @@
 import { buildInteractiveImport } from '../loader/src/wasm/import-item';
 import { registerSaveHook, SAVE_COMMITTED, type SaveHookHandle } from '../loader/src/wasm/save-flow';
 import { parseBoot } from '../src/cc-config';
-import { focusCanvas, parseKeyPress, pressKey, type KeyPress } from '../src/keys';
+import { focusCanvas, focusCanvasQuietly, parseKeyPress, pressKey, type KeyPress } from '../src/keys';
 import { installHostKeys, parseKeysClaim } from '../src/host-keys';
 import { installPickKeys, kindOf, libIds, parseIndexArgs, parseItemArgs, parsePlaceArgs, parsePrefetchArgs, pickFor, takesText, warmLibrary, type KeyPick, type PickerLibs, type PickKind } from '../src/picker';
 import { fileConflict, normalizePath, openStaged, PROJECT_ROOT, stageLocalSettings, stageProject, writeProjectFiles, type StagedProject } from '../src/stage';
@@ -213,14 +213,15 @@ export const timing = {
    * Engine run A (island v0.2.3-cc18): how long a board.check may take to its
    * record (five times gate 0's steady Glasgow time, at least 60 s, at most
    * 300 s: KiCad's own checker in this engine took 3.7 to 4.2 s on Glasgow
-   * with the refill, 2.2 s without, gate 0 2026-11-10), a board.item.set to read
-   * back, and a board.preview or board.update to its record (five times the
-   * slowest measured case, at least 30 s, at most 120 s: the ceiling until
-   * measured).
+   * with the refill, 2.2 s without, gate 0 2026-11-10; the e2e's Glasgow check
+   * 3.0 to 5.0 s), a board.item.set to read back (11 to 42 ms measured), and a
+   * board.preview or board.update to its record (five times the slowest
+   * measured case, at least 30 s, at most 120 s: Glasgow's first preview took
+   * 0.9 s, tests/e2e/board-update.spec.ts).
    */
   boardCheckMs: 60_000,
   boardItemMs: 5_000,
-  boardUpdateMs: 120_000,
+  boardUpdateMs: 30_000,
 };
 /** KiCad's Next Sheet (eeschema's PgDn, by virtual page number, the top-level sheets included). */
 const NEXT_SHEET_KEY: KeyPress = { key: 'PageDown', code: 'PageDown', ctrl: false, shift: false, alt: false };
@@ -2206,6 +2207,17 @@ export function startResponder(opts: {
     }
   }
 
+  /**
+   * Gives the drawing wx's keyboard focus back after a run that opened the
+   * hidden schematic editor (a check's comparison, a preview, an update): its
+   * open takes the focus, and every later key went unread (engine run 12,
+   * measured on the local pair). A middle press, so the selection the run left
+   * stays (focusCanvasQuietly).
+   */
+  function refocus(w: ToolWindow): void {
+    try { focusCanvasQuietly(w.document); } catch { /* the reader's next press in the drawing focuses it */ }
+  }
+
   /** Starts a checked board.check off the request chain; its answer is sent when it ends. */
   function startBoardCheck(id: number, args: unknown): void {
     const op = 'board.check';
@@ -2239,12 +2251,14 @@ export function startResponder(opts: {
     const result = await watchedRun<BoardCheckDone>(op, w, FS, dir, timing.boardCheckMs,
       () => (mod.kicadCheckBoard as (json: string) => unknown)(boardCheckJson(run, dir, a)),
       () => readBoardCheckDone(readBytes(FS, `${dir}/${BOARD_CHECK_DONE}`)));
+    if (a.parity) refocus(w);
     if (!('done' in result)) return result;
     const report = readDrcReport(readBytes(FS, `${dir}/${BOARD_CHECK_REPORT}`));
     dropRunFolder(FS, dir);
     if (result.dialog != null) return fail('island_error', result.dialog);
     const { done } = result;
-    if (done.error === 'rules_invalid') return fail('rules_invalid', runText(done.message, dir) || op);
+    // KiCad's parse message: its first line, the frame's project folder taken out.
+    if (done.error === 'rules_invalid') return fail('rules_invalid', runText(done.message.split('\n')[0], dir).split(`${root}/`).join('') || op);
     if (done.code !== 0) {
       const first = done.lines.find((l) => l.severity === 'error');
       return fail('island_error', first != null ? runText(first.text, dir) : `the check ended with code ${done.code}`);
@@ -2367,6 +2381,7 @@ export function startResponder(opts: {
     const result = await watchedRun<BoardUpdateDone>(op, w, FS, dir, timing.boardUpdateMs,
       () => (mod.kicadUpdateBoardFromSchematic as (json: string) => unknown)(boardUpdateJson(run, dir, a, op === 'board.update' ? (a.token as string) : null)),
       () => readBoardUpdateDone(readBytes(FS, `${dir}/${BOARD_UPDATE_DONE}`)));
+    refocus(w);
     if (!('done' in result)) return result;
     const report = readBoardReport(readBytes(FS, `${dir}/${BOARD_UPDATE_REPORT}`), run, relInRoot);
     dropRunFolder(FS, dir);
@@ -2376,6 +2391,8 @@ export function startResponder(opts: {
     if (done.error !== '' && !previewBlocked) return fail(done.error, runText(done.message, dir) || op);
     if (report == null) return fail('island_error', 'the update report was of another shape');
     console.debug('[board-update]', op, `${report.changes.length} changes`, `${Date.now() - t0} ms`);
+    // The engine selects the new parts with no selection emit: read it, so an ev.selected follows the answer.
+    if (op === 'board.update') selectionFeed?.nudge();
     return ok(op === 'board.preview' ? previewAnswer(report) : updateAnswer(report));
   }
 

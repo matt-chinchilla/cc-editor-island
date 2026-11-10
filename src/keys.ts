@@ -59,6 +59,27 @@ export function focusCanvas(doc: Document): boolean {
 }
 
 /**
+ * A synthetic middle-button press near the canvas's corner: wx moves keyboard
+ * focus to the canvas as a click does, but a middle press selects nothing and,
+ * with no drag, pans nothing. For after an op whose engine run moved wx's
+ * focus away (engine run 12: opening the hidden schematic editor for a board
+ * check's comparison or a board update leaves every later key unread), where
+ * focusCanvas's left click would clear the selection the op left.
+ */
+export function focusCanvasQuietly(doc: Document): boolean {
+  const canvas = doc.getElementById('canvas');
+  if (canvas == null) return false;
+  const r = canvas.getBoundingClientRect();
+  const init: MouseEventInit = { clientX: r.left + r.width - 8, clientY: r.top + r.height - 8, button: 1, buttons: 4, bubbles: true, cancelable: true };
+  canvas.dispatchEvent(new PointerEvent('pointerdown', { ...init, pointerId: 1, isPrimary: true }));
+  canvas.dispatchEvent(new MouseEvent('mousedown', init));
+  const up: MouseEventInit = { ...init, buttons: 0 };
+  canvas.dispatchEvent(new PointerEvent('pointerup', { ...up, pointerId: 1, isPrimary: true }));
+  canvas.dispatchEvent(new MouseEvent('mouseup', up));
+  return true;
+}
+
+/**
  * A real press anywhere in the frame gives the frame the browser's keyboard
  * focus. The engine cancels mousedown, so the browser never moves focus into
  * the frame by itself: after a press on one of the host page's controls, a

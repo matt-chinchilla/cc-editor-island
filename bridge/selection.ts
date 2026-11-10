@@ -269,6 +269,14 @@ export class SelectionFeed {
     this.opts.send({ uuids: [...p.sel.uuids], fpPaths: [...p.sel.fpPaths] });
   }
 
+  /**
+   * Reads the selection as a release does: for an op that selects inside the
+   * engine, which raises no emit (an applied board.update selects its new parts).
+   */
+  nudge(): void {
+    this.burst();
+  }
+
   /** The editor's selection now, in the emit's shape (the board's with its footprint paths). */
   private pull(): void {
     if (this.stopped) return;

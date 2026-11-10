@@ -4,7 +4,7 @@
 // the document, the canvas and the three event classes are small stand-ins
 // built on node's own Event and EventTarget.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { focusCanvas, focusFrameOnPress, KEY_CODE_RE, parseKeyPress, pressKey } from './keys';
+import { focusCanvas, focusCanvasQuietly, focusFrameOnPress, KEY_CODE_RE, parseKeyPress, pressKey } from './keys';
 
 /** An Event subclass that keeps every init field (key, code, clientX, ...) on the instance. */
 const eventClass = () => class extends Event {
@@ -50,6 +50,21 @@ describe('pressKey', () => {
     win.addEventListener('keyup', on);
     pressKey(win, { key: 'X', code: 'KeyX', ctrl: true, shift: true, alt: false });
     expect(seen).toEqual(['keydown:X:KeyX:cs:true', 'keyup:X:KeyX:cs:true']);
+  });
+});
+
+describe('focusCanvasQuietly', () => {
+  it('presses the root canvas with the middle button only: the keyboard focus comes back, and no left click changes the selection', () => {
+    const canvas = Object.assign(new EventTarget(), {
+      id: 'canvas',
+      getBoundingClientRect: () => ({ left: 10, top: 20, width: 1000, height: 600, right: 1010, bottom: 620 }),
+    });
+    const doc = { getElementById: (id: string) => (id === canvas.id ? canvas : null) } as unknown as Document;
+    const seen: Array<[string, number, number]> = [];
+    for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick']) canvas.addEventListener(t, (e) => { seen.push([e.type, (e as MouseEvent).button, (e as MouseEvent).buttons]); });
+    expect(focusCanvasQuietly(doc)).toBe(true);
+    expect(seen).toEqual([['pointerdown', 1, 4], ['mousedown', 1, 4], ['pointerup', 1, 0], ['mouseup', 1, 0]]);
+    expect(focusCanvasQuietly({ getElementById: () => null } as unknown as Document)).toBe(false);
   });
 });
 

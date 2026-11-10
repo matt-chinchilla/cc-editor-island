@@ -227,6 +227,15 @@ describe('ev.selected\'s feed', () => {
     expect(sent).toHaveLength(2);
   });
 
+  it('reads the selection when nudged: an op that selects inside the engine raises no emit (an applied board.update selects its new parts)', async () => {
+    const { eng, f, sent } = feed();
+    f.start();
+    eng.sel.push(U1, U3);
+    f.nudge();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sent).toEqual([{ uuids: [U1, U3], fpPaths: [] }]);
+  });
+
   it('stops for good: nothing is read or sent, and the hook leaves its slot', async () => {
     const { eng, f, sent } = feed();
     f.start();
