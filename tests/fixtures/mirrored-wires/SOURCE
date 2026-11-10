@@ -1,0 +1,14 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (c) 2026 Chirichella Inc.
+
+Written by hand for this repository on 2026-11-10, no third-party content: a
+one-sheet schematic of two wires that touch nothing, the first from
+(50.8, 76.2) to (50.8, 101.6) mm with the local label NET_A at its lower end,
+the second from (76.2, 50.8) to (127, 50.8) mm with the local label NET_B at
+its right end, and the project file. The first wire's upper end and the
+second wire's left end are the same distance from the origin, (x, y) and
+(y, x): engines before run 12's rebuild (kicad cc/main 8ea2dfa0) looked up
+connection points through less<>, which compares lengths, joined the two ends
+into one net and found NET_A and NET_B on it, which tests/e2e/check.spec.ts
+refuses. The KiCad files carry no comment (their formats have none), so this
+file holds their license.

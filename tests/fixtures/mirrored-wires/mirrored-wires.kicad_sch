@@ -1,0 +1,30 @@
+(kicad_sch (version 20230121) (generator eeschema)
+
+  (uuid cc0d5a11-0000-4000-8000-000000000b00)
+
+  (paper "A4")
+
+  (lib_symbols
+  )
+
+  (wire (pts (xy 50.8 76.2) (xy 50.8 101.6))
+    (stroke (width 0) (type default))
+    (uuid cc0d5a11-0000-4000-8000-000000000b01)
+  )
+  (wire (pts (xy 76.2 50.8) (xy 127 50.8))
+    (stroke (width 0) (type default))
+    (uuid cc0d5a11-0000-4000-8000-000000000b02)
+  )
+  (label "NET_A" (at 50.8 101.6 90) (fields_autoplaced)
+    (effects (font (size 1.27 1.27)) (justify left bottom))
+    (uuid cc0d5a11-0000-4000-8000-000000000b03)
+  )
+  (label "NET_B" (at 127 50.8 0) (fields_autoplaced)
+    (effects (font (size 1.27 1.27)) (justify left bottom))
+    (uuid cc0d5a11-0000-4000-8000-000000000b04)
+  )
+
+  (sheet_instances
+    (path "/" (page "1"))
+  )
+)

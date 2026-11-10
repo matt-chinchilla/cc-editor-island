@@ -79,6 +79,25 @@ test('sheet.check on the unnumbered fixture: every resistor pin unconnected, nam
   expect(await runsLeft(frame)).toEqual([]);
 });
 
+test('sheet.check on two wires whose ends sit at (x, y) and (y, x): the two nets stay two', async ({ page }) => {
+  // The mirrored-wires fixture: NET_A's wire ends at (50.8, 76.2) mm, NET_B's at
+  // (76.2, 50.8). Engines before run 12's rebuild (kicad cc/main 8ea2dfa0) took
+  // the two points for one key of KiCad's point maps and joined the wires.
+  await ready(page, '/parent.html?frame=sch');
+  expect(await page.evaluate(async () => {
+    const files = await Promise.all(['mirrored-wires.kicad_pro', 'mirrored-wires.kicad_sch'].map(async (path) => ({ path, bytes: new Uint8Array(await (await fetch(`/fixtures/mirrored-wires/${path}`)).arrayBuffer()) })));
+    return (window as unknown as Harness).__bridge.request('project.open', { name: 'mirrored-wires', files });
+  })).toMatchObject({ opened: 'mirrored-wires.kicad_sch' });
+  await page.waitForTimeout(1_500);
+  const { report } = await check(page);
+  const all = listed(report);
+  measure('sheet.check, the mirrored-wires fixture', all.map((v) => `${v.type} [${v.items.map((i) => i.description).join('; ')}]`).join(', ') || 'no findings');
+  expect(all.filter((v) => v.type === 'multiple_net_names')).toEqual([]);
+  // Each wire's end at the mirrored point stays free, and each label on its own net.
+  expect(all.filter((v) => v.type === 'unconnected_wire_endpoint')).toHaveLength(2);
+  expect(all.filter((v) => v.type === 'label_dangling').map((v) => v.items.map((i) => i.description)).sort()).toEqual([["Label 'NET_A'"], ["Label 'NET_B'"]]);
+});
+
 test('sheet.check on Glasgow: the four sheets in sheet.tree\'s paths; a change sent while it runs is refused busy or read once it has answered, never in its middle', async ({ page }) => {
   test.setTimeout(300_000);
   const frame = await ready(page, '/parent.html?fixture=glasgow&frame=sch');
@@ -115,8 +134,13 @@ test('sheet.check on Glasgow: the four sheets in sheet.tree\'s paths; a change s
   expect(report.errors).toBeGreaterThan(0);
   expect(report.warnings).toBeGreaterThan(0);
   expect(report.errors + report.warnings).toBe(listed(report).length);
-  // Every item in KiCad 10's own words, a symbol's designator first.
-  expect(listed(report).flatMap((v) => v.items).some((i) => /^Symbol U1 Pin \S+ \[/.test(i.description))).toBe(true);
+  // Every item in KiCad 10's own words, a symbol's designator first. Engines
+  // before run 12's rebuild (kicad cc/main 8ea2dfa0) joined the connection
+  // points (x, y) and (y, x) into one net, and their false pin_to_pin findings
+  // named U1's pins here; Glasgow's true findings name a symbol with its value.
+  expect(listed(report).flatMap((v) => v.items).some((i) => /^Symbol [A-Z]+\d+ \[/.test(i.description))).toBe(true);
+  // Those engines also found 14 multiple_net_names and 39 pin_to_pin here, all false.
+  expect(listed(report).filter((v) => v.type === 'multiple_net_names' || v.type === 'pin_to_pin')).toEqual([]);
   await page.waitForTimeout(2_000);
   expect((await of(page, 'ev.edited')).length).toBe(edits0 + (setOk ? 1 : 0));
   // After the answer the document takes changes again.
