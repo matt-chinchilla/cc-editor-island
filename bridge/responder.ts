@@ -19,6 +19,7 @@ import { ALTIUM_PROJECT, ALTIUM_SHEET, closeDialog, dialogTitle, DOCUMENT_EXTENS
 import { dialogUp, dismissPopups, isProgressDialog, keysBlocked, visibleDialogs, watchMenus } from './modal';
 import { BOARD_CHECK_DONE, BOARD_CHECK_EXPORTS, BOARD_CHECK_REPORT, BOARD_CHECK_ROOT, boardCheckJson, EXPLAIN_EXPORTS, parseBoardCheckArgs, parseExplainArgs, readBoardCheckDone, readDrcReport, readExplain, type BoardCheckArgs, type BoardCheckDone } from './boardCheck';
 import { BOARD_ITEM_EXPORTS, boardItemSetJson, parseBoardItemGetArgs, parseBoardItemSetArgs, readBoardItems, setMisfit, showsBoardSet, type BoardItemSheet } from './boardItem';
+import { CoordsChip, type CoordsWindow } from './coords';
 import { BOARD_UPDATE_DONE, BOARD_UPDATE_EXPORTS, BOARD_UPDATE_REPORT, BOARD_UPDATE_ROOT, boardUpdateJson, parseBoardPreviewArgs, parseBoardUpdateArgs, previewAnswer, readBoardReport, readBoardUpdateDone, schematicBeside, updateAnswer, type BoardOptions, type BoardUpdateDone } from './boardUpdate';
 import { HELD_EXPORT, HELD_KEYS_CAP, installHeld, type HeldWindow } from './held';
 import { ANNOTATE_DONE, ANNOTATE_EXPORTS, ANNOTATE_ROOT, annotateJson, MAX_CHANGES, parseAnnotateArgs, readAnnotateDone, runNotes, runText, type AnnotateDone } from './annotate';
@@ -488,6 +489,8 @@ export function startResponder(opts: {
   let collecting: Array<{ path: string; at: number }> | null = null;
   /** Stops the popup menu and dialog watch (ev.menu); set by engineReady. */
   let stopMenus: (() => void) | null = null;
+  /** The pointer's place, printed bottom left over the drawing (bridge/coords.ts); set by engineReady. */
+  let coords: CoordsChip | null = null;
   /** Keeps a fitted view fitted until the reader steers (bridge/view.ts); set by engineReady. */
   let fitWatch: FitWatch | null = null;
   /** Stops the fit watch's reads and its steering listeners; set by engineReady. */
@@ -752,6 +755,8 @@ export function startResponder(opts: {
     editDepth = null;
     stopMenus?.();
     stopMenus = null;
+    coords?.stop();
+    coords = null;
     stopFitWatch?.();
     stopFitWatch = null;
     fitWatch = null;
@@ -2429,7 +2434,11 @@ export function startResponder(opts: {
         onSheetsState: (json: string) => { sheetStates++; pushed?.(json); },
       };
       // Popup menus and dialogs over the canvas: the host hides what it draws there.
-      stopMenus = watchMenus(w, (open) => emit({ type: 'ev.menu', open }));
+      // The pointer's place over the drawing, where the host's viewing drawing prints
+      // it; it reads the viewport only while no import or save runs, as the fit watch does.
+      const chip = new CoordsChip(w as unknown as CoordsWindow, { frame, live: () => !closed && !importing && collecting == null });
+      if (chip.start()) coords = chip;
+      stopMenus = watchMenus(w, (open) => { coords?.cover(open); emit({ type: 'ev.menu', open }); });
       // KiCad's own chrome as the engine says it is (our engine from run 9:
       // window.kicadChrome.onChange each time it flips), so the host's menus
       // control tells the truth. An engine without kicadChromeShown says nothing.
@@ -2438,6 +2447,7 @@ export function startResponder(opts: {
         const say = (now: unknown): void => {
           if (typeof now !== 'boolean' || now === shown) return;
           shown = now;
+          coords?.chromeShown(now);
           if (ready) emit({ type: 'ev.chrome', shown: now });
         };
         (w as ChromeWindow).kicadChrome = { onChange: say };

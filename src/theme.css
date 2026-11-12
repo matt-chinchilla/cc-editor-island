@@ -209,3 +209,25 @@ html.cc-editor body {
     transform: none;
   }
 }
+
+/* ---------------------------------------------------------------- the pointer's place
+ * Bottom left over the drawing, as the host's viewing drawing prints it: its
+ * chip's place, type and colors, measured on the host 2026-11-12 (8 px from
+ * the corner, 112 by 37 px, the same by day and night). bridge/coords.ts
+ * writes it; it hides under KiCad's menus, dialogs and own status bar. */
+.cc-coords {
+  position: fixed;
+  left: 8px;
+  bottom: 8px;
+  z-index: 2;
+  padding: 7.2px;
+  border-radius: 3.6px;
+  font: 300 14.4px/1.6 ui-rounded, 'Hiragino Maru Gothic ProN', Quicksand, Comfortaa, Manjari, 'Arial Rounded MT Bold', Calibri, source-sans-pro, sans-serif;
+  white-space: nowrap;
+  color: #f8f8f0;
+  background: linear-gradient(10deg, #111928, #1d162a) 0 0 fixed;
+  box-shadow: 1px 1px 10px 5px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+  user-select: none;
+}
+.cc-coords[hidden] { display: none; }
