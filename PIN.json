@@ -1,5 +1,5 @@
 {
-  "islandId": "v0.2.3-cc20",
+  "islandId": "v0.2.3-cc21",
   "pcbjam": {
     "tag": "v0.2.3",
     "root": "7ec51c1c55aab45b21cd2956af413b4420520838",
@@ -19,8 +19,8 @@
     "toolTag": "v0.2.3",
     "build": {
       "recipe": "cc/main",
-      "pcbjam": "17cb482f80d4a4b0a90f6b0fc6ddd94f01c5ae1f",
-      "kicad": "8ea2dfa01fc02fa74bb115dfe620097de4a93eb9",
+      "pcbjam": "5f8bed47e70e63a75b540ee75dc3a0c3b75dad07",
+      "kicad": "f4b389766eea50dc68f6b581b55ca23be5777713",
       "wxwidgets": "d235efd78f89a26b44b7785bf14f1b6c6c465939",
       "shared": "7791275bdfbf54e1500e303121dacaa2c3fd7d00",
       "patches": [
@@ -44,7 +44,8 @@
         "Board properties to the host, EDIT_TOOL::Properties asks window.kicadProperties.onRequest {type: board, uuid, kind} for one footprint (its field or text asked as the footprint), track, arc, via, copper zone, board text or check mark before KiCad's dialogs (kicad cc/main df165234; the island's ev.boardProperties, the boardProperties cap)",
         "BOARD_NETLIST_UPDATER change log, every change, warning and error report also kept as a record for the host's Update the board page (kicad cc/main 88eece91; the island's board.preview and board.update)",
         "kicadUpdateBoardFromSchematic, kicadCheckBoard, kicadExplainViolation, kicadBoardItemGet and kicadBoardItemSet, and the markers kicadHostBoardProperties and kicadHostActions: KiCad's Update PCB from Schematic through the hidden schematic editor's netlist, its design rules check as records with the board's own severities and exclusions, the rule behind one mark, and one board item read and changed as one undo step, each with no KiCad dialog and the run exports' done files written last (pcbjam cc/main 70fe8e2, bbdf4c6, e34d7a4, 3dd83b2; the island's board ops, the boardUpdate, drc, explain and boardItem caps)",
-        "VECTOR2I map and set keys under libc++ 22, a __make_transparent specialization so std::map and std::set of points keep KiCad's own std::less<VECTOR2I> where libc++ 22 (emscripten 6.0.6) looked keys up through less<>, which compares lengths, so a point at (x, y) and the one at (y, x) were one key and unrelated wires were joined into one net (kicad cc/main 8ea2dfa0, pinned by pcbjam cc/main 17cb482)"
+        "VECTOR2I map and set keys under libc++ 22, a __make_transparent specialization so std::map and std::set of points keep KiCad's own std::less<VECTOR2I> where libc++ 22 (emscripten 6.0.6) looked keys up through less<>, which compares lengths, so a point at (x, y) and the one at (y, x) were one key and unrelated wires were joined into one net (kicad cc/main 8ea2dfa0, pinned by pcbjam cc/main 17cb482)",
+        "GL error queue read once a frame, WEBGL_COMPOSITOR::Begin reads glGetError once (errors left by draw calls dropped, a lost context thrown so the canvas falls back) and SetBuffer and bindFb no longer drain the queue and check their own calls (kicad cc/main f4b38976, pinned by pcbjam cc/main 5f8bed4; five glGetError a draw, each a synchronous wait for the GPU process in a browser, were about 600 calls a second and a tenth of the editor's time while the pointer moved, and none ever answered an error)"
       ],
       "reproduction": {
         "pristine": {
@@ -58,35 +59,35 @@
     },
     "files": {
       "kicad_editor.js": {
-        "sha256": "4ea492463ee8a85c9ad5c32c8c5430a61f57a8330623a9ae2a5a63b1b403b592",
+        "sha256": "4aa64ce69be973d643886d61d03483b907609331748d799954b211bdd56c9daa",
         "bytes": 489614,
-        "source": "17cb482f80d4a4b0a90f6b0fc6ddd94f01c5ae1f"
+        "source": "5f8bed47e70e63a75b540ee75dc3a0c3b75dad07"
       },
       "kicad_editor.wasm": {
-        "sha256": "b644c0f43fcb83c03665313e66df15cab1f2b4bdc206f1aba78d32144cee295d",
-        "bytes": 63446086,
-        "source": "17cb482f80d4a4b0a90f6b0fc6ddd94f01c5ae1f"
+        "sha256": "3725778f855af8197c4f898d21c4b5197e4bbcb6c04af99f62615610eabceb04",
+        "bytes": 63445683,
+        "source": "5f8bed47e70e63a75b540ee75dc3a0c3b75dad07"
       },
       "wx.js": {
         "sha256": "42d6b547f9a024f187f1b7812b64a3f76ca322d35393531340cb316ff88da351",
         "bytes": 79808,
-        "source": "17cb482f80d4a4b0a90f6b0fc6ddd94f01c5ae1f"
+        "source": "5f8bed47e70e63a75b540ee75dc3a0c3b75dad07"
       },
       "wx-dom.js": {
         "sha256": "7edabd5571c9f2fd0ea1acf7005fb3628f2e3cf6b8f430f8e473c328fb042a10",
         "bytes": 68699,
-        "source": "17cb482f80d4a4b0a90f6b0fc6ddd94f01c5ae1f"
+        "source": "5f8bed47e70e63a75b540ee75dc3a0c3b75dad07"
       },
       "images.tar.gz": {
-        "sha256": "fc229ebfa764a366e34e5feaef24397c0b6d736e59af72aca1135b3da0cb4a00",
-        "bytes": 5369853,
-        "source": "17cb482f80d4a4b0a90f6b0fc6ddd94f01c5ae1f"
+        "sha256": "cba8ceb4ea232832aa949d851b49bb496a59d48e099721b3daead4cec32ff795",
+        "bytes": 5369773,
+        "source": "5f8bed47e70e63a75b540ee75dc3a0c3b75dad07"
       }
     }
   },
   "icons": {
-    "stockArchiveSha256": "fc229ebfa764a366e34e5feaef24397c0b6d736e59af72aca1135b3da0cb4a00",
-    "repackedSha256": "f509d733051e3269c948c7c5dab57a62631623912a16582830f9910a66538908",
+    "stockArchiveSha256": "cba8ceb4ea232832aa949d851b49bb496a59d48e099721b3daead4cec32ff795",
+    "repackedSha256": "4bcd0c1f0729163155b31f9035142b1c2574f147f5e06c5a698703c57af18930",
     "inputs": {
       "theme/icons/src/add_component.svg": "d8d2dfa56f179658a3b2bd458090683161f188ad13d84d89fdb82f1a0f2a12e6",
       "theme/icons/src/add_line.svg": "64db6c023211cd897ea1f3613fcc4d338bf86fbca3086cf832bf3bf25dd516f0",
