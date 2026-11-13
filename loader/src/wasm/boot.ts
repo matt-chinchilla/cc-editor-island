@@ -21,7 +21,7 @@
 // warm-up from it, see src/libs.ts).
 // Modified by Circuit Center on 2026-11-13: the wasm fetch answers the fetch's
 // own Response, which WebAssembly.instantiateStreaming then compiles, and reads
-// the download progress and the provenance hash from a clone of it, so the
+// the loading progress and the provenance hash from a clone of it, so the
 // browser's compiled-code cache is used (a Response built in script around a
 // counting stream carries no cache handle). fetchWasmWithProgress is exported
 // for its unit test (src/wasm-fetch.test.ts).
