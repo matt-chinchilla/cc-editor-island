@@ -19,6 +19,12 @@
 // Modified by Circuit Center on 2026-10-07: BootOptions takes the enumerate
 // gate again and hands it to the libs provider (the island starts its library
 // warm-up from it, see src/libs.ts).
+// Modified by Circuit Center on 2026-11-13: the wasm fetch answers the fetch's
+// own Response, which WebAssembly.instantiateStreaming then compiles, and reads
+// the download progress and the provenance hash from a clone of it, so the
+// browser's compiled-code cache is used (a Response built in script around a
+// counting stream carries no cache handle). fetchWasmWithProgress is exported
+// for its unit test (src/wasm-fetch.test.ts).
 import type { Tool } from "../../../src/types";
 import {
   KICAD_CONFIG_DIR,
@@ -308,10 +314,18 @@ export function installPthreadWorkerRedirect(
 
 /**
  * Fetch the tool's `.wasm` ourselves so we can report download progress (the big,
- * slow asset — 175–338 MB). Emscripten otherwise fetches it internally with no
- * hook. We wrap the body in a byte-counting stream and return a fresh `Response`,
- * so `WebAssembly.instantiateStreaming` still compiles AS IT DOWNLOADS — no full
- * buffer, no extra peak memory (which would risk the very OOM we recover from).
+ * slow asset). Emscripten otherwise fetches it internally with no hook.
+ *
+ * The caller compiles the Response this answers, and it is the fetch's own:
+ * a browser keeps the code it compiled for a module (and reads it back on the
+ * next load) only for a Response its network stack made. The bytes are counted
+ * on a clone of it, read as they arrive, so `WebAssembly.instantiateStreaming`
+ * still compiles AS IT DOWNLOADS with no full buffer of ours. Measured
+ * 2026-11-13 (Chrome 157, the island's 63 MB engine, warm loads): with the
+ * counting stream wrapped in a Response of its own, as this did before, no load
+ * ever hit the cache and 9,272 functions were compiled lazily on the main
+ * thread per two engines (403 ms); with the fetch's Response, a hit
+ * (`v8.wasm.moduleCacheHit`) and 15, and the editor usable 0.4 s sooner.
  *
  * `Content-Length` is the COMPRESSED size when the CDN gzip/br-encodes the wasm,
  * while the stream yields DECODED bytes — so `loaded` can exceed `total`. The
@@ -326,7 +340,7 @@ export function installPthreadWorkerRedirect(
 /** How much of the wasm head gets hashed for the provenance line. */
 const WASM_HASH_PREFIX_BYTES = 128 * 1024;
 
-async function fetchWasmWithProgress(
+export async function fetchWasmWithProgress(
   url: string,
   onProgress?: (loaded: number, total: number) => void,
   expectedBytes?: number | null,
@@ -365,34 +379,35 @@ async function fetchWasmWithProgress(
       .catch(() => onProvenance(`[build] wasm ${url} etag=${etag} (hash unavailable)`));
   };
   let loaded = 0;
-  const reader = res.body.getReader();
-  const stream = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      const { done, value } = await reader.read();
-      if (done) {
-        emitProvenance(loaded); // short files: prefix may be < 128 KiB
-        onDone?.();
-        controller.close();
-        return;
+  // The count reads a clone; `res` itself goes to the compiler untouched.
+  const counted = res.clone().body;
+  if (!counted) return res;
+  const reader = counted.getReader();
+  void (async () => {
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) {
+          emitProvenance(loaded); // short files: prefix may be < 128 KiB
+          onDone?.();
+          return;
+        }
+        loaded += value.byteLength;
+        if (prefixFill < WASM_HASH_PREFIX_BYTES) {
+          const take = Math.min(value.byteLength, WASM_HASH_PREFIX_BYTES - prefixFill);
+          prefix.set(value.subarray(0, take), prefixFill);
+          prefixFill += take;
+          // Emit as soon as the prefix is complete: the identity line must land
+          // in the log EARLY, so it exists even when the load dies later.
+          if (prefixFill >= WASM_HASH_PREFIX_BYTES) emitProvenance(total || loaded);
+        }
+        onProgress(loaded, total);
       }
-      loaded += value.byteLength;
-      if (prefixFill < WASM_HASH_PREFIX_BYTES) {
-        const take = Math.min(value.byteLength, WASM_HASH_PREFIX_BYTES - prefixFill);
-        prefix.set(value.subarray(0, take), prefixFill);
-        prefixFill += take;
-        // Emit as soon as the prefix is complete: the identity line must land
-        // in the log EARLY, so it exists even when the load dies later.
-        if (prefixFill >= WASM_HASH_PREFIX_BYTES) emitProvenance(total || loaded);
-      }
-      onProgress(loaded, total);
-      controller.enqueue(value);
-    },
-    cancel(reason) {
-      return reader.cancel(reason);
-    },
-  });
-  // Preserve content-type (application/wasm) so instantiateStreaming accepts it.
-  return new Response(stream, { headers: res.headers });
+    } catch {
+      // A download that broke: the compile reading `res` reports it.
+    }
+  })();
+  return res;
 }
 
 async function doBoot(opts: BootOptions): Promise<void> {
