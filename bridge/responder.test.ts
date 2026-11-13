@@ -12,10 +12,16 @@ import { isQuiet, resetUnloadQuietForTest } from '../src/unload-quiet';
 const PARENT = 'http://localhost';
 const ROOT = memfsProjectDir('cc');
 const settle = (ms = 20) => new Promise((r) => setTimeout(r, ms));
+/** Runs `body` with the chrome watch lasting `ms` (read every `pollMs`), then puts the shortened waits back. */
+const withWatchWindow = async (ms: number, body: () => Promise<void>, pollMs?: number): Promise<void> => {
+  const was = { chromeSettleMs: timing.chromeSettleMs, chromePollMs: timing.chromePollMs };
+  Object.assign(timing, { chromeSettleMs: ms, chromePollMs: pollMs ?? was.chromePollMs });
+  try { await body(); } finally { Object.assign(timing, was); }
+};
 
-// The chrome watch after an open, the save-all's and the import's waits,
-// shortened: an open answers about 30 ms after its load, a save-all about 25 ms
-// after its last file.
+// The chrome watch behind an open's answer, the save-all's and the import's
+// waits, shortened: the watch runs for 30 ms after an open answered, and a
+// save-all answers about 25 ms after its last file.
 beforeAll(() => {
   Object.assign(timing, { chromeSettleMs: 30, chromePollMs: 5, firstSaveMs: 60, saveSettleMs: 10, saveQuietMs: 40, saveAllMs: 300, savePollMs: 2, dismissMs: 5 });
   // An import's dialogs are read every 5 ms, pressed 10 ms apart, and it ends 20 ms after the last one went.
@@ -1118,19 +1124,107 @@ describe('the chrome across opens', () => {
     expect(got.at(-1)).toMatchObject({ id: 7, ok: true, result: { chrome: true } });
   });
 
-  it('hides the menu bar again when KiCad shows it after the load settled, and answers chrome false', async () => {
+  /** Resolves once the answer to request `id` is in `got` (at most 2 s). */
+  const answered = async (got: Array<{ id?: number }>, id: number): Promise<void> => {
+    const t0 = Date.now();
+    while (got.every((m) => m.id !== id) && Date.now() - t0 < 2_000) await settle(2);
+  };
+  it('answers once the chrome is hidden, never after the watch: an open is answered well inside the watch\'s window', async () => {
     const { page, parent } = fakePage();
     const r = startResponder({ parentOrigin: PARENT, page });
     const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
     const eng = fakeEngine();
-    // The load shows the menu bar 15 ms after it returned: after the first hide.
-    eng.Module.kicadOpenFile.mockImplementation((p: string) => { eng.opened.push(p); setTimeout(() => eng.chrome.push({ typeName: 'wxMenuBar', visible: true }), 15); });
     r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
-    port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] } });
-    await settle(150);
-    expect(got.at(-1)).toEqual({ id: 1, ok: true, result: { opened: 'blink.kicad_sch', dropped: [], chrome: false } });
-    expect(eng.Module.kicadSetChrome.mock.calls).toEqual([[false], [false]]);
-    expect(eng.chrome).toEqual([]);
+    await withWatchWindow(600, async () => {
+      const t0 = Date.now();
+      port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] } });
+      await answered(got, 1);
+      expect(got.at(-1)).toEqual({ id: 1, ok: true, result: { opened: 'blink.kicad_sch', dropped: [], chrome: false } });
+      expect(Date.now() - t0).toBeLessThan(300);
+      r.close();   // the watch ends with the frame
+    });
+  });
+
+  it('hides the menu bar again when KiCad shows it after the answer: the watch runs on behind it for an engine that does not hold its own chrome', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    await withWatchWindow(250, async () => {
+      port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] } });
+      await answered(got, 1);
+      // Answered with what was visible then: nothing, after the one hide.
+      expect(got.at(-1)).toEqual({ id: 1, ok: true, result: { opened: 'blink.kicad_sch', dropped: [], chrome: false } });
+      expect(eng.Module.kicadSetChrome.mock.calls).toEqual([[false]]);
+      // KiCad shows its menu bar after the answer: the watch hides it.
+      eng.chrome.push({ typeName: 'wxMenuBar', visible: true });
+      await settle(60);
+      expect(eng.Module.kicadSetChrome.mock.calls).toEqual([[false], [false]]);
+      expect(eng.chrome).toEqual([]);
+      // The window is over: nothing more is read or hidden.
+      await settle(300);
+      eng.chrome.push({ typeName: 'wxMenuBar', visible: true });
+      await settle(100);
+      expect(eng.Module.kicadSetChrome.mock.calls).toEqual([[false], [false]]);
+      expect(eng.chrome).toEqual([{ typeName: 'wxMenuBar', visible: true }]);
+    });
+  });
+
+  it('the watch gives way to chrome.show: the menu bar the host asks for right after an open stays', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    await withWatchWindow(250, async () => {
+      port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] } });
+      port.postMessage({ id: 2, op: 'chrome.show', args: { on: true } });
+      await answered(got, 2);
+      await settle(120);   // inside the watch's window
+      expect(got.filter((m) => m.id != null).map((m) => m.ok)).toEqual([true, true]);
+      expect(eng.Module.kicadSetChrome.mock.calls).toEqual([[false], [true]]);
+      expect(eng.chrome).toEqual([{ typeName: 'wxMenuBar', visible: true }]);
+    });
+  });
+
+  it('the watch ends with the frame: nothing is hidden after shutdown', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    await withWatchWindow(250, async () => {
+      port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] } });
+      port.postMessage({ id: 2, op: 'shutdown' });
+      await answered(got, 2);
+      expect(got.filter((m) => m.id != null).map((m) => m.ok)).toEqual([true, true]);
+      const calls = eng.Module.kicadSetChrome.mock.calls.length;
+      eng.chrome.push({ typeName: 'wxMenuBar', visible: true });
+      await settle(120);   // inside what the watch's window would have been
+      expect(eng.Module.kicadSetChrome.mock.calls.length).toBe(calls);
+      expect(eng.chrome).toEqual([{ typeName: 'wxMenuBar', visible: true }]);
+    });
+  });
+
+  it('an engine that holds its own hidden chrome (kicadChromeShown, our engine from run 9) is hidden once and never watched', async () => {
+    const { page, parent } = fakePage();
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    (eng.win.Module as Record<string, unknown>).kicadChromeShown = () => eng.chrome.length > 0;
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    await withWatchWindow(250, async () => {
+      port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_sch', bytes: b('(kicad_sch)') }] } });
+      await answered(got, 1);
+      expect(got.filter((m) => m.id === 1)).toEqual([{ id: 1, ok: true, result: { opened: 'blink.kicad_sch', dropped: [], chrome: false } }]);
+      // What the real engine never lets a frame see (it hides again inside the same call): a bar after the answer.
+      eng.chrome.push({ typeName: 'wxMenuBar', visible: true });
+      await settle(120);
+      // The one hide before the answer, and no call of the island's own after it.
+      expect(eng.Module.kicadSetChrome.mock.calls).toEqual([[false]]);
+      r.close();
+    });
   });
 
   it('answers chrome true when the engine will not hide it, so the host sends chrome.show again', async () => {
@@ -2026,6 +2120,87 @@ describe('project.import', () => {
       expect(await send('project.import', { name: 'b', files: [{ path: `b.${ext}`, bytes: b('cfb') }], open: `b.${ext}` })).toEqual({ id: ++id, ok: true, result: { opened: 'b.kicad_pcb', dropped: [], warnings: [], chrome: false } });
     }
     expect(eng.opened).toEqual([`${ROOT}/HiFive1.B01.PcbDoc`, `${ROOT}/b.CMPcbDoc`, `${ROOT}/b.cspcbdoc`, `${ROOT}/b.SWPcbDoc`]);
+  });
+
+  it('answers without the chrome watch, which runs on behind the answer for an engine that does not hold its own chrome', async () => {
+    const eng = fakeEngine();
+    kicadImport(eng);
+    const { send } = importer(undefined, eng);
+    await withWatchWindow(1_500, async () => {
+      const t0 = Date.now();
+      expect(await send('project.import', { name: 'b', files: [{ path: 'b.PcbDoc', bytes: b('cfb') }], open: 'b.PcbDoc' })).toEqual({ id: 1, ok: true, result: { opened: 'b.kicad_pcb', dropped: [], warnings: [], chrome: false } });
+      expect(Date.now() - t0).toBeLessThan(1_000);   // never the watch's window
+      const calls = eng.Module.kicadSetChrome.mock.calls.length;
+      // KiCad shows its menu bar after the answer: the watch hides it.
+      eng.chrome.push({ typeName: 'wxMenuBar', visible: true });
+      await settle(60);
+      expect(eng.chrome).toEqual([]);
+      expect(eng.Module.kicadSetChrome.mock.calls.length).toBe(calls + 1);
+    });
+  });
+
+  it('the watch an import\'s own end started hides the menu bar while that import still fits its view, as its settle always did', async () => {
+    const eng = fakeEngine();
+    kicadImport(eng);
+    const vp = { cx: 0, cy: 0, scale: 1e-5, w: 1211, h: 878 };
+    (eng.Module as Record<string, unknown>).kicadCollabGetViewport = () => JSON.stringify(vp);
+    // KiCad shows its menu bar 3 ms after the converted board's save: after the settle's one hide.
+    eng.Module.kicadSaveBoard.mockImplementation((p: string): unknown => {
+      eng.win.FS?.writeFile(p, '(kicad_pcb saved)');
+      setTimeout(() => eng.chrome.push({ typeName: 'wxMenuBar', visible: true }), 3);
+      return undefined;
+    });
+    // The import's fit (Home, once the drawing's size held 15 ms) notes whether the bar is still up.
+    const barsAtFit: number[] = [];
+    const engineKeys = eng.win.dispatchEvent.bind(eng.win);
+    Object.assign(eng.win, {
+      dispatchEvent: (e: Event) => {
+        if (e.type === 'keydown' && (e as KeyboardEvent).code === 'Home') { vp.scale = vp.w / 1e8; barsAtFit.push(eng.chrome.length); }
+        return engineKeys(e);
+      },
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    });
+    const { send } = importer(undefined, eng);
+    await withWatchWindow(1_500, async () => {
+      expect(await send('project.import', { name: 'b', files: [{ path: 'b.PcbDoc', bytes: b('cfb') }], open: 'b.PcbDoc' })).toMatchObject({ id: 1, ok: true, result: { opened: 'b.kicad_pcb' } });
+      expect(barsAtFit).toEqual([0]);
+      expect(eng.chrome).toEqual([]);
+    }, 1);
+  });
+
+  it('a chrome watch left from an open keeps out of the next import: the engine is not called beside the import\'s own calls', async () => {
+    const eng = fakeEngine();
+    kicadImport(eng);
+    const whileLoading: boolean[] = [];
+    eng.Module.kicadSetChrome.mockImplementation((on: boolean) => {
+      whileLoading.push(eng.Module.kicadOpenFileBusy());
+      eng.chrome.length = 0;
+      if (on) eng.chrome.push({ typeName: 'wxMenuBar', visible: true });
+      return true;
+    });
+    // KiCad's menu bar comes up as the import's load begins and stays up through it.
+    const load = eng.Module.kicadOpenFile.getMockImplementation() as (p: string) => unknown;
+    let callsAtLoad = -1;
+    eng.Module.kicadOpenFile.mockImplementation((p: string) => {
+      if (p.endsWith('.PcbDoc')) {
+        callsAtLoad = eng.Module.kicadSetChrome.mock.calls.length;
+        eng.chrome.push({ typeName: 'wxMenuBar', visible: true });
+      }
+      return load(p);
+    });
+    let callsAtSave = -1;
+    eng.Module.kicadSaveBoard.mockImplementation((p: string): unknown => { callsAtSave = eng.Module.kicadSetChrome.mock.calls.length; eng.win.FS?.writeFile(p, '(kicad_pcb saved)'); return undefined; });
+    const { send } = importer(undefined, eng);
+    await withWatchWindow(1_500, async () => {
+      expect(await send('project.open', { name: 'x', files: [{ path: 'x.kicad_pcb', bytes: b('(kicad_pcb)') }] })).toMatchObject({ id: 1, ok: true, result: { chrome: false } });
+      // The open's watch is running (read every ms) when the import starts.
+      expect(await send('project.import', { name: 'b', files: [{ path: 'b.PcbDoc', bytes: b('cfb') }], open: 'b.PcbDoc' })).toMatchObject({ id: 2, ok: true, result: { opened: 'b.kicad_pcb', chrome: false } });
+      expect(callsAtLoad).toBeGreaterThan(0);
+      expect(callsAtSave).toBe(callsAtLoad);   // nothing hid the bar before the import's own settle, which follows the save
+      expect(whileLoading).not.toContain(true);
+      expect(eng.chrome).toEqual([]);
+    }, 1);
   });
 
   /**

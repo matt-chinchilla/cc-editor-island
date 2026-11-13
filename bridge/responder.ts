@@ -32,6 +32,7 @@ import { BOARD_PROPERTIES_CAP, BOARD_PROPERTIES_EXPORT, installProperties, PROPE
 import { misfit, parseSymbolGetArgs, parseSymbolSetArgs, readSymbolSheet, showsSet, SYMBOL_EXPORTS, symbolSetJson, type SymbolSheet } from './symbol';
 import { parseSelectArgs, SELECT_EXPORTS, selectItems, SelectionFeed, type Selection, type SelectionWindow } from './selection';
 import { FitWatch, sampleDrawing, settleView, surfaceKey } from './view';
+import { ChromeWatch } from './chromeWatch';
 
 declare const __ISLAND_ID__: string;   // define'd by vite.config.ts from PIN.json
 
@@ -106,15 +107,20 @@ const MAX_FORMAT = 64;
 export const MAX_WRITE_BYTES = 32 * 1024 * 1024;
 /**
  * The bridge's waits, in ms: the bound on each engine call (so no call can
- * hold the serial request chain, shutdown included), project.open's chrome
- * re-hide and project.save's save-all. Measured on the local pair (2026-10-01): a Ctrl+S in the Glasgow
+ * hold the serial request chain, shutdown included), the chrome watch that
+ * runs on behind an open's answer (bridge/chromeWatch.ts; no answer waits for
+ * it) and project.save's save-all. Measured on the local pair (2026-10-01): a Ctrl+S in the Glasgow
  * schematic reported its first file 20 to 160 ms after the key and its last
  * (four files, 1.3 MB) within 110 ms of the first. The unit tests shorten them.
  */
 export const timing = {
   /** How long an engine call may take before it counts as unanswered (not_applied, save_failed, island_error). */
   applyMs: 30_000,
-  /** After an open, how long the chrome is watched for KiCad showing it again. */
+  /**
+   * After an open, how long the chrome is watched for KiCad showing it again,
+   * behind the answer, and how often it is read. Only for an engine that does
+   * not hold its own hidden chrome (see settleChrome).
+   */
   chromeSettleMs: 1_500,
   chromePollMs: 100,
   /** A save-all that reported no file by then failed (the key never reached the editor). */
@@ -484,6 +490,8 @@ export function startResponder(opts: {
   let chromeOn = false;
   /** Reads the engine's chrome state and sends ev.chrome when it differs from the last one sent; set by engineReady. */
   let chromeSay: (() => void) | null = null;
+  /** The chrome watch running now was started by the import running now (settleChrome); false once another import starts. */
+  let watchOfImport = false;
 
   /** While a host save-all runs: every path its ev.saved carried, in order, with when it arrived. */
   let collecting: Array<{ path: string; at: number }> | null = null;
@@ -936,10 +944,12 @@ export function startResponder(opts: {
     editDepth = editBaseline(w);   // the depth the load left (null while it is parked): ev.edited's baseline, never sent
     quietClear();   // a new document: the engine's leave prompt guards it again
     // Loading a file shows the menu bar again, and an infobar when the file is
-    // from an older KiCad (e2e 2026-10-01): the hidden chrome is put back and
-    // watched, since KiCad can show it again after the load settled (a menu bar
-    // in 2 of 14 e2e runs). A refusal leaves the chrome up and the open stands:
-    // the answer's chrome says so, and the host sends chrome.show again.
+    // from an older KiCad (e2e 2026-10-01): the hidden chrome is put back
+    // before the answer. KiCad could show it again after the load settled (a
+    // menu bar in 2 of 14 e2e runs then), which our engine now hides itself
+    // and which the watch behind the answer hides for any other. A refusal
+    // leaves the chrome up and the open stands: the answer's chrome says so,
+    // and the host sends chrome.show again.
     const chrome = await settleChrome(w);
     return ok({ opened, dropped: staged.dropped, chrome });
   }
@@ -1034,6 +1044,7 @@ export function startResponder(opts: {
   function startImport(id: number, args: unknown): void {
     const checked = importCheck(args);
     if ('ok' in checked) return reply(id, checked);
+    watchOfImport = false;   // a watch left from an open keeps out of this import
     importing = true;
     void projectImport(checked)
       .catch((err: unknown) => fail('island_error', describeError(err)))
@@ -1206,18 +1217,68 @@ export function startResponder(opts: {
   }
 
   /**
-   * While the chrome is meant hidden: hides it, then watches it for
-   * timing.chromeSettleMs and hides it again each time it shows. Answers
-   * whether any of it is still visible at the end (with the chrome meant
-   * shown, whether it is).
+   * The engine holds its own hidden chrome: our engine from run 9 hides again
+   * whatever a load, a save or a pane toggle brought back, inside the call
+   * that showed it and before a frame is drawn, and says each real flip
+   * (PIN.json engine.build, pcbjam cc/main 27d82c2; kicadChromeShown arrived
+   * with it and is the test). Measured 2026-11-13 on engine run 13: over 20
+   * opens and ten saves read on every drawn frame the chrome never showed and
+   * the watch of the time never had to hide anything, and over 107 more boots
+   * the engine reported no flip.
+   */
+  function holdsChrome(w: ToolWindow): boolean {
+    return typeof w.Module?.kicadChromeShown === 'function';
+  }
+
+  /**
+   * An engine call the island makes on its own, run in the request chain's
+   * order after what is queued, so it never runs beside a request's own call.
+   * Resolves when it ran; never rejects.
+   */
+  function inTurn(task: () => Promise<void>): Promise<void> {
+    const run = (): Promise<void> => task().catch((err: unknown) => { console.debug('[chrome] watch', describeError(err)); });
+    const turn = chain.then(run, run);
+    chain = turn;
+    return turn;
+  }
+
+  /**
+   * The watch behind an open's answer (bridge/chromeWatch.ts), for an engine
+   * that does not hold its own hidden chrome: one for the frame, ended by the
+   * frame closing, by chrome.show turning the chrome on and by a stopped
+   * engine (which is never entered again). Its hide takes its turn in the
+   * request chain. An import and a check run off that chain: the hide steps
+   * aside for a check, and for an import unless that import's own end started
+   * the watch (watchOfImport), as its settle always hid while it ran.
+   */
+  const chromeWatch = new ChromeWatch({
+    visible: () => win != null && chromeVisible(win),
+    hide: () => inTurn(async () => {
+      const w = win;
+      if (w == null || closed || chromeOn || stopped != null || checking || (importing && !watchOfImport)) return;
+      if (chromeVisible(w)) await withTimeout<unknown>(callChrome(w, false), timing.applyMs);
+    }),
+    ended: () => closed || chromeOn || stopped != null,
+    settleMs: () => timing.chromeSettleMs,
+    pollMs: () => timing.chromePollMs,
+    sleep,
+    now: () => Date.now(),
+  });
+
+  /**
+   * After a load, while the chrome is meant hidden: hides it once and answers
+   * whether any of it is still visible then (with the chrome meant shown,
+   * whether it is). The answer never waits for a watch. An engine that holds
+   * its own hidden chrome needs none; for any other, the watch starts here and
+   * runs on behind the answer for timing.chromeSettleMs, hiding the chrome
+   * each time KiCad shows it again.
    */
   async function settleChrome(w: ToolWindow): Promise<boolean> {
     if (chromeOn) return chromeVisible(w);
     await withTimeout<unknown>(callChrome(w, false), timing.applyMs);
-    const end = Date.now() + timing.chromeSettleMs;
-    while (!closed && !chromeOn && Date.now() < end) {
-      await sleep(timing.chromePollMs);
-      if (!chromeOn && chromeVisible(w)) await withTimeout<unknown>(callChrome(w, false), timing.applyMs);
+    if (!holdsChrome(w)) {
+      watchOfImport = importing;
+      chromeWatch.start();
     }
     return chromeVisible(w);
   }
