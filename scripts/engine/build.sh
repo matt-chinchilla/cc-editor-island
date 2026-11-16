@@ -10,7 +10,7 @@
 #
 # Assembles /home/matthew/cc-engine/tree-<name>/ in PCBJam's layout from the four
 # local clones (git worktrees; the submodule gitlinks are checked against them),
-# runs ./docker/build.sh there, and collects the five served files plus meta.json
+# runs ./docker/build.sh there, and collects the served files (engine and simulator service) plus meta.json
 # in /home/matthew/cc-engine/out/<name>/. Hours long: run it detached. README.md
 # beside this file has the rulings and how to watch a build.
 set -euo pipefail
@@ -30,7 +30,12 @@ DOCKER_CPUS=8
 DOCKER_MEM=44G
 JOBS=6
 
-FILES=(kicad_editor.js kicad_editor.wasm wx.js wx-dom.js images.tar.gz)
+# The engine's files, then the simulator service's (ngspice_service, PCBJam's own
+# recipe unchanged: plain ngspice and its embind shim, no KiCad code, so after its
+# dependency is cached it builds in seconds). The service is fetched on a reader's
+# first simulation run only (spec 2026-11-16 simulator, section 5).
+FILES=(kicad_editor.js kicad_editor.wasm wx.js wx-dom.js images.tar.gz
+       ngspice_service.js ngspice_service.wasm)
 
 usage() { echo "usage: bash scripts/engine/build.sh <pristine|cc8> [--build-deps]" >&2; exit 2; }
 die() { echo "build.sh: $*" >&2; exit 1; }
@@ -150,7 +155,9 @@ echo "wxwidgets nested submodules present"
 export COMPOSE_PROJECT_NAME=$DOCKER_PROJECT KICAD_DOCKER_CPUS=$DOCKER_CPUS \
   KICAD_DOCKER_MEM=$DOCKER_MEM KICAD_NO_MONITOR=1
 unset KICAD_WASM_OPT BUILD_3D_VIEWER KICAD_KEEP_CONTAINER KICAD_LOG_NESTED KICAD_LOG_FILE
-RECIPE_ARGS=(kicad_editor)
+# Both apps in one recipe run (its comma list): the engine first, then the service,
+# which copies to output/ beside the engine's files.
+RECIPE_ARGS=(kicad_editor,ngspice_service)
 if [ "$BUILD_DEPS" = 1 ]; then RECIPE_ARGS+=(--build-deps); fi
 RECIPE_ARGS+=(-j "$JOBS")
 
@@ -179,7 +186,7 @@ done
 rm -f "$OUT/meta.json" "$OUT/recipe.out" "$OUT/inner-log.path"
 for f in "${FILES[@]}"; do rm -f "$OUT/$f"; done
 # Our own output/ (Docker would create the bind-mount source root-owned), emptied
-# of the five files so a recipe copy that silently skips one is caught.
+# of the engine and service files so a recipe copy that silently skips one is caught.
 mkdir -p "$TREE/output"
 for f in "${FILES[@]}"; do rm -f "$TREE/output/$f"; done
 
