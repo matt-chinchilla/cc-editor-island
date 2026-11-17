@@ -481,8 +481,8 @@ export const runJson = (run: number, dir: string, command: string, options: SimO
 // ---------------------------------------------------------------- progress
 
 /**
- * ngspice's progress line ("tran: 34.5%", SetAnalyse's "%s: %3.1f%%" in
- * sharedspice.c of ngspice 46) as a whole percent 0 to 100; null for any other
+ * ngspice's progress line ("tran: 34.5%", the "%s: %3.1f%%" format of
+ * sharedspice.c in ngspice 46) as a whole percent 0 to 100; null for any other
  * line ("--ready--", "Source Deck").
  */
 export function statPercent(line: string): number | null {

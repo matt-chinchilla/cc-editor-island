@@ -43,6 +43,14 @@ import {
   parseLibUpdateArgs, parsePushArgs, readConverted, readForEditor, readLibUpdateDone, readLibUpdateQueued, SYMBOL_EDIT_CAP, SYMBOL_EDIT_EXPORTS,
 } from './symbolEdit';
 import { FitWatch, sampleDrawing, settleView, surfaceKey } from './view';
+import {
+  commandOf, fftLines, MAX_VECTOR_BYTES, namesOf, parseCatalogArgs, parseFileArgs, parseModelGetArgs, parseModelSetArgs, parseNetlistArgs,
+  parseOpOnSheetArgs, parseResultArgs, parseRunArgs, parseVectorsArgs, PROGRESS_MS, qualifiedVector, readAccepted, readCatalog,
+  readCatalogEntry, readModelSheet, readNetlist, readSimDone, readSimFile, readSimResult, runJson, showsModelSet, SIM_ACCEPTED, SIM_CAP,
+  SIM_DONE, SIM_FRAME_ONLY, SIM_MODEL_CAP, SIM_MODEL_EXPORTS, SIM_RESULT, SIM_ROOT, SIM_RUN_EXPORTS, splitVector, statPercent, vectorBytes,
+  vectorsOf, type NetNames, type SimDone, type SimKind, type SimResult,
+} from './sim';
+import type { SimService } from '../src/sim-service';
 import { ChromeWatch } from './chromeWatch';
 
 declare const __ISLAND_ID__: string;   // define'd by vite.config.ts from PIN.json
@@ -63,7 +71,11 @@ export type IslandEvent =
   | { type: 'ev.held'; action: string }
   | ({ type: 'ev.symedit' } & SymEditAsk)
   | { type: 'ev.key'; code: string; shift: boolean }
+  | { type: 'ev.sim'; run: number; phase: SimPhase; percent?: number; code?: string }
   | { type: 'ev.closing' };
+
+/** ev.sim's phases (PROTOCOL.md): the service loading, the run going, and its one end. */
+export type SimPhase = 'loading' | 'running' | 'done' | 'stopped' | 'failed';
 
 export interface Responder {
   emit(ev: IslandEvent): void;
@@ -252,6 +264,18 @@ export const timing = {
   svgMs: 30_000,
   symbolPushMs: 5_000,
   libUpdateMs: 30_000,
+  /**
+   * The simulator (island v0.2.3-cc23): how often a live run's folder is read
+   * for its acceptance and its record; how long sim.run may wait for the run to
+   * be accepted (the service's first load included: about 5 MB); how long after
+   * the service's worker died the run's record may take before the island ends
+   * the run itself; how long a sim.model.set and a sim.opOnSheet may take to
+   * read back.
+   */
+  simPollMs: 50,
+  simAcceptMs: 60_000,
+  simDeathMs: 5_000,
+  simModelMs: 5_000,
 };
 /** KiCad's Next Sheet (eeschema's PgDn, by virtual page number, the top-level sheets included). */
 const NEXT_SHEET_KEY: KeyPress = { key: 'PageDown', code: 'PageDown', ctrl: false, shift: false, alt: false };
@@ -411,6 +435,8 @@ const isLayerId = (v: unknown): v is number => typeof v === 'number' && Number.i
 /** The last segment of a MEMFS path: the engine's absolute paths never leave the frame. */
 const baseName = (p: string): string => p.slice(p.lastIndexOf('/') + 1);
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+/** A text cut to `max` code points. */
+const cut = (s: string, max: number): string => (s.length <= max ? s : [...s].slice(0, max).join(''));
 
 function randomNonce(): string {
   const a = new Uint8Array(16);
@@ -502,8 +528,15 @@ export function startResponder(opts: {
    * lib.item and place read them first. Without it project.libs is unsupported.
    */
   projectLibs?: ProjectLibs;
+  /**
+   * The simulator service (src/sim-service.ts), installed when the island
+   * serves its files: sim.run needs it, sim.vectors reads it, sim.release ends
+   * its worker. Without it the runs are unsupported.
+   */
+  sim?: SimService | null;
 }): Responder {
   const { parentOrigin, page, onShutdown, onEngineStopped, projectLibs } = opts;
+  const simService = opts.sim ?? null;
   const nonce = randomNonce();
   const root = PROJECT_FOLDER;
   let port: MessagePort | null = null;
@@ -654,6 +687,13 @@ export function startResponder(opts: {
       case 'ev.key':
         port.postMessage({ type: ev.type, code: ev.code, shift: ev.shift });
         return;
+      case 'ev.sim': {
+        const out: Record<string, unknown> = { type: ev.type, run: ev.run, phase: ev.phase };
+        if (typeof ev.percent === 'number') out.percent = ev.percent;
+        if (typeof ev.code === 'string') out.code = ev.code;
+        port.postMessage(out);
+        return;
+      }
       case 'ev.closing':
         port.postMessage({ type: ev.type });
         return;
@@ -684,6 +724,11 @@ export function startResponder(opts: {
       // So does a key claim: it is answered at once, whatever runs on the queue.
       if (isKeysClaim(m.data)) {
         try { keysClaim(m.data); } catch (err) { answerIslandError(m.data, err); }
+        return;
+      }
+      // And sim.stop and sim.release: Stop never waits behind a request.
+      if (isSimNow(m.data)) {
+        try { simNow(m.data); } catch (err) { answerIslandError(m.data, err); }
         return;
       }
       // A handler that rejects answers island_error for its own request; the
@@ -916,6 +961,7 @@ export function startResponder(opts: {
         // until the next successful project.open.
         staged = null;
         opened = null;
+        forgetSim();
         displaySettings = null;
         editDepth = null;   // the next document's first read is its baseline
         fitWatch?.disarm();
@@ -973,6 +1019,15 @@ export function startResponder(opts: {
       case 'symbol.forEditor': return symbolForEditor(args);
       case 'symbol.push': return symbolPush(args);
       case 'lib.update': return libUpdate(args);
+      case 'sim.catalog': return simCatalog(args);
+      case 'sim.model.get': return simModelGet(args);
+      case 'sim.model.set': return simModelSet(args);
+      case 'sim.file': return simFile(args);
+      case 'sim.netlist': return simNetlist(args);
+      case 'sim.run': return simRun(args);
+      case 'sim.result': return simResultOp(args);
+      case 'sim.vectors': return simVectors(args);
+      case 'sim.opOnSheet': return simOpOnSheet(args);
     }
     return fail('unknown_op', op);
   }
@@ -994,6 +1049,7 @@ export function startResponder(opts: {
     // The previous project is gone from here on, even if the wipe below fails.
     staged = null;
     opened = null;
+    forgetSim();
     displaySettings = null;
     editDepth = null;
     fitWatch?.disarm();
@@ -1163,6 +1219,7 @@ export function startResponder(opts: {
     // The previous project is gone from here on, as for project.open.
     staged = null;
     opened = null;
+    forgetSim();
     displaySettings = null;
     editDepth = null;
     fitWatch?.disarm();
@@ -2162,6 +2219,464 @@ export function startResponder(opts: {
     return ok(after as unknown as Record<string, unknown>);
   }
 
+  // ---------------------------------------------------------------- the simulator (PROTOCOL.md sim.*)
+
+  /** A run the island started: from its sim.run past the checks until its record. */
+  interface LiveSim {
+    run: number;
+    dir: string;
+    kind: SimKind;
+    accepted: boolean;
+    /** The service's worker died during the run: its end is service_failed. */
+    died: boolean;
+    /** The last loading or running event and its percent: at most one each PROGRESS_MS. */
+    lastAt: number;
+    lastPhase: 'loading' | 'running' | null;
+    lastPercent: number | null;
+    /** A progress event held back by the 250 ms rule, sent when its turn comes (if the run has not ended). */
+    held: { phase: 'loading' | 'running'; percent: number | null } | null;
+    heldTimer: ReturnType<typeof setTimeout> | null;
+  }
+  /** The runs started so far: each run takes the next number and folder. */
+  let simRuns = 0;
+  /** The run live now, if any (one at a time). */
+  let simLive: LiveSim | null = null;
+  /** The ended runs' results, and the service's life each was read in. */
+  const simResults = new Map<number, { result: SimResult; life: number }>();
+  /** The latest run of each analysis kind: an earlier one of its kind is gone from the service. */
+  const simLatest = new Map<SimKind, number>();
+  /** The service's life: one more each time its worker ends (released or died), so its vectors are gone. */
+  let simLife = 0;
+  /** The netlist's names, from the last netlist read (sim.netlist, or the island's own read for a run). */
+  let simNames: NetNames | null = null;
+
+  /** What the service says: the wasm's loading and the run's progress lines become ev.sim; its end ends the vectors. */
+  simService?.listen((n) => {
+    if (closed) return;
+    if (n.type === 'died' || n.type === 'released') {
+      simLife += 1;
+      if (n.type === 'died' && simLive != null) {
+        const live = simLive;
+        live.died = true;
+        // The engine finishes a run whose service died (the provider's own
+        // closing event); if no record comes in time, the island stops it.
+        setTimeout(() => { if (simLive === live && !closed) simStopCall(); }, timing.simDeathMs);
+      }
+      return;
+    }
+    const live = simLive;
+    if (live == null) return;
+    if (n.type === 'progress') {
+      if (live.accepted) return;
+      const percent = n.total > 0 ? Math.max(0, Math.min(100, Math.floor((n.loaded / n.total) * 100))) : null;
+      simProgress(live, 'loading', percent);
+      return;
+    }
+    if (n.type === 'event' && n.evt.kind === 'stat' && Array.isArray(n.evt.lines)) {
+      let percent: number | null = null;
+      for (const line of n.evt.lines) {
+        const p = typeof line === 'string' ? statPercent(line) : null;
+        if (p != null) percent = p;
+      }
+      if (percent != null) simProgress(live, 'running', percent);
+    }
+  });
+
+  /**
+   * A loading or running event, at most one each PROGRESS_MS for the same
+   * phase: one that comes sooner is held and sent when its turn comes, the
+   * latest held one only, and never after the run's end (a new phase goes out
+   * at once). The same phase and percent again is not sent.
+   */
+  function simProgress(live: LiveSim, phase: 'loading' | 'running', percent: number | null, force = false): void {
+    if (simLive !== live || closed) return;
+    const now = Date.now();
+    if (live.lastPhase === phase && live.lastPercent === percent) { live.held = null; return; }
+    const wait = live.lastAt + PROGRESS_MS - now;
+    if (!force && live.lastPhase === phase && wait > 0) {
+      live.held = { phase, percent };
+      live.heldTimer ??= setTimeout(() => {
+        live.heldTimer = null;
+        const held = live.held;
+        live.held = null;
+        if (held != null) simProgress(live, held.phase, held.percent);
+      }, wait);
+      return;
+    }
+    live.held = null;
+    live.lastAt = now;
+    live.lastPhase = phase;
+    live.lastPercent = percent;
+    emit(percent == null ? { type: 'ev.sim', run: live.run, phase } : { type: 'ev.sim', run: live.run, phase, percent });
+  }
+
+  /** The checks every sim op makes after its args: a sch frame, the engine and its exports, the service, an open document, nothing held up. */
+  function simGate(op: string, exports: readonly string[], opts2: { service?: boolean; held?: boolean } = {}): Answer | { w: ToolWindow; mod: Record<string, unknown> } {
+    if (frame !== 'sch') return fail('unsupported', SIM_FRAME_ONLY);
+    const w = win;
+    if (w == null) return fail('not_ready', op);
+    const mod = (w.Module ?? {}) as Record<string, unknown>;
+    for (const name of exports) if (typeof mod[name] !== 'function') return fail('unsupported', name);
+    if (opts2.service === true && simService == null) return fail('unsupported', 'ngspice_service.wasm');
+    if (staged == null || opened == null) return fail('not_ready', op);
+    if (opts2.held !== false && (engineBusy() || keysBlocked(w) || placeWatch?.hanging() === true)) return fail('busy', op);
+    return { w, mod };
+  }
+
+  /** A well-formed request for sim.stop or sim.release, answered off the queue. */
+  function isSimNow(data: unknown): data is { id: number; op: string; args?: unknown } {
+    return isObj(data) && typeof data.id === 'number' && Number.isSafeInteger(data.id) && (data.op === 'sim.stop' || data.op === 'sim.release');
+  }
+
+  /** kicadSimStop: the live run halted (its record then says stopped); a throw reads as false. */
+  function simStopCall(): boolean {
+    const stop = (win?.Module as Record<string, unknown> | undefined)?.kicadSimStop;
+    if (typeof stop !== 'function') return false;
+    try { return (stop as () => unknown)() === true; } catch { return false; }
+  }
+
+  /**
+   * sim.stop and sim.release (PROTOCOL.md), answered as they arrive: Stop asks
+   * the engine to halt the live run (answered {} with no run live too: nothing
+   * to stop); release ends the service's worker when no run is live (busy while
+   * one is), and the next run boots it again.
+   */
+  function simNow(data: { id: number; op: string; args?: unknown }): void {
+    if (closed) return;
+    const { id, op } = data;
+    if (!onlyKeys(data as unknown as Record<string, unknown>, ['id', 'op', 'args']) || !noArgs(data.args)) return reply(id, fail('bad_args', op));
+    if (stopped != null) return reply(id, fail('not_ready', 'the engine stopped'));
+    const gate = simGate(op, SIM_RUN_EXPORTS, { service: true, held: false });
+    if ('ok' in gate) return reply(id, gate);
+    if (op === 'sim.stop') {
+      if (simLive != null) simStopCall();
+      return reply(id, ok());
+    }
+    if (simLive != null) return reply(id, fail('busy', 'a run is live'));
+    simService?.release();
+    return reply(id, ok());
+  }
+
+  /** kicadSimNetlist's raw answer ('' when it refused); it may answer a Promise (it waits on the service for an IBIS part). */
+  async function netlistText(mod: Record<string, unknown>, command: string, options: unknown): Promise<string> {
+    try { return String(await (mod.kicadSimNetlist as (json: string) => unknown)(JSON.stringify({ command, options })) ?? ''); } catch { return ''; }
+  }
+
+  /** The netlist's names, read again from the engine (an analysis line that names nothing). */
+  async function refreshNames(mod: Record<string, unknown>): Promise<NetNames | null> {
+    const read = readNetlist(await netlistText(mod, '.op', { voltages: true, currents: true, dissipations: false, events: false }));
+    if (read != null) simNames = namesOf(read.netlist);
+    return read == null ? null : simNames;
+  }
+
+  /** The analysis line for a run or a netlist: each name the netlist's, read again once when one is not. */
+  async function analysisLine(mod: Record<string, unknown>, a: Parameters<typeof commandOf>[0]): Promise<{ command: string } | Answer> {
+    const empty: NetNames = { nodes: new Set(), sources: new Set() };
+    let line = commandOf(a, simNames ?? empty);
+    if ('unknown' in line) {
+      const names = await refreshNames(mod);
+      if (names != null) line = commandOf(a, names);
+    }
+    if ('unknown' in line) return fail('bad_args', `the netlist names no ${line.unknown}`);
+    return line;
+  }
+
+  /** sim.catalog: KiCad's model tables, every device's types, or one type's pins and parameters. */
+  function simCatalog(args: unknown): Answer {
+    const op = 'sim.catalog';
+    const a = parseCatalogArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = simGate(op, SIM_MODEL_EXPORTS, { held: false });
+    if ('ok' in gate) return gate;
+    let raw = '';
+    try { raw = String((gate.mod.kicadSimModelCatalog as (json: string) => unknown)(JSON.stringify(a)) ?? ''); } catch { raw = ''; }
+    if (a.type != null) {
+      if (raw === '') return fail('bad_args', `no model type ${a.type}`);
+      const entry = readCatalogEntry(raw);
+      return entry == null ? fail('island_error', 'the engine answered a catalog of another shape') : ok(entry as unknown as Record<string, unknown>);
+    }
+    const all = readCatalog(raw);
+    return all == null ? fail('island_error', 'the engine answered a catalog of another shape') : ok(all as unknown as Record<string, unknown>);
+  }
+
+  /** kicadSimModelGet's raw answer: '' for no such symbol; a throw reads as ''. */
+  function modelText(mod: Record<string, unknown>, uuid: string, sheetPath: string): string {
+    try { return String((mod.kicadSimModelGet as (json: string) => unknown)(JSON.stringify({ uuid, sheetPath })) ?? ''); } catch { return ''; }
+  }
+
+  /** sim.model.get: one symbol's model as KiCad resolves it for the netlist. */
+  function simModelGet(args: unknown): Answer {
+    const op = 'sim.model.get';
+    const a = parseModelGetArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = simGate(op, SIM_MODEL_EXPORTS, { held: false });
+    if ('ok' in gate) return gate;
+    const raw = modelText(gate.mod, a.uuid, a.sheetPath);
+    if (raw === '') return fail('not_found', a.uuid);
+    const sheet = readModelSheet(raw);
+    return sheet == null ? fail('island_error', 'the engine answered a model of another shape') : ok(sheet as unknown as Record<string, unknown>);
+  }
+
+  /**
+   * sim.model.set: the model checked whole by the engine on a scratch model,
+   * then ONE commit (one undo step); the answer is the model read back once
+   * the apply queue is empty and it shows the set.
+   */
+  async function simModelSet(args: unknown): Promise<Answer> {
+    const op = 'sim.model.set';
+    const a = parseModelSetArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = simGate(op, SIM_MODEL_EXPORTS);
+    if ('ok' in gate) return gate;
+    const { w, mod } = gate;
+    const before = readModelSheet(modelText(mod, a.uuid, a.sheetPath));
+    if (before == null) return fail('not_found', a.uuid);
+    // The engine falls back to another sheet when the asked one does not hold the symbol.
+    if (before.sheetPath !== a.sheetPath) return fail('not_found', `${a.uuid} on ${a.sheetPath}`);
+    let queued: unknown;
+    try {
+      queued = (mod.kicadSimModelSet as (json: string) => unknown)(JSON.stringify({ uuid: a.uuid, sheetPath: a.sheetPath, model: a.model }));
+    } catch (err) {
+      return fail('island_error', describeError(err));
+    }
+    if (queued !== true) return fail('model_invalid', `${op}: the engine refused the model`);
+    const deadline = Date.now() + timing.simModelMs;
+    for (;;) {
+      if (closed) return fail('island_error', 'the frame closed');
+      if (await applyIdle(w, Math.max(0, deadline - Date.now()))) {
+        const after = readModelSheet(modelText(mod, a.uuid, a.sheetPath));
+        if (after != null && showsModelSet(a.model, after)) return ok(after as unknown as Record<string, unknown>);
+      }
+      if (Date.now() >= deadline) return fail('not_applied', op);
+      await sleep(timing.applyPollMs);
+    }
+  }
+
+  /** sim.file: the models of a SPICE or IBIS file in the project folder. */
+  function simFile(args: unknown): Answer {
+    const op = 'sim.file';
+    const a = parseFileArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = simGate(op, SIM_MODEL_EXPORTS, { held: false });
+    if ('ok' in gate) return gate;
+    let raw = '';
+    try { raw = String((gate.mod.kicadSimFileRead as (json: string) => unknown)(JSON.stringify(a)) ?? ''); } catch { raw = ''; }
+    if (raw === '') return fail('bad_args', `${op}: the engine refused the path`);
+    const file = readSimFile(raw);
+    return file == null ? fail('island_error', 'the engine answered a model file of another shape') : ok(file as unknown as Record<string, unknown>);
+  }
+
+  /** sim.netlist: KiCad's SPICE netlist of the whole schematic with the island's analysis line, and its problems. */
+  async function simNetlist(args: unknown): Promise<Answer> {
+    const op = 'sim.netlist';
+    const a = parseNetlistArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = simGate(op, SIM_RUN_EXPORTS);
+    if ('ok' in gate) return gate;
+    if (simLive != null) return fail('busy', 'a run is live');
+    const line = await analysisLine(gate.mod, a.analysis);
+    if (!('command' in line)) return line;
+    const raw = await netlistText(gate.mod, line.command, a.options);
+    const read = readNetlist(raw);
+    if (read == null) return simLive != null ? fail('busy', 'a run is live') : fail('island_error', 'the engine answered no netlist');
+    simNames = namesOf(read.netlist);
+    return ok(read as unknown as Record<string, unknown>);
+  }
+
+  /** A fresh folder for run n under SIM_ROOT: what ended runs left there is removed first. */
+  function simFolder(FS: EmscriptenFS, n: number): string {
+    if (FS.analyzePath(SIM_ROOT).exists) {
+      for (const name of FS.readdir(SIM_ROOT)) {
+        if (name === '.' || name === '..') continue;
+        const stale = `${SIM_ROOT}/${name}`;
+        if (FS.isDir(FS.stat(stale).mode)) removeTree(FS, stale); else FS.unlink(stale);
+      }
+    }
+    const dir = `${SIM_ROOT}/${n}`;
+    FS.mkdirTree(dir);
+    return dir;
+  }
+
+  /**
+   * sim.run: the analysis line written by the island, the run queued in the
+   * engine, answered once ngspice accepted it (accepted.json), or with the
+   * record's error when it ended first; not_applied when neither came within
+   * timing.simAcceptMs. The run goes on off the queue until its record, which
+   * sends its one end event; the editor is not held meanwhile.
+   */
+  async function simRun(args: unknown): Promise<Answer> {
+    const op = 'sim.run';
+    const a = parseRunArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = simGate(op, SIM_RUN_EXPORTS, { service: true });
+    if ('ok' in gate) return gate;
+    const { w, mod } = gate;
+    if (simLive != null) return fail('busy', 'a run is live');
+    const FS = w.FS;
+    if (FS == null) return fail('island_error', 'the engine has no file system');
+    let command: string;
+    let fftOf: number | null = null;
+    if (a.analysis.kind === 'fft') {
+      const source = simResults.get(a.analysis.of);
+      if (source == null || source.result.kind !== 'tran' || simLatest.get('tran') !== a.analysis.of || source.life !== simLife) return fail('no_simulation', `run ${a.analysis.of}`);
+      const line = fftLines(a.analysis, source.result.plots.flatMap((p) => p.vectors.map((v) => v.name)));
+      if ('unknown' in line) return fail('bad_args', `the transient has no ${line.unknown}`);
+      command = line.command;
+      fftOf = a.analysis.of;
+    } else {
+      const line = await analysisLine(mod, a.analysis);
+      if (!('command' in line)) return line;
+      command = line.command;
+    }
+    const kind: SimKind = a.analysis.kind === 'sheet' ? 'op' : a.analysis.kind;
+    simRuns += 1;
+    const n = simRuns;
+    let dir: string;
+    try { dir = simFolder(FS, n); } catch (err) { return fail('island_error', describeError(err)); }
+    const live: LiveSim = { run: n, dir, kind, accepted: false, died: false, lastAt: 0, lastPhase: null, lastPercent: null, held: null, heldTimer: null };
+    simLive = live;
+    let queued: unknown;
+    try {
+      queued = (mod.kicadSimRun as (json: string) => unknown)(runJson(n, dir, command, a.options, a.overrides, fftOf));
+    } catch (err) {
+      simLive = null;
+      dropRunFolder(FS, dir);
+      return fail('island_error', describeError(err));
+    }
+    if (queued !== true) { simLive = null; dropRunFolder(FS, dir); return fail('not_applied', op); }
+    // The run's kind as the island wrote it ("sheet" reads its own directive: the record says which).
+    if (a.analysis.kind !== 'sheet') simLatest.set(kind, n);
+    const answer = new Promise<Answer>((resolve) => { void watchSim(live, FS, resolve); });
+    return answer;
+  }
+
+  /**
+   * Watches a live run's folder: answers sim.run at its acceptance (or with the
+   * record's error when it ended first), then, with no time limit, ends the
+   * run at its record: the result kept, the one end event sent, the folder removed.
+   */
+  async function watchSim(live: LiveSim, FS: EmscriptenFS, answer: (a: Answer) => void): Promise<void> {
+    const t0 = Date.now();
+    let answered = false;
+    const say = (a: Answer): void => { if (!answered) { answered = true; answer(a); } };
+    for (;;) {
+      if (closed) { say(fail('island_error', 'the frame closed')); return; }
+      if (!live.accepted) {
+        const accepted = readAccepted(readBytes(FS, `${live.dir}/${SIM_ACCEPTED}`));
+        if (accepted != null && accepted.run === live.run) {
+          live.accepted = true;
+          simProgress(live, 'running', null, true);
+          say(ok({ run: live.run, problems: accepted.problems }));
+        }
+      }
+      const done = readSimDone(readBytes(FS, `${live.dir}/${SIM_DONE}`));
+      if (done != null && done.run === live.run) {
+        if (!live.accepted) {
+          const first = done.problems.find((p) => p.severity === 'error');
+          say(fail(done.error === '' ? 'sim_failed' : done.error, cut(first?.text ?? done.message ?? done.error, 1024)));
+        }
+        endSim(live, FS, done);
+        return;
+      }
+      if (!answered && Date.now() - t0 >= timing.simAcceptMs) {
+        // Never accepted (the service did not load, or the engine never ran it): the
+        // run is stopped, so its record still comes and ends it.
+        say(fail('not_applied', 'sim.run'));
+        simStopCall();
+      }
+      await sleep(timing.simPollMs);
+    }
+  }
+
+  /** A run's end: its result read and kept (the latest of its kind), its one end event, its folder removed. */
+  function endSim(live: LiveSim, FS: EmscriptenFS, done: SimDone): void {
+    const result = readSimResult(readBytes(FS, `${live.dir}/${SIM_RESULT}`));
+    dropRunFolder(FS, live.dir);
+    if (simLive === live) simLive = null;
+    live.held = null;
+    if (live.heldTimer != null) { clearTimeout(live.heldTimer); live.heldTimer = null; }
+    if (result != null && result.run === live.run) {
+      simResults.set(live.run, { result, life: simLife });
+      simLatest.set(result.kind, live.run);
+      // Only the latest of each kind is held by the service: the rest are dropped.
+      for (const [run, kept] of [...simResults]) if (simLatest.get(kept.result.kind) !== run) simResults.delete(run);
+    }
+    if (live.died) emit({ type: 'ev.sim', run: live.run, phase: 'failed', code: 'service_failed' });
+    else if (done.error === '') emit({ type: 'ev.sim', run: live.run, phase: 'done' });
+    else if (done.error === 'stopped') emit({ type: 'ev.sim', run: live.run, phase: 'stopped' });
+    else emit({ type: 'ev.sim', run: live.run, phase: 'failed', code: done.error });
+    console.debug('[sim]', `run ${live.run}`, done.error === '' ? 'done' : done.error);
+  }
+
+  /** The ended run asked: its result, or no_simulation for a run the service no longer holds. */
+  function simEnded(op: string, run: number): Answer | SimResult {
+    if (simLive?.run === run) return fail('busy', `run ${run} has not ended`);
+    const kept = simResults.get(run);
+    if (kept == null || simLatest.get(kept.result.kind) !== run) return fail('no_simulation', `run ${run}`);
+    return kept.result;
+  }
+
+  /** sim.result: an ended run's result. */
+  function simResultOp(args: unknown): Answer {
+    const op = 'sim.result';
+    const a = parseResultArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = simGate(op, SIM_RUN_EXPORTS, { service: true, held: false });
+    if ('ok' in gate) return gate;
+    const got = simEnded(op, a.run);
+    return 'ok' in got ? got : ok(got as unknown as Record<string, unknown>);
+  }
+
+  /**
+   * sim.vectors: the named vectors of an ended run, read from the service
+   * directly (the engine is not involved), each a fresh array, transferred.
+   */
+  async function simVectors(args: unknown): Promise<Answer> {
+    const op = 'sim.vectors';
+    const a = parseVectorsArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = simGate(op, SIM_RUN_EXPORTS, { service: true, held: false });
+    if ('ok' in gate) return gate;
+    if (simLive != null) return fail('busy', 'a run is live');
+    const got = simEnded(op, a.run);
+    if ('ok' in got) return got;
+    if (simResults.get(a.run)?.life !== simLife) return fail('no_simulation', `run ${a.run}: the simulator was released`);
+    const wanted = vectorsOf(got, a.names);
+    if ('missing' in wanted) return fail('bad_args', `run ${a.run} has no ${wanted.missing}`);
+    if (vectorBytes(wanted.found) > MAX_VECTOR_BYTES) return fail('island_error', 'the vectors are more than the protocol carries');
+    const vectors: Array<{ name: string; real: Float64Array; imag: Float64Array | null }> = [];
+    const transfer: ArrayBuffer[] = [];
+    for (const want of wanted.found) {
+      const res = await simService!.request({ kind: 'get_vec_info', name: qualifiedVector(want.plot, want.name) });
+      const split = splitVector(res);
+      if (split == null) return fail('no_simulation', `run ${a.run}: the simulator holds no ${want.name}`);
+      vectors.push({ name: want.name, real: split.real, imag: split.imag });
+      transfer.push(split.real.buffer as ArrayBuffer);
+      if (split.imag != null) transfer.push(split.imag.buffer as ArrayBuffer);
+    }
+    return { ok: true, result: { vectors }, transfer };
+  }
+
+  /** sim.opOnSheet: KiCad's own operating point labels on the drawing, from the last operating point. */
+  async function simOpOnSheet(args: unknown): Promise<Answer> {
+    const op = 'sim.opOnSheet';
+    const a = parseOpOnSheetArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = simGate(op, SIM_RUN_EXPORTS);
+    if ('ok' in gate) return gate;
+    let queued: unknown;
+    try { queued = (gate.mod.kicadSimOpOnSheet as (json: string) => unknown)(JSON.stringify(a)); } catch (err) { return fail('island_error', describeError(err)); }
+    if (queued !== true) return fail('not_applied', op);
+    return (await applyIdle(gate.w, timing.simModelMs)) ? ok() : fail('not_applied', op);
+  }
+
+  /** A new document: the last one's runs, results and names are not its own. */
+  function forgetSim(): void {
+    simResults.clear();
+    simLatest.clear();
+    simNames = null;
+  }
+
   /** The runs this frame made: each takes the next folder under its root. */
   let runs = 0;
 
@@ -3106,6 +3621,11 @@ export function startResponder(opts: {
         if (BOARD_CHECK_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(DRC_CAP);
         if (EXPLAIN_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(EXPLAIN_CAP);
         if (BOARD_ITEM_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(BOARD_ITEM_CAP);
+        // The simulator (island v0.2.3-cc23): a sch frame only (it lives in the schematic
+        // engine); `simModel` with the four model exports, `sim` with the four run exports
+        // and the service the island serves.
+        if (frame === 'sch' && hasAll(SIM_MODEL_EXPORTS)) caps.push(SIM_MODEL_CAP);
+        if (frame === 'sch' && simService != null && hasAll(SIM_RUN_EXPORTS)) caps.push(SIM_CAP);
         if (typeof mod[BOARD_PROPERTIES_EXPORT] === 'function') caps.push(BOARD_PROPERTIES_CAP);
         // ev.properties and ev.boardProperties: our engine asks the page before
         // KiCad's properties dialogs open (the schematic's from run 11, the

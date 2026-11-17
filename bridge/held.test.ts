@@ -3,12 +3,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { HELD_ACTIONS, heldTaken, installHeld, readHeldRequest, SYMEDIT_HELD, type HeldWindow } from './held';
 
-const ALL_CAPS = ['boardUpdate', 'drc', 'check', 'annotate', 'heldKeys', 'symbolEdit', 'symedit'];
+const ALL_CAPS = ['boardUpdate', 'drc', 'check', 'annotate', 'heldKeys', 'symbolEdit', 'symedit', 'sim'];
 const FRAMES = ['sch', 'pcb', 'symedit'] as const;
 const req = (action: string) => JSON.stringify({ action });
 
 describe('the held actions', () => {
-  it('names the nine document actions, the two symbol editor doors and the symbol editor\'s windows, each with its frames and the cap it waits on', () => {
+  it('names the nine document actions, the two symbol editor doors, the symbol editor\'s windows and the Simulator, each with its frames and the cap it waits on', () => {
     expect(HELD_ACTIONS).toEqual([
       { action: 'common.Control.updatePcbFromSchematic', frames: ['sch', 'pcb'], cap: 'boardUpdate' },
       { action: 'pcbnew.DRCTool.runDRC', frames: ['pcb'], cap: 'drc' },
@@ -22,6 +22,7 @@ describe('the held actions', () => {
       { action: 'eeschema.EditorControl.editWithSymbolEditor', frames: ['sch'], cap: 'symbolEdit' },
       { action: 'common.Control.showSymbolEditor', frames: ['sch'], cap: 'symbolEdit' },
       ...SYMEDIT_HELD.map((action) => ({ action, frames: ['symedit'], cap: 'symedit' })),
+      { action: 'eeschema.EditorControl.showSimulator', frames: ['sch'], cap: 'sim' },
     ]);
     // The spec's list (2026-11-16, section 6.2), each name once.
     expect(SYMEDIT_HELD).toHaveLength(21);

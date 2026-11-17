@@ -33,10 +33,12 @@ import { focusCanvas, focusFrameOnPress } from './keys';
 import { islandLibs, warmUpOnEnumerate, type LibsChoice } from './libs';
 import { quietWarmUp } from './picker';
 import { createProjectLibs, withProjectLibs } from './project-libs';
+import { installSimService } from './sim-service';
 
 declare const __ISLAND_TAG__: string;      // define'd by vite.config.ts from PIN.json
 declare const __KICAD_VERSION__: string;   // define'd by vite.config.ts
 declare const __LIBS_TAG__: string;        // define'd by vite.config.ts from PIN.json libs.tag
+declare const __SIM_WASM_BYTES__: number;   // define'd by vite.config.ts from PIN.json (0: no simulator service)
 
 /** How long the engine may take, after its scripts ran, to show its editor frame. */
 const ENGINE_UP_TIMEOUT_MS = 180_000;
@@ -81,6 +83,10 @@ async function main(): Promise<void> {
   // Hello goes out now, before anything heavy; events queue until the port connects.
   // The responder also takes KiCad's place keys from here on (ev.pick, src/picker.ts),
   // so its listeners run before the engine's own.
+  // The simulator service (PROTOCOL.md sim.*): its provider installed before the engine
+  // boots, in a schematic frame when the island serves its files; its worker is made
+  // only on the engine's first simulator request.
+  const sim = frame === 'sch' ? installSimService({ base: engineBase(), wasmBytes: __SIM_WASM_BYTES__, log: (m) => console.info('[editor]', m) }) : null;
   const responder = startResponder({
     parentOrigin: parent,
     page: window,
@@ -89,6 +95,7 @@ async function main(): Promise<void> {
     // ev.state fatal (src/fatal.ts), so a host mid hand-off is not interrupted.
     onEngineStopped: (why) => gate.importStopped(why),
     projectLibs,
+    sim,
   });
   const popups = installWindowOpenWrapper(
     window,

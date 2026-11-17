@@ -50,5 +50,16 @@
   "symbol.convert",
   "symbol.forEditor",
   "symbol.push",
-  "lib.update"
+  "lib.update",
+  "sim.catalog",
+  "sim.model.get",
+  "sim.model.set",
+  "sim.file",
+  "sim.netlist",
+  "sim.run",
+  "sim.result",
+  "sim.vectors",
+  "sim.stop",
+  "sim.opOnSheet",
+  "sim.release"
 ]

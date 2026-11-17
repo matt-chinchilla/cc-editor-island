@@ -4817,3 +4817,340 @@ describe('the symbol editor: the symedit frame, its ops and caps, and the schema
     expect(s.calls.find((c) => c[0] === 'update')?.[1]).toEqual(['symbol', 'card_parts', ['OPAMP2']]);
   });
 });
+
+describe('the simulator: the sim ops, ev.sim and the held Simulator (island v0.2.3-cc23)', () => {
+  const started: Array<{ close: () => void }> = [];
+  afterEach(() => { for (const r of started.splice(0)) r.close(); });
+  const OPEN_SCH = { name: 'x', files: [{ path: 'rc.kicad_sch', bytes: b('(kicad_sch)') }] };
+  const OPTS = { voltages: true, currents: true, dissipations: false, events: false };
+  const U1 = 'ca2704bd-cd2e-427d-8825-1d89e09f5ad7';
+  const NETLIST = '.title rc\nV1 in 0 PULSE( 0 5 0 1n 1n 10m 20m )\nR1 in out 1k\nC1 out 0 1u\n.tran 1u 5m\n.end\n';
+  const TRAN = { kind: 'tran', step: '1u', stop: '5m' };
+  const sheet = (o: Record<string, unknown> = {}) => ({
+    uuid: U1, sheetPath: '/', ref: 'V1', enabled: true, source: 'inferred', device: 'V', type: 'V', typeName: 'DC', file: null,
+    pins: [{ symbolPin: '1', modelPin: '+' }, { symbolPin: '2', modelPin: '-' }], params: [{ name: 'dc', value: '5', default: '0', unit: 'V', given: true }], problems: [], ...o,
+  });
+  type Notice = Parameters<Parameters<NonNullable<Parameters<typeof startResponder>[0]['sim']>['listen']>[0]>[0];
+  type RunPlan = { acceptMs?: number; endMs?: number; error?: string; kind?: string; plots?: unknown[]; op?: unknown; never?: boolean; neverEnd?: boolean };
+
+  /**
+   * A schematic engine with the simulator's exports and a service stand-in:
+   * kicadSimRun accepts the run `acceptMs` after the call (accepted.json),
+   * then writes result.json and the record `endMs` later, as the plan for the
+   * next run says (the record alone, with its error, when the plan says
+   * `never` accepted). kicadSimStop ends the live run as stopped.
+   */
+  function simulator(opts: { frame?: 'sch' | 'pcb'; service?: boolean; exports?: boolean } = {}) {
+    const { page, parent } = fakePage(`?frame=${opts.frame ?? 'sch'}&theme=day`);
+    let listener: ((n: Notice) => void) | null = null;
+    const vecs = new Map<string, { real?: Float64Array; comp?: Float64Array }>();
+    const service = {
+      request: vi.fn(async (req: { kind: string; name?: string }) => {
+        const v = req.name != null ? vecs.get(req.name) : undefined;
+        return v == null ? { found: false } : { found: true, real: v.real ?? null, comp: v.comp ?? null };
+      }),
+      release: vi.fn(() => true),
+      live: () => true,
+      listen: (fn: (n: Notice) => void) => { listener = fn; return () => { listener = null; }; },
+    };
+    const r = startResponder({ parentOrigin: PARENT, page, sim: opts.service === false ? null : service });
+    started.push(r);
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    const mod = eng.Module as Record<string, unknown>;
+    const state = { sheet: sheet() as Record<string, unknown>, depth: 0, plans: [] as RunPlan[], runs: [] as Array<Record<string, unknown>>, stops: 0, live: null as null | { dir: string; run: number; end: (error: string) => void } };
+    const queue = { until: 0 };
+    const write = (path: string, v: unknown) => eng.win.FS!.writeFile(path, JSON.stringify(v));
+    if (opts.exports !== false) {
+      mod.kicadCollabBusy = () => Date.now() < queue.until;
+      mod.kicadCollabTestUndoDepth = () => state.depth;
+      mod.kicadSimModelCatalog = vi.fn((json: string) => {
+        const a = JSON.parse(json) as { type?: string };
+        if (a.type === undefined) return JSON.stringify({ devices: [{ device: 'V', description: 'Voltage Source', types: [{ type: 'V.PULSE', name: 'PULSE', description: 'Pulse' }] }] });
+        if (a.type !== 'R') return '';
+        return JSON.stringify({ type: 'R', device: 'R', name: '', description: 'Ideal', pins: [{ name: '+', symbolPinHint: '1' }, { name: '-', symbolPinHint: '2' }], params: [{ name: 'r', unit: 'Ω', default: '', category: 'principal', description: 'Resistance', kind: 'instance', tuner: true }] });
+      });
+      mod.kicadSimModelGet = vi.fn((json: string) => (JSON.parse(json).uuid === U1 ? JSON.stringify(state.sheet) : ''));
+      mod.kicadSimModelSet = vi.fn((json: string) => {
+        const a = JSON.parse(json) as { model: { source: string; type: string } | null };
+        if (a.model != null && a.model.type === 'V.BAD') return false;
+        queue.until = Date.now() + 10;
+        setTimeout(() => {
+          state.sheet = a.model == null ? sheet() : sheet({ source: 'builtin', type: a.model.type });
+          state.depth += 1;
+        }, 10);
+        return true;
+      });
+      mod.kicadSimFileRead = vi.fn(() => JSON.stringify({ kind: 'spice', models: [{ name: 'Q2N3904', kind: 'model', type: 'NPN.GUMMELPOON', pins: ['C', 'B', 'E'] }], problems: [] }));
+      mod.kicadSimNetlist = vi.fn(async (json: string) => (state.live != null ? '' : JSON.stringify({ netlist: NETLIST.replace('.tran 1u 5m', JSON.parse(json).command), problems: [], directive: '.tran 1u 5m' })));
+      mod.kicadSimRun = vi.fn((json: string) => {
+        const a = JSON.parse(json) as { run: number; dir: string };
+        state.runs.push(a);
+        if (state.live != null) return false;
+        const plan = state.plans.shift() ?? {};
+        let ended = false;
+        const end = (error: string) => {
+          if (ended) return;
+          ended = true;
+          state.live = null;
+          if (error === '' || error === 'stopped' || error === 'sim_failed') {
+            write(`${a.dir}/result.json`, { run: a.run, kind: plan.kind ?? 'tran', ended: error === '' ? 'done' : error === 'stopped' ? 'stopped' : 'failed', depth: state.depth,
+              plots: plan.plots ?? [{ name: 'tran1', x: 'time', vectors: [{ name: 'time', signal: 'time', trace: 'other', complex: false, length: 3 }, { name: 'v(out)', signal: 'V(out)', trace: 'voltage', complex: false, length: 3 }] }],
+              op: plan.op ?? null, console: ['Circuit: rc'], problems: [] });
+          }
+          write(`${a.dir}/.cc-sim.json`, { run: a.run, error, message: error === 'circuit' ? 'the netlist could not be made' : '', lines: [], problems: error === 'circuit' ? [{ code: 'model_error', severity: 'error', ref: 'Q1', text: 'Q1 has no model' }] : [] });
+        };
+        state.live = { dir: a.dir, run: a.run, end };
+        if (plan.never) { setTimeout(() => end(plan.error ?? 'circuit'), plan.acceptMs ?? 5); return true; }
+        setTimeout(() => {
+          if (ended) return;
+          write(`${a.dir}/accepted.json`, { run: a.run, plot: 'tran1', problems: [] });
+          if (!plan.neverEnd) setTimeout(() => end(plan.error ?? ''), plan.endMs ?? 20);
+        }, plan.acceptMs ?? 5);
+        return true;
+      });
+      mod.kicadSimStop = vi.fn(() => {
+        state.stops += 1;
+        if (state.live == null) return false;
+        const live = state.live;
+        setTimeout(() => live.end('stopped'), 5);
+        return true;
+      });
+      mod.kicadSimOpOnSheet = vi.fn(() => true);
+      mod.kicadHostActions = () => undefined;
+    }
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    let id = 0;
+    const send = (op: string, args?: unknown) => { const n = ++id; port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args }); return n; };
+    const answer = async (n: number, tries = 400) => { for (let i = 0; i < tries && !got.some((m) => m.id === n); i++) await settle(5); return got.find((m) => m.id === n); };
+    const request = async (op: string, args?: unknown) => answer(send(op, args));
+    const sims = () => got.filter((m) => m.type === 'ev.sim');
+    const waitSim = async (phase: string) => { for (let i = 0; i < 400 && !sims().some((m) => m.phase === phase); i++) await settle(5); };
+    const notify = (n: Notice) => listener?.(n);
+    return { eng, got, mod, state, service, send, answer, request, sims, waitSim, notify, vecs, slots: eng.win as unknown as { kicadHostAction?: { onRequest?: (j: unknown) => boolean } }, page };
+  }
+
+  it('lists simModel and sim in a sch frame only, sim only with the service the island serves', async () => {
+    const full = simulator();
+    await settle();
+    const caps = full.got.find((m) => m.type === 'ev.ready')?.caps as string[];
+    expect(caps).toEqual(expect.arrayContaining(['sim', 'simModel']));
+    expect(caps).toEqual([...caps].sort());
+    const noService = simulator({ service: false });
+    await settle();
+    const caps2 = noService.got.find((m) => m.type === 'ev.ready')?.caps as string[];
+    expect(caps2).toContain('simModel');
+    expect(caps2).not.toContain('sim');
+    expect(await noService.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(await noService.request('sim.run', { analysis: { kind: 'op' }, options: OPTS, overrides: [] })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'ngspice_service.wasm' } });
+    expect(await noService.request('sim.catalog')).toMatchObject({ ok: true });
+    const board = simulator({ frame: 'pcb' });
+    await settle();
+    const caps3 = board.got.find((m) => m.type === 'ev.ready')?.caps as string[];
+    expect(caps3).not.toContain('sim');
+    expect(caps3).not.toContain('simModel');
+    for (const [op, args] of [['sim.catalog', {}], ['sim.netlist', { analysis: { kind: 'op' }, options: OPTS }], ['sim.stop', {}], ['sim.release', {}]] as const) {
+      expect(await board.request(op, args)).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'the simulator runs in a sch frame' } });
+    }
+    const old = simulator({ exports: false });
+    await settle();
+    expect(old.got.find((m) => m.type === 'ev.ready')?.caps).not.toContain('simModel');
+  });
+
+  it('refuses before an open, and a bad shape at once', async () => {
+    const s = simulator();
+    expect(await s.request('sim.catalog')).toMatchObject({ ok: false, error: { code: 'not_ready' } });
+    expect(await s.request('sim.run', { analysis: { kind: 'op' }, options: OPTS, overrides: [] })).toMatchObject({ ok: false, error: { code: 'not_ready' } });
+    expect(await s.request('sim.run', { analysis: { kind: 'op', x: 1 }, options: OPTS, overrides: [] })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    expect(await s.request('sim.stop', { x: 1 })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+  });
+
+  it('a run: the island\'s line, answered at its acceptance, running then its progress, one end, its result, its folder removed', async () => {
+    const s = simulator();
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    s.state.plans.push({ acceptMs: 10, endMs: 400 });
+    const answer = await s.request('sim.run', { analysis: TRAN, options: OPTS, overrides: [{ ref: 'R1', value: '2k' }] }) as { ok: boolean; result: Record<string, unknown> };
+    expect(answer).toMatchObject({ ok: true, result: { run: 1, problems: [] } });
+    expect(Object.keys(answer.result).sort()).toEqual(['problems', 'run']);
+    expect(s.state.runs).toEqual([{ run: 1, dir: '/tmp/cc-sim/1', command: '.tran 1u 5m', options: OPTS, overrides: [{ ref: 'R1', value: '2k' }], fftOf: null }]);
+    s.notify({ type: 'event', evt: { kind: 'stat', lines: ['Source Deck', 'tran: 40.0%'] } });
+    s.notify({ type: 'event', evt: { kind: 'stat', lines: ['tran: 50.0%'] } });
+    await s.waitSim('done');
+    expect(s.sims()).toEqual([{ type: 'ev.sim', run: 1, phase: 'running' }, { type: 'ev.sim', run: 1, phase: 'running', percent: 50 }, { type: 'ev.sim', run: 1, phase: 'done' }]);
+    const result = await s.request('sim.result', { run: 1 }) as { result: { run: number; kind: string; plots: unknown[] } };
+    expect(result).toMatchObject({ ok: true, result: { run: 1, kind: 'tran', ended: 'done' } });
+    expect([...s.eng.files.keys()].filter((p) => p.startsWith('/tmp/cc-sim/'))).toEqual([]);
+  });
+
+  it('ev.sim loading while the service loads, its percent at most every 250 ms, before the run is accepted', async () => {
+    const s = simulator();
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    s.state.plans.push({ acceptMs: 60, endMs: 10 });
+    const n = s.send('sim.run', { analysis: { kind: 'op' }, options: OPTS, overrides: [] });
+    await settle(10);
+    s.notify({ type: 'progress', loaded: 1_000_000, total: 4_000_000 });
+    s.notify({ type: 'progress', loaded: 2_000_000, total: 4_000_000 });
+    expect(await s.answer(n)).toMatchObject({ ok: true });
+    await s.waitSim('done');
+    expect(s.sims().map((m) => [m.phase, m.percent])).toEqual([['loading', 25], ['running', undefined], ['done', undefined]]);
+  });
+
+  it('one run at a time: a second run, a netlist and vectors answer busy while one is live', async () => {
+    const s = simulator();
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    s.state.plans.push({ neverEnd: true });
+    expect(await s.request('sim.run', { analysis: { kind: 'op' }, options: OPTS, overrides: [] })).toMatchObject({ ok: true });
+    expect(await s.request('sim.run', { analysis: { kind: 'op' }, options: OPTS, overrides: [] })).toMatchObject({ ok: false, error: { code: 'busy' } });
+    expect(await s.request('sim.netlist', { analysis: { kind: 'op' }, options: OPTS })).toMatchObject({ ok: false, error: { code: 'busy' } });
+    expect(await s.request('sim.result', { run: 1 })).toMatchObject({ ok: false, error: { code: 'busy' } });
+    expect(await s.request('sim.release')).toMatchObject({ ok: false, error: { code: 'busy' } });
+    expect(s.service.release).not.toHaveBeenCalled();
+  });
+
+  it('sim.stop is answered outside the queue, ahead of a run still waiting for its acceptance, and the run ends stopped', async () => {
+    const s = simulator();
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    s.state.plans.push({ acceptMs: 150, endMs: 10_000 });
+    const run = s.send('sim.run', { analysis: TRAN, options: OPTS, overrides: [] });
+    await settle(20);
+    const stop = s.send('sim.stop');
+    expect(await s.answer(stop, 20)).toMatchObject({ ok: true, result: {} });
+    expect(s.got.some((m) => m.id === run)).toBe(false);
+    expect(s.state.stops).toBe(1);
+    expect(await s.answer(run)).toMatchObject({ ok: false, error: { code: 'stopped' } });
+    await s.waitSim('stopped');
+    expect(s.sims().at(-1)).toEqual({ type: 'ev.sim', run: 1, phase: 'stopped' });
+    // With no run live, Stop is answered {} and stops nothing.
+    expect(await s.request('sim.stop')).toMatchObject({ ok: true, result: {} });
+  });
+
+  it('a run that ends before its acceptance answers its record\'s error and still sends its one end', async () => {
+    const s = simulator();
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    s.state.plans.push({ never: true, error: 'circuit' });
+    expect(await s.request('sim.run', { analysis: { kind: 'op' }, options: OPTS, overrides: [] })).toMatchObject({ ok: false, error: { code: 'circuit', message: 'Q1 has no model' } });
+    await s.waitSim('failed');
+    expect(s.sims()).toEqual([{ type: 'ev.sim', run: 1, phase: 'failed', code: 'circuit' }]);
+  });
+
+  it('not_applied when the run is neither accepted nor ended in time; the engine refusing it too', async () => {
+    const s = simulator();
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    const was = timing.simAcceptMs;
+    timing.simAcceptMs = 60;
+    try {
+      s.state.plans.push({ acceptMs: 100_000 });
+      expect(await s.request('sim.run', { analysis: { kind: 'op' }, options: OPTS, overrides: [] })).toMatchObject({ ok: false, error: { code: 'not_applied' } });
+    } finally { timing.simAcceptMs = was; }
+    // The island stopped the run it gave up on: its record ends it.
+    expect(s.state.stops).toBe(1);
+    await s.waitSim('stopped');
+    expect(s.sims()).toEqual([{ type: 'ev.sim', run: 1, phase: 'stopped' }]);
+    (s.mod.kicadSimRun as ReturnType<typeof vi.fn>).mockImplementationOnce(() => false);
+    expect(await s.request('sim.run', { analysis: { kind: 'op' }, options: OPTS, overrides: [] })).toMatchObject({ ok: false, error: { code: 'not_applied' } });
+  });
+
+  it('names the netlist does not hold are refused after one fresh read; a netlist answers its text, problems and directive', async () => {
+    const s = simulator();
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(await s.request('sim.run', { analysis: { kind: 'dc', source: 'V9', start: '0', stop: '1', step: '0.1' }, options: OPTS, overrides: [] })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'the netlist names no V9' } });
+    expect(s.state.runs).toEqual([]);
+    const net = await s.request('sim.netlist', { analysis: { kind: 'dc', source: 'V1', start: '0', stop: '1', step: '0.1' }, options: OPTS }) as { result: Record<string, unknown> };
+    expect(net).toMatchObject({ ok: true, result: { problems: [], directive: '.tran 1u 5m' } });
+    expect(String(net.result.netlist)).toContain('.dc V1 0 1 0.1');
+    expect((s.mod.kicadSimNetlist as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]).toBe(JSON.stringify({ command: '.dc V1 0 1 0.1', options: OPTS }));
+  });
+
+  it('only the latest run of a kind is kept; an FFT reads the latest transient in its own spelling', async () => {
+    const s = simulator();
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    for (let i = 0; i < 2; i++) {
+      expect(await s.request('sim.run', { analysis: TRAN, options: OPTS, overrides: [] })).toMatchObject({ ok: true });
+      await s.waitSim('done');
+      for (let k = 0; k < 100 && s.sims().filter((m) => m.phase === 'done').length <= i; k++) await settle(5);
+    }
+    expect(await s.request('sim.result', { run: 1 })).toMatchObject({ ok: false, error: { code: 'no_simulation' } });
+    expect(await s.request('sim.result', { run: 2 })).toMatchObject({ ok: true });
+    expect(await s.request('sim.run', { analysis: { kind: 'fft', of: 1, signals: ['v(out)'] }, options: OPTS, overrides: [] })).toMatchObject({ ok: false, error: { code: 'no_simulation' } });
+    expect(await s.request('sim.run', { analysis: { kind: 'fft', of: 2, signals: ['v(nowhere)'] }, options: OPTS, overrides: [] })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    s.state.plans.push({ kind: 'fft', plots: [{ name: 'spec1', x: 'frequency', vectors: [{ name: 'frequency', signal: 'frequency', trace: 'other', complex: false, length: 2 }, { name: 'v(out)', signal: 'V(out)', trace: 'voltage', complex: true, length: 2 }] }] });
+    expect(await s.request('sim.run', { analysis: { kind: 'fft', of: 2, signals: ['V(OUT)'], window: 'hanning' }, options: OPTS, overrides: [] })).toMatchObject({ ok: true, result: { run: 3 } });
+    expect(s.state.runs.at(-1)).toMatchObject({ run: 3, command: 'set specwindow=hanning\nlinearize v(out)\nfft v(out)', fftOf: 2 });
+  });
+
+  it('sim.vectors reads the service directly by plot and name, splits a complex vector, transfers fresh arrays, and knows a released service', async () => {
+    const s = simulator();
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    s.state.plans.push({ kind: 'ac', plots: [{ name: 'ac1', x: 'frequency', vectors: [{ name: 'frequency', signal: 'frequency', trace: 'other', complex: true, length: 2 }, { name: 'v(out)', signal: 'V(out)', trace: 'voltage', complex: true, length: 2 }] }] });
+    expect(await s.request('sim.run', { analysis: { kind: 'ac', scale: 'dec', points: 10, fStart: '1', fStop: '1meg' }, options: OPTS, overrides: [] })).toMatchObject({ ok: true });
+    await s.waitSim('done');
+    s.vecs.set('ac1.v(out)', { comp: new Float64Array([1, 2, 3, 4]) });
+    s.vecs.set('ac1.frequency', { comp: new Float64Array([10, 0, 100, 0]) });
+    const got = await s.request('sim.vectors', { run: 1, names: ['v(out)', 'frequency'] }) as { ok: boolean; result: { vectors: Array<{ name: string; real: Float64Array; imag: Float64Array | null }> } };
+    expect(got.ok).toBe(true);
+    expect(got.result.vectors.map((v) => [v.name, [...v.real], v.imag == null ? null : [...v.imag]])).toEqual([['v(out)', [1, 3], [2, 4]], ['frequency', [10, 100], [0, 0]]]);
+    expect(s.service.request).toHaveBeenCalledWith({ kind: 'get_vec_info', name: 'ac1.v(out)' });
+    expect(await s.request('sim.vectors', { run: 1, names: ['v(nowhere)'] })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    expect(await s.request('sim.vectors', { run: 9, names: ['v(out)'] })).toMatchObject({ ok: false, error: { code: 'no_simulation' } });
+    expect(await s.request('sim.release')).toMatchObject({ ok: true, result: {} });
+    expect(s.service.release).toHaveBeenCalledTimes(1);
+    s.notify({ type: 'released' });
+    expect(await s.request('sim.vectors', { run: 1, names: ['v(out)'] })).toMatchObject({ ok: false, error: { code: 'no_simulation' } });
+  });
+
+  it('a service that dies mid run ends it failed with service_failed', async () => {
+    const s = simulator();
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    s.state.plans.push({ endMs: 60, error: 'sim_failed' });
+    expect(await s.request('sim.run', { analysis: TRAN, options: OPTS, overrides: [] })).toMatchObject({ ok: true });
+    s.notify({ type: 'died', why: 'ngspice_service crashed: out of memory' });
+    await s.waitSim('failed');
+    expect(s.sims().at(-1)).toEqual({ type: 'ev.sim', run: 1, phase: 'failed', code: 'service_failed' });
+  });
+
+  it('the island ends a run whose service died and whose record never came', async () => {
+    const s = simulator();
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    const was = timing.simDeathMs;
+    timing.simDeathMs = 30;
+    try {
+      s.state.plans.push({ neverEnd: true });
+      expect(await s.request('sim.run', { analysis: TRAN, options: OPTS, overrides: [] })).toMatchObject({ ok: true });
+      s.notify({ type: 'died', why: 'gone' });
+      await s.waitSim('failed');
+      expect(s.state.stops).toBe(1);
+      expect(s.sims().at(-1)).toEqual({ type: 'ev.sim', run: 1, phase: 'failed', code: 'service_failed' });
+    } finally { timing.simDeathMs = was; }
+  });
+
+  it('the model ops: the catalog, a symbol\'s model, a set read back as one edit, model_invalid, not_found, a model file', async () => {
+    const s = simulator();
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(await s.request('sim.catalog')).toMatchObject({ ok: true, result: { devices: [{ device: 'V' }] } });
+    expect(await s.request('sim.catalog', { type: 'R' })).toMatchObject({ ok: true, result: { type: 'R', params: [{ name: 'r', tuner: true }] } });
+    expect(await s.request('sim.catalog', { type: 'X' })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    expect(await s.request('sim.model.get', { uuid: U1, sheetPath: '/' })).toMatchObject({ ok: true, result: { ref: 'V1', source: 'inferred' } });
+    expect(await s.request('sim.model.get', { uuid: '11111111-1111-4111-8111-111111111111', sheetPath: '/' })).toMatchObject({ ok: false, error: { code: 'not_found' } });
+    const set = await s.request('sim.model.set', { uuid: U1, sheetPath: '/', model: { source: 'builtin', type: 'V.PULSE', params: { y2: '5' }, pins: [] } });
+    expect(set).toMatchObject({ ok: true, result: { source: 'builtin', type: 'V.PULSE' } });
+    expect(s.state.depth).toBe(1);
+    expect(await s.request('sim.model.set', { uuid: U1, sheetPath: '/', model: { source: 'builtin', type: 'V.BAD', params: {}, pins: [] } })).toMatchObject({ ok: false, error: { code: 'model_invalid' } });
+    expect(await s.request('sim.model.set', { uuid: U1, sheetPath: `/${U1}/`, model: null })).toMatchObject({ ok: false, error: { code: 'not_found' } });
+    expect(await s.request('sim.file', { path: 'models/bjt.lib' })).toMatchObject({ ok: true, result: { kind: 'spice', models: [{ name: 'Q2N3904' }] } });
+    expect(await s.request('sim.opOnSheet', { voltages: true, currents: false })).toMatchObject({ ok: true, result: {} });
+    expect(s.mod.kicadSimOpOnSheet).toHaveBeenCalledWith(JSON.stringify({ voltages: true, currents: false }));
+  });
+
+  it('holds KiCad\'s Simulator under sim in a sch frame: ev.held, no window', async () => {
+    const s = simulator();
+    await settle();
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(s.slots.kicadHostAction?.onRequest?.(JSON.stringify({ action: 'eeschema.EditorControl.showSimulator' }))).toBe(true);
+    await settle();
+    expect(s.got.filter((m) => m.type === 'ev.held')).toEqual([{ type: 'ev.held', action: 'eeschema.EditorControl.showSimulator' }]);
+    const noService = simulator({ service: false });
+    await settle();
+    expect(await noService.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(noService.slots.kicadHostAction?.onRequest?.(JSON.stringify({ action: 'eeschema.EditorControl.showSimulator' }))).toBe(false);
+  });
+});

@@ -80,6 +80,10 @@ export const HELD_ACTIONS: readonly HeldAction[] = Object.freeze([
   { action: 'eeschema.EditorControl.editWithSymbolEditor', frames: ['sch'], cap: SYMBOL_EDIT_CAP },
   { action: 'common.Control.showSymbolEditor', frames: ['sch'], cap: SYMBOL_EDIT_CAP },
   ...SYMEDIT_HELD.map((action) => ({ action, frames: ['symedit'] as Frame[], cap: SYMEDIT_CAP })),
+  // The simulator (island v0.2.3-cc23): KiCad's Inspect > Simulator, from its
+  // menu, its toolbar button and its key (our engine asks for all three since
+  // run 14, kicad cc/main K-SIM), the host's Simulate page opening instead.
+  { action: 'eeschema.EditorControl.showSimulator', frames: ['sch'], cap: 'sim' },
 ].map((h) => Object.freeze({ ...h, frames: Object.freeze([...h.frames]) as readonly Frame[] })));
 
 /** The window slot the engine calls. */
