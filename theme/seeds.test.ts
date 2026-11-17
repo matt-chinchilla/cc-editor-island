@@ -33,7 +33,7 @@ describe('the seeds', () => {
     const lines = (t: string) => t.split('\n').filter((l) => l !== '').map((l) => l.split('\t'));
     expect(seedsFor('day').hotkeys).toBe(ledger + symedit);
     const own = lines(symedit);
-    expect(own).toHaveLength(10);
+    expect(own).toHaveLength(9);
     const taken = new Set([...lines(ledger).map(([, k]) => k), ...Object.values(JSON.parse(defaultsJson) as Record<string, string | null>).filter((k): k is string => k != null)]);
     const actions = new Set(lines(ledger).map(([a]) => a));
     for (const [action, key, secondary] of own) {

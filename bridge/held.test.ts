@@ -25,8 +25,8 @@ describe('the held actions', () => {
       { action: 'eeschema.EditorControl.showSimulator', frames: ['sch'], cap: 'sim' },
     ]);
     // The spec's list (2026-11-16, section 6.2), each name once.
-    expect(SYMEDIT_HELD).toHaveLength(21);
-    expect(new Set(SYMEDIT_HELD).size).toBe(21);
+    expect(SYMEDIT_HELD).toHaveLength(24);
+    expect(new Set(SYMEDIT_HELD).size).toBe(24);
   });
 
   it('holds the datasheet and the properties pane in a symedit frame under symedit, and in a sch frame under heldKeys as before', () => {

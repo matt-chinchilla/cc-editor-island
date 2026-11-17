@@ -41,6 +41,13 @@ export const SYMEDIT_HELD: readonly string[] = Object.freeze([
   'eeschema.SymbolLibraryControl.exportSymbolView',
   'eeschema.SymbolLibraryControl.addSymbolToSchematic',
   'common.Control.quit',
+  // KiCad's own windows a default key opens in this frame with nothing of
+  // ours to stand in yet: held, so the key does nothing (Import Graphics is a
+  // later cut of the symbol editor spec; Preferences and the hotkey list are
+  // KiCad's settings).
+  'eeschema.EditorControl.importGraphics',
+  'common.SuiteControl.openPreferences',
+  'common.SuiteControl.listHotKeys',
 ]);
 
 /** The marker export of an engine whose editors ask the page before a hotkey's action. */
