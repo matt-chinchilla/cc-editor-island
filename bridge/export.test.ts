@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import FACES from './exports.json';
 import {
-  EXPORT_DONE, EXPORT_JOBS, exportFace, exportFailure, exportJson, MAX_EXPORT_BYTES, MAX_EXPORT_FILES, PAGED_JOBS, parseExportArgs,
+  EXPORT_DONE, EXPORT_JOBS, exportFace, exportFailure, exportJson, kicadProblem, MAX_EXPORT_BYTES, MAX_EXPORT_FILES, PAGED_JOBS, parseExportArgs,
   readExportDone, readExportFolder, type ExportDone,
 } from './export';
 
@@ -119,6 +119,8 @@ describe('the run\'s record', () => {
     // A KiCad job's failure with no error line says its code, never its last line ("Done.").
     expect(exportFailure({ code: 4, lines: [{ severity: 'action', text: `Created file '${DIR}/g-PTH.drl'` }, { severity: 'info', text: 'Done.' }], dropped: [] }, DIR)).toBe('the export ended with code 4');
     expect(exportFailure({ code: 2, lines: [], dropped: [] }, DIR)).toBe('the export ended with code 2');
+    // KiCad's IO_ERROR text keeps only its sentence (Specctra DSN on Glasgow, engine run 14).
+    expect(exportFailure({ code: 1, lines: [{ severity: 'error', text: "IO_ERROR: Multiple footprints have the reference designator 'REF**'.\nfrom specctra_export.cpp : FromBOARD() line 1095" }], dropped: [] }, DIR)).toBe("Multiple footprints have the reference designator 'REF**'.");
   });
 });
 
@@ -140,5 +142,14 @@ describe('the folder', () => {
     expect(readExportFolder(folder({ a: 'xx', b: 'yy' }), DIR, { files: 10, bytes: 3 })).toEqual({ error: 'too_large' });
     expect(MAX_EXPORT_FILES).toBe(1024);
     expect(MAX_EXPORT_BYTES).toBe(512 * 1024 * 1024);
+  });
+});
+
+describe('kicadProblem', () => {
+  it('keeps the sentence of an IO_ERROR and leaves any other text as it is', () => {
+    expect(kicadProblem("IO_ERROR: Multiple footprints have the reference designator 'REF**'. from specctra_export.cpp : FromBOARD() line 1095")).toBe("Multiple footprints have the reference designator 'REF**'.");
+    expect(kicadProblem('Only VRML is made here.')).toBe('Only VRML is made here.');
+    expect(kicadProblem('IO_ERROR: ')).toBe('IO_ERROR: ');
+    expect(kicadProblem("Cannot write 'a.dsn' from here")).toBe("Cannot write 'a.dsn' from here");
   });
 });

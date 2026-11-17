@@ -123,7 +123,19 @@ export const ENGINE_REFUSAL_CODE = -1;
 export function exportFailure(done: ExportDone, dir: string): string | null {
   if (done.code === 0) return null;
   const line = done.lines.find((l) => l.severity === 'error') ?? (done.code === ENGINE_REFUSAL_CODE ? done.lines.at(-1) : undefined);
-  return line != null ? runText(line.text, dir) : `the export ended with code ${done.code}`;
+  return line != null ? kicadProblem(runText(line.text, dir)) : `the export ended with code ${done.code}`;
+}
+
+/**
+ * KiCad's own sentence out of an IO_ERROR's text: its "IO_ERROR: " head and
+ * the "from <file> : <function>() line <n>" of KiCad's source it ends with
+ * are for a developer (Specctra DSN on Glasgow, measured on engine run 14:
+ * "IO_ERROR: Multiple footprints have the reference designator 'REF**'.
+ * from specctra_export.cpp : FromBOARD() line 1095"). Any other text as is.
+ */
+export function kicadProblem(text: string): string {
+  const cut = text.replace(/^IO_ERROR:\s*/, '').replace(/\s*\bfrom\s+\S+\s*:\s*\S+\(\)\s+line\s+\d+\s*$/, '').trim();
+  return cut === '' ? text : cut;
 }
 
 /** A Uint8Array that owns its whole buffer, safe to transfer (a view of a larger or shared buffer is copied). */
