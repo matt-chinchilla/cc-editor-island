@@ -1,0 +1,22 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (c) 2026 Chirichella Inc.
+
+Written by hand for this repository on 2026-11-16 (the symbol editor's
+design, section 10), no third-party content: every drawing here is our own,
+named as KiCad names its kinds of part.
+- symedit-small_parts.kicad_sym, the design's own symbols:
+  - OPAMP2, a dual amplifier: units A (pins 1, 2, 3) and B (7, 6, 5) and a
+    third unit holding the power pins (8 V+, 4 V-);
+  - OPAMP2_ALT, derived from OPAMP2 (extends), its own value and description;
+  - PWR3V3, a global power symbol (+3V3, one hidden power input);
+  - CHECKME, four findings of KiCad's symbol checker on purpose: pin 3 twice
+    in unit 1 (A and B), pin 2 0.254 mm (10 mil) off the 50 mil grid, pin 1 a
+    hidden power input (VDD), and the designator prefix U1 ending in a digit.
+- symedit-small.kicad_sch places OPAMP2's units A and B as U1 and a resistor
+  as R1 (its drawing our own, its lib id Device:R), each with its copy in the
+  sheet's lib_symbols; symedit-small.kicad_pro and sym-lib-table make
+  symedit-small_parts the project's library.
+- legacy.lib, one symbol in KiCad 5's legacy format (LEGACY_R).
+- parts.lbr, one Eagle device set (EAGLE_R, the symbol RES).
+The KiCad files carry no comment (their formats have none), so this file
+holds their license.
