@@ -177,9 +177,11 @@ test.describe('with a mirror', () => {
     await page.waitForTimeout(3_000);
     expect(await windows(frame)).toEqual(['SchematicFrame']);
     expect(await of(page, 'ev.menu')).toEqual([]);
-    // Under a dialog (KiCad's checker, its seeded chord) the key is KiCad's: no pick.
-    await page.keyboard.press('Control+Alt+7');
-    await expect.poll(() => windows(frame), { timeout: 15_000 }).toContain('DialogErcWindowName');
+    // Under a dialog the key is KiCad's: no pick. KiCad's Find (Ctrl+F) is a dialog the island
+    // does not hold in a schematic frame; the checker's seeded chord is held for the host since
+    // island v0.2.3-cc18 and opens nothing.
+    await page.keyboard.press('Control+f');
+    await expect.poll(() => windows(frame), { timeout: 15_000 }).toContain('dialog');
     await page.keyboard.press('a');
     await page.waitForTimeout(500);
     expect(await of(page, 'ev.pick')).toHaveLength(3);
@@ -311,8 +313,9 @@ test.describe('with a mirror', () => {
     expect(await refusal(page, 'place', { kind: 'symbol', lib: 'No_Such_Library', name: 'R' })).toBe('not_found: No_Such_Library:R');
     expect(await refusal(page, 'place', { kind: 'footprint', lib: 'Package_QFP', name: 'LQFP-48_7x7mm_P0.5mm' })).toMatch(/^unsupported: /);
     expect(await request(page, 'lib.item', { kind: 'footprint', lib: 'Package_QFP', name: 'LQFP-48_7x7mm_P0.5mm' })).toEqual({ body: expect.stringContaining('(footprint "LQFP-48_7x7mm_P0.5mm"') });
-    expect(await request(page, 'key.press', { key: '7', code: 'Digit7', ctrl: true, alt: true })).toEqual({});
-    await expect.poll(() => windows(frame), { timeout: 15_000 }).toContain('DialogErcWindowName');
+    // A dialog up: KiCad's Find (Ctrl+F), which a schematic frame does not hold.
+    expect(await request(page, 'key.press', { key: 'f', code: 'KeyF', ctrl: true })).toEqual({});
+    await expect.poll(() => windows(frame), { timeout: 15_000 }).toContain('dialog');
     expect(await refusal(page, 'place', { kind: 'symbol', lib: 'Device', name: 'R' })).toBe('busy: place');
   });
 

@@ -12,7 +12,7 @@ const PAGE = 'http://localhost:4173';
 const ISLAND = 'http://editor.localhost:4174';
 const PAIR = new Set([PAGE, ISLAND]);
 
-interface Ev { type: string; phase?: string; detail?: string; path?: string; bytes?: number; text?: string; topic?: string; caps?: string[]; open?: boolean; depth?: number; at: number }
+interface Ev { type: string; phase?: string; detail?: string; path?: string; bytes?: number; text?: string; topic?: string; caps?: string[]; open?: boolean; depth?: number; action?: string; at: number }
 interface Harness {
   __events: Ev[];
   /** The latest bytes ev.saved brought for each path, whole. */
@@ -56,6 +56,19 @@ function measure(type: string, description: string): void {
 const fencedNote = (w: { fenced: string[] }): void => { if (w.fenced.length > 0) measure('csp fenced', [...new Set(w.fenced)].join(' | ')); };
 
 const events = (page: Page): Promise<Ev[]> => page.evaluate(() => (window as unknown as Harness).__events);
+/**
+ * A seeded chord whose action the island holds (bridge/held.ts, since island v0.2.3-cc18):
+ * it reaches KiCad, which asks the host and runs nothing, so ev.held names the action
+ * and no KiCad dialog opens.
+ */
+async function expectHeldChord(page: Page, frame: Frame, key: Record<string, unknown>, action: string): Promise<void> {
+  const before = (await events(page)).filter((e) => e.type === 'ev.held').length;
+  expect(await request(page, 'key.press', key)).toEqual({});
+  await expect.poll(async () => (await events(page)).filter((e) => e.type === 'ev.held').length, { timeout: 15_000 }).toBe(before + 1);
+  expect((await events(page)).filter((e) => e.type === 'ev.held').at(-1)?.action).toBe(action);
+  await page.waitForTimeout(1_000);
+  expect(await visibleWx(frame, { type: 'wxDialog' })).toEqual([]);
+}
 const request = (page: Page, op: string, args?: unknown): Promise<Record<string, unknown>> =>
   page.evaluate(([o, a]) => (window as unknown as Harness).__bridge.request(o as string, a), [op, args] as const);
 const savedCount = async (page: Page, path: string): Promise<number> => (await events(page)).filter((e) => e.type === 'ev.saved' && e.path === path).length;
@@ -137,7 +150,8 @@ test('the island answers with the snippet headers, and the worker script carries
   const island = (await islandRes!.json()) as { id: string; kicadCommit: string; ops: string[] };
   expect(island.id).toMatch(/^[a-z0-9][a-z0-9.-]{0,63}$/);
   // PROTOCOL.md's island.json fields: the commit is kicadCommit, never ev.ready's engine.kicad version name.
-  expect(Object.keys(island).sort()).toEqual(['id', 'kicadCommit', 'ops', 'source', 'tag']);
+  // `exportKinds` (island v0.2.3-cc23): the jobs project.export runs.
+  expect(Object.keys(island).sort()).toEqual(['exportKinds', 'id', 'kicadCommit', 'ops', 'source', 'tag']);
   expect(island.kicadCommit).toMatch(/^[0-9a-f]{40}$/);
   // `ops` (island v0.2.3-cc13): the request ops the release answers, sorted, project.plot among them.
   expect(island.ops).toEqual([...island.ops].sort());
@@ -510,14 +524,11 @@ test('boots with KiCad\'s chrome hidden, and key.press reaches KiCad with no rea
   });
   expect((box.w * box.h) / (box.iw * box.ih)).toBeGreaterThan(0.95);
   // No real click anywhere: the boot's own focus click is what makes this work. The
-  // seeded chord Ctrl+Alt+7 opens KiCad's schematic checker (theme/pencil-tools.json).
+  // seeded chord Ctrl+Alt+7 (theme/pencil-tools.json) reaches KiCad, whose schematic
+  // checker is held for the host's own Check (ev.held, no dialog). A key refused while
+  // a KiCad window is up is proven by the popup menu test below.
   expect(await visibleWx(frame, { type: 'wxDialog' })).toEqual([]);
-  expect(await request(page, 'key.press', { key: '7', code: 'Digit7', ctrl: true, alt: true })).toEqual({});
-  await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length, { timeout: 15_000 }).toBe(1);
-  // While the checker is up, a key is refused rather than typed into it (the harness rejects with "code: message").
-  await expect(request(page, 'key.press', { key: 'w', code: 'KeyW' })).rejects.toThrow('busy: key.press');
-  await clickWx(page, frame, 'Close');
-  await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length).toBe(0);
+  await expectHeldChord(page, frame, { key: '7', code: 'Digit7', ctrl: true, alt: true }, 'eeschema.InspectionTool.runERC');
   // chrome.show brings the chrome back, and off again.
   expect(await request(page, 'chrome.show', { on: true })).toEqual({});
   await expect.poll(async () => (await visibleWx(frame, { type: 'wxMenuBar' })).length).toBe(1);
@@ -536,10 +547,14 @@ test('a press in the drawing takes the keyboard back from the host page, so its 
   await clickIn(page, 1100, 730);
   await expect.poll(() => frame.evaluate(() => document.hasFocus())).toBe(true);
   expect(await page.evaluate(() => document.activeElement?.tagName)).toBe('IFRAME');
-  // The user's own key reaches KiCad: the seeded chord Ctrl+Alt+7 opens its schematic checker.
+  // The user's own key reaches KiCad: the seeded chord Ctrl+Alt+7 asks for its schematic
+  // checker, which the island holds for the host (ev.held, no dialog).
   expect(await visibleWx(frame, { type: 'wxDialog' })).toEqual([]);
+  const before = (await events(page)).filter((e) => e.type === 'ev.held').length;
   await page.keyboard.press('Control+Alt+7');
-  await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length, { timeout: 15_000 }).toBe(1);
+  await expect.poll(async () => (await events(page)).filter((e) => e.type === 'ev.held').length, { timeout: 15_000 }).toBe(before + 1);
+  expect((await events(page)).filter((e) => e.type === 'ev.held').at(-1)?.action).toBe('eeschema.InspectionTool.runERC');
+  expect(await visibleWx(frame, { type: 'wxDialog' })).toEqual([]);
 });
 
 test('a popup menu is reported as ev.menu while it is up, and holds the host\'s keys back', async ({ page }) => {
@@ -625,18 +640,17 @@ test('the board frame boots canvas only too, and the island wrote the cheap curs
     expect((await seededConfig(frame, file)).window?.cursor).toEqual({ cross_hair_mode: 0, always_show_cursor: false });
   }
   // A Ctrl+Alt+Shift chord reaches the engine too: theme/user.hotkeys binds pcbnew.DRCTool.runDRC,
-  // a topbar tool KiCad gives no key, to Ctrl+Alt+Shift+K (theme/pencil-tools.json), and it opens the checker.
+  // a topbar tool KiCad gives no key, to Ctrl+Alt+Shift+K (theme/pencil-tools.json); the checker
+  // is held for the host's own board check (ev.held, no dialog).
   expect(await visibleWx(frame, { type: 'wxDialog' })).toEqual([]);
-  expect(await request(page, 'key.press', { key: 'K', code: 'KeyK', ctrl: true, shift: true, alt: true })).toEqual({});
-  await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length, { timeout: 15_000 }).toBe(1);
+  await expectHeldChord(page, frame, { key: 'K', code: 'KeyK', ctrl: true, shift: true, alt: true }, 'pcbnew.DRCTool.runDRC');
 });
 
-test('a seeded topbar chord opens the schematic checker: Ctrl+Alt+7 runs ERC', async ({ page }) => {
+test('a seeded topbar chord reaches the schematic checker: Ctrl+Alt+7 asks for ERC, held for the host', async ({ page }) => {
   const frame = await boot(page, 'fixture=glasgow&frame=sch', 'glasgow.kicad_sch');
   expect(await visibleWx(frame, { type: 'wxDialog' })).toEqual([]);
   // theme/user.hotkeys binds eeschema.InspectionTool.runERC to Ctrl+Alt+7 (theme/pencil-tools.json, strip top).
-  expect(await request(page, 'key.press', { key: '7', code: 'Digit7', ctrl: true, alt: true })).toEqual({});
-  await expect.poll(async () => (await visibleWx(frame, { type: 'wxDialog' })).length, { timeout: 15_000 }).toBe(1);
+  await expectHeldChord(page, frame, { key: '7', code: 'Digit7', ctrl: true, alt: true }, 'eeschema.InspectionTool.runERC');
 });
 
 test('a seeded chord starts a tool KiCad gives no key, and one project.save keeps the edits on every sheet', async ({ page }) => {
