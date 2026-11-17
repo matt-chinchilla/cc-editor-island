@@ -109,15 +109,20 @@ export function readExportDone(bytes: Uint8Array | null): ExportDone | null {
   return lines == null ? null : { code: v.code as number, lines, dropped: [...(v.dropped as string[])] };
 }
 
+/** The code the engine's own refusals end with (a 3D format other than VRML, VRML's empty scene): its line is the run's last. */
+export const ENGINE_REFUSAL_CODE = -1;
+
 /**
  * Why a finished run failed, or null when it did not (code 0): its first
- * error line, else its first line of any severity (the engine reports some
- * refusals as info, VRML's empty scene among them), else the code; the run's
- * folder taken out.
+ * error line; else, for the engine's own refusal (code -1), its last line
+ * (the engine reports it as info: "Only VRML is made here.", "The VRML
+ * exporter wrote no board (an empty scene)."); else the code. A KiCad job
+ * that fails without an error line (the drill job's report, code 4) is never
+ * answered by a line that says it went well. The run's folder taken out.
  */
 export function exportFailure(done: ExportDone, dir: string): string | null {
   if (done.code === 0) return null;
-  const line = done.lines.find((l) => l.severity === 'error') ?? done.lines[0];
+  const line = done.lines.find((l) => l.severity === 'error') ?? (done.code === ENGINE_REFUSAL_CODE ? done.lines.at(-1) : undefined);
   return line != null ? runText(line.text, dir) : `the export ended with code ${done.code}`;
 }
 

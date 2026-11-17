@@ -5339,10 +5339,11 @@ describe('outputs: project.export and board.rules (island v0.2.3-cc23)', () => {
     expect(dialog.runPaths()).toEqual([]);
   });
 
-  it('answers export_failed with the first error line, else the first line, else the code; no files', async () => {
+  it('answers export_failed with the first error line, else the engine refusal\'s last line, else the code; no files', async () => {
     const cases: Array<[unknown, string]> = [
       [{ code: 1, lines: [{ severity: 'info', text: 'Starting.' }, { severity: 'error', text: `Unable to export '${ROOT}/card.dsn': REF** twice` }], dropped: [] }, "Unable to export 'card.dsn': REF** twice"],
-      [{ code: -1, lines: [{ severity: 'info', text: 'The VRML exporter wrote no board (an empty scene).' }], dropped: [] }, 'The VRML exporter wrote no board (an empty scene).'],
+      [{ code: -1, lines: [{ severity: 'info', text: `Successfully exported VRML to /tmp/cc-out/1/card.wrl` }, { severity: 'info', text: 'The VRML exporter wrote no board (an empty scene).' }], dropped: [] }, 'The VRML exporter wrote no board (an empty scene).'],
+      [{ code: 4, lines: [{ severity: 'action', text: 'Created file.' }, { severity: 'info', text: 'Done.' }], dropped: [] }, 'the export ended with code 4'],
       [{ code: 3, lines: [], dropped: [] }, 'the export ended with code 3'],
     ];
     for (const [done, message] of cases) {

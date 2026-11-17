@@ -115,6 +115,9 @@ describe('the run\'s record', () => {
     expect(exportFailure(done, DIR)).toBeNull();
     expect(exportFailure({ code: 1, lines: [{ severity: 'warning', text: 'w' }, { severity: 'error', text: `Cannot write '${DIR}/a.dsn'` }], dropped: [] }, DIR)).toBe("Cannot write 'a.dsn'");
     expect(exportFailure({ code: -1, lines: [{ severity: 'info', text: 'Only VRML is made here.' }], dropped: [] }, DIR)).toBe('Only VRML is made here.');
+    expect(exportFailure({ code: -1, lines: [{ severity: 'info', text: `Successfully exported VRML to ${DIR}/g.wrl` }, { severity: 'info', text: 'The VRML exporter wrote no board (an empty scene).' }], dropped: [] }, DIR)).toBe('The VRML exporter wrote no board (an empty scene).');
+    // A KiCad job's failure with no error line says its code, never its last line ("Done.").
+    expect(exportFailure({ code: 4, lines: [{ severity: 'action', text: `Created file '${DIR}/g-PTH.drl'` }, { severity: 'info', text: 'Done.' }], dropped: [] }, DIR)).toBe('the export ended with code 4');
     expect(exportFailure({ code: 2, lines: [], dropped: [] }, DIR)).toBe('the export ended with code 2');
   });
 });
