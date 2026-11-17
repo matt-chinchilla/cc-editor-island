@@ -1,0 +1,43 @@
+Cmp-Mod V01 Created by PcbNew   date = 2026-11-17
+
+BeginCmp
+TimeStamp = /cc0d5a11-0000-4000-8000-000000000a01
+Path = /cc0d5a11-0000-4000-8000-000000000a01
+Reference = R1;
+ValeurCmp = 10k;
+IdModule  = Resistor_SMD:R_0805_2012Metric;
+EndCmp
+
+BeginCmp
+TimeStamp = /cc0d5a11-0000-4000-8000-000000000a02
+Path = /cc0d5a11-0000-4000-8000-000000000a02
+Reference = R2;
+ValeurCmp = 10k;
+IdModule  = Resistor_SMD:R_0805_2012Metric;
+EndCmp
+
+BeginCmp
+TimeStamp = /cc0d5a11-0000-4000-8000-000000000a03
+Path = /cc0d5a11-0000-4000-8000-000000000a03
+Reference = R3;
+ValeurCmp = 1k;
+IdModule  = Resistor_SMD:R_0402_1005Metric;
+EndCmp
+
+BeginCmp
+TimeStamp = /cc0d5a11-0000-4000-8000-000000000a50/cc0d5a11-0000-4000-8000-000000000a05
+Path = /cc0d5a11-0000-4000-8000-000000000a50/cc0d5a11-0000-4000-8000-000000000a05
+Reference = R4;
+ValeurCmp = 100k;
+IdModule  = Resistor_SMD:R_0603_1608Metric;
+EndCmp
+
+BeginCmp
+TimeStamp = /cc0d5a11-0000-4000-8000-0000000009ff
+Path = /cc0d5a11-0000-4000-8000-0000000009ff
+Reference = R9;
+ValeurCmp = 1k;
+IdModule  = Resistor_SMD:R_0603_1608Metric;
+EndCmp
+
+EndListe

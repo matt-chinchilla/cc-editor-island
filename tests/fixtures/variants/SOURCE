@@ -1,0 +1,23 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (c) 2026 Chirichella Inc.
+
+Written by hand for this repository on 2026-11-17 (CC0 1.0: no rights
+reserved) for the properties spec (docs/superpowers/specs/2026-11-16-
+properties-rules-design.md on the site, section 6), no third-party content
+but the shape of KiCad's Device:R as the drc-small fixture carries it, and a
+ground symbol of our own (cc:GND). A KiCad 10 design with two variants:
+- variants.kicad_sch, the root: R1 (10k, an MPN field), R2 (10k) and R3 (1k)
+  in 0603, and #PWR01 (a power symbol, never a Fields row); in the variant
+  Lite R2 is not fitted, in the variant Pro R3's value is 4k7 (each written
+  inside the instance as KiCad 10 writes it);
+- unfitted.kicad_sch, the sheet "Unfitted" (page 2), which carries its own
+  do not populate: R4 (100k) inside it is not fitted in every variant;
+- variants.kicad_pro names both variants with their descriptions;
+- variants.kicad_pcb is the board as Update the board leaves it: the four
+  footprints with their schematic paths, the board's variant list, R2's and
+  R3's variant entries and R4 not populated. Nothing is wired: the parts
+  stand alone, so the checks report their pins unconnected.
+Read by kicad-cli 10.0.8 (kicad/kicad:10.0, 2026-11-17): the bill of
+materials lists R4 DNP by default, R2 DNP under --variant Lite and R3 at 4k7
+under --variant Pro. ids.json names the uuids for the tests. The KiCad files
+carry no comment (their formats have none), so this file holds their license.

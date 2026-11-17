@@ -1,0 +1,9 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (c) 2026 Chirichella Inc.
+
+Written by hand for this repository on 2026-11-17 (CC0 1.0: no rights
+reserved) for the properties spec (section 3.4, Read a .cmp file): KiCad's
+footprint association file (the format CvPcb and the board editor's Export
+Footprint Association write, "Cmp-Mod V01") for the variants fixture. R1 and
+R2 take 0805, R3 takes 0402, R4 keeps 0603, and R9 is a designator the
+design does not hold. Each entry carries its symbol path as KiCad writes it.

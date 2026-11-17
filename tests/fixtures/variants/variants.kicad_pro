@@ -1,0 +1,28 @@
+{
+  "meta": {
+    "filename": "variants.kicad_pro",
+    "version": 3
+  },
+  "schematic": {
+    "variants": [
+      {
+        "name": "Lite",
+        "description": "R2 not fitted"
+      },
+      {
+        "name": "Pro",
+        "description": "R3 is 4k7"
+      }
+    ]
+  },
+  "sheets": [
+    [
+      "cc0d5a11-0000-4000-8000-000000000a00",
+      "Root"
+    ],
+    [
+      "cc0d5a11-0000-4000-8000-000000000a50",
+      "Unfitted"
+    ]
+  ]
+}
