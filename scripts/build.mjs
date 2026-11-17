@@ -97,7 +97,13 @@ execSync(`node scripts/notices.mjs ${rel}`, { stdio: 'inherit' });
 // to know what the island answers before any engine boots (PROTOCOL.md).
 const ops = JSON.parse(readFileSync(join('bridge', 'ops.json'), 'utf8'));
 if (!Array.isArray(ops) || ops.length === 0 || !ops.every((op) => typeof op === 'string' && /^[a-z]+(\.[a-z]+)*$/i.test(op))) throw new Error('bridge/ops.json must list the request ops as strings');
-const island = { id, tag: pin.pcbjam.tag, kicadCommit: sources.kicad, source: `https://github.com/matt-chinchilla/cc-editor-island/releases/tag/${id}`, ops: [...new Set(ops)].sort() };
+// `exportKinds` (island v0.2.3-cc23): the jobs project.export runs, sorted, from
+// bridge/exports.json, the list the responder's EXPORT_JOBS is built from; a host
+// shows an output as held when its job is not listed (PROTOCOL.md).
+const exportFaces = JSON.parse(readFileSync(join('bridge', 'exports.json'), 'utf8'));
+const exportKinds = Object.keys(exportFaces ?? {});
+if (exportKinds.length === 0 || !exportKinds.every((job) => /^[a-z][a-z0-9_]*$/.test(job) && (exportFaces[job] === 'pcb' || exportFaces[job] === 'sch'))) throw new Error('bridge/exports.json must map each output job to its face, pcb or sch');
+const island = { id, tag: pin.pcbjam.tag, kicadCommit: sources.kicad, source: `https://github.com/matt-chinchilla/cc-editor-island/releases/tag/${id}`, ops: [...new Set(ops)].sort(), exportKinds: exportKinds.sort() };
 writeFileSync(join(rel, 'island.json'), JSON.stringify(island));
 writeFileSync(join('dist', 'island.json'), JSON.stringify(island));
 
