@@ -5075,7 +5075,7 @@ describe('the simulator: the sim ops, ev.sim and the held Simulator (island v0.2
     expect(await s.request('sim.run', { analysis: { kind: 'fft', of: 2, signals: ['v(nowhere)'] }, options: OPTS, overrides: [] })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
     s.state.plans.push({ kind: 'fft', plots: [{ name: 'spec1', x: 'frequency', vectors: [{ name: 'frequency', signal: 'frequency', trace: 'other', complex: false, length: 2 }, { name: 'v(out)', signal: 'V(out)', trace: 'voltage', complex: true, length: 2 }] }] });
     expect(await s.request('sim.run', { analysis: { kind: 'fft', of: 2, signals: ['V(OUT)'], window: 'hanning' }, options: OPTS, overrides: [] })).toMatchObject({ ok: true, result: { run: 3 } });
-    expect(s.state.runs.at(-1)).toMatchObject({ run: 3, command: 'set specwindow=hanning\nlinearize v(out)\nfft v(out)', fftOf: 2 });
+    expect(s.state.runs.at(-1)).toMatchObject({ run: 3, command: 'set specwindow=hanning\nlinearize V(out)\nfft V(out)', fftOf: 2 });
   });
 
   it('sim.vectors reads the service directly by plot and name, splits a complex vector, transfers fresh arrays, and knows a released service', async () => {

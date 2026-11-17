@@ -456,12 +456,19 @@ export function commandOf(a: Exclude<SimAnalysis, { kind: 'fft' }>, names: NetNa
 
 /**
  * An FFT's lines, as KiCad's dialog writes them with Linearize on (the window
- * first, when asked): each signal one of the transient's own vectors (`vectors`,
- * matched in any case, written in the transient's spelling). The first signal
- * the transient lacks is answered as `unknown`.
+ * first, when asked): each signal one of the transient's own vectors, named by
+ * its ngspice name or KiCad's signal (matched in any case) and written as
+ * KiCad's signal (`V(/out)`), which ngspice's command reader takes where a bare
+ * `/out` reads as a division (measured on engine run 14: "syntax error in line
+ * segment"). The first signal the transient lacks is answered as `unknown`.
  */
-export function fftLines(a: Extract<SimAnalysis, { kind: 'fft' }>, vectors: readonly string[]): Command {
-  const byLower = new Map(vectors.map((v) => [v.toLowerCase(), v]));
+export function fftLines(a: Extract<SimAnalysis, { kind: 'fft' }>, vectors: ReadonlyArray<{ name: string; signal: string }>): Command {
+  const byLower = new Map<string, string>();
+  for (const v of vectors) {
+    const spelled = VECTOR_RE.test(v.signal) ? v.signal : v.name;
+    byLower.set(v.name.toLowerCase(), spelled);
+    byLower.set(v.signal.toLowerCase(), spelled);
+  }
   const signals: string[] = [];
   for (const s of a.signals) {
     const own = byLower.get(s.toLowerCase());

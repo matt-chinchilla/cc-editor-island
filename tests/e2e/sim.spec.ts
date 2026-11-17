@@ -240,3 +240,64 @@ test('sim.release ends the service when no run is live, and the next run boots i
   expect(await request(page, 'sim.stop')).toEqual({});
   await expect.poll(async () => (await sims(page, live.run)).at(-1)?.phase, { timeout: 10_000 }).toBe('stopped');
 });
+
+test('every analysis KiCad offers runs from the island\'s line: AC, noise, pole-zero, S-parameters and an FFT of the transient', async ({ page }) => {
+  await boot(page, 'sim-rc');
+  const kinds: Record<string, string> = {};
+  // V1 drives the AC sweep with a magnitude of 1 (its pulse kept): a model set, one undo step.
+  await request(page, 'sim.model.set', { uuid: 'a1c0de00-0000-4000-8001-000000000100', sheetPath: '/', model: { source: 'builtin', type: 'V.PULSE', params: { y1: '0', y2: '5', td: '0', tr: '1n', tf: '1n', tw: '10m', per: '20m', ac: '1' }, pins: [] } });
+  const ac = await run(page, { analysis: { kind: 'ac', scale: 'dec', points: 10, fStart: '1', fStop: '1meg' }, options: OPTS, overrides: [] });
+  kinds.ac = ac.end;
+  expect(ac.end).toBe('done');
+  const acResult = await request(page, 'sim.result', { run: ac.run }) as unknown as Result;
+  expect(acResult.kind).toBe('ac');
+  const acOut = vectorNamed(acResult, /^v\(\/?out\)$/i)!;
+  const [freq, gain] = await vectors(page, ac.run, [acResult.plots[0]!.x!, acOut]);
+  expect(gain!.imag).not.toBeNull();
+  // The RC low pass: unity far below its corner (159 Hz), a tenth or less a decade above.
+  const mag = (i: number) => Math.hypot(gain!.real[i]!, gain!.imag![i]!);
+  expect(mag(0)).toBeGreaterThan(0.99);
+  const decadeUp = freq!.real.findIndex((f) => f >= 1600);
+  expect(mag(decadeUp)).toBeLessThan(0.11);
+  measure('ac', `${freq!.real.length} points, |v(out)| ${mag(0).toFixed(4)} at ${freq!.real[0]} Hz, ${mag(decadeUp).toFixed(4)} at ${Math.round(freq!.real[decadeUp]!)} Hz`);
+
+  const noise = await run(page, { analysis: { kind: 'noise', output: '/out', source: 'V1', scale: 'dec', points: 5, fStart: '10', fStop: '100k' }, options: OPTS, overrides: [] });
+  kinds.noise = `${noise.end}${noise.code ? ` ${noise.code}` : ''}`;
+  const noiseResult = noise.end === 'done' ? await request(page, 'sim.result', { run: noise.run }) as unknown as Result : null;
+  measure('noise', `${kinds.noise}: ${JSON.stringify(noiseResult?.plots.map((p) => [p.name, p.vectors.map((v) => `${v.name}:${v.trace}`)]))}`);
+  expect(noise.end).toBe('done');
+  expect(noiseResult!.plots.flatMap((p) => p.vectors).some((v) => v.trace === 'noise')).toBe(true);
+
+  const pz = await run(page, { analysis: { kind: 'pz', input: ['/in', '0'], output: ['/out', '0'], transfer: 'vol', find: 'pz' }, options: OPTS, overrides: [] });
+  kinds.pz = `${pz.end}${pz.code ? ` ${pz.code}` : ''}`;
+  const pzResult = pz.end === 'done' ? await request(page, 'sim.result', { run: pz.run }) as unknown as Result : null;
+  measure('pz', `${kinds.pz}: ${JSON.stringify(pzResult?.plots.map((p) => [p.name, p.x, p.vectors.map((v) => `${v.name}:${v.complex}`)]))}`);
+  expect(pz.end).toBe('done');
+  const pole = pzResult!.plots.flatMap((p) => p.vectors.map((v) => ({ plot: p, v }))).find(({ v }) => /pole/i.test(v.name));
+  if (pole != null) {
+    const [p] = await vectors(page, pz.run, [pole.v.name]);
+    // One real pole at minus 1/RC: minus 1000 per second.
+    measure('the RC pole', `${p!.real[0]} ${p!.imag?.[0] ?? ''}`);
+    expect(Math.abs(p!.real[0]! + 1000) / 1000).toBeLessThan(1e-3);
+  }
+
+  // S-parameters need RF ports (KiCad's port sources); the RC has none: what ngspice answers is measured.
+  const sp = await run(page, { analysis: { kind: 'sp', scale: 'dec', points: 5, fStart: '1k', fStop: '1meg' }, options: OPTS, overrides: [] }).catch((e: Error) => ({ end: 'refused', code: e.message.replace(/^.*?page\.evaluate:\s*Error:\s*/, '').split('\n')[0] } as unknown as Ran));
+  kinds.sp = `${sp.end}${sp.code ? ` ${sp.code}` : ''}`;
+  measure('sp on a circuit with no port', kinds.sp);
+  expect(['done', 'failed', 'refused']).toContain(sp.end);
+
+  const tran = await run(page, { analysis: { kind: 'tran', step: '1u', stop: '5m' }, options: OPTS, overrides: [] });
+  expect(tran.end).toBe('done');
+  const fft = await run(page, { analysis: { kind: 'fft', of: tran.run, signals: ['V(/out)'], window: 'hanning' }, options: OPTS, overrides: [] });
+  kinds.fft = `${fft.end}${fft.code ? ` ${fft.code}` : ''}`;
+  const fftResult = fft.end === 'done' ? await request(page, 'sim.result', { run: fft.run }) as unknown as Result : null;
+  measure('fft', `${kinds.fft}: ${JSON.stringify(fftResult?.plots.map((p) => [p.name, p.x, p.vectors.map((v) => `${v.name}:${v.complex}:${v.length}`)]))}; console ${JSON.stringify(fftResult?.console.slice(-12))}`);
+  expect(fft.end).toBe('done');
+  expect(fftResult!.kind).toBe('fft');
+  expect(fftResult!.console.join('\n')).not.toMatch(/syntax error/i);
+  const spec = fftResult!.plots.find((p) => p.x === 'frequency');
+  expect(spec, JSON.stringify(fftResult!.plots.map((p) => p.name))).toBeTruthy();
+  // The transient the FFT read is still held.
+  expect(await request(page, 'sim.result', { run: tran.run })).toMatchObject({ kind: 'tran' });
+});

@@ -193,10 +193,11 @@ describe('the analysis line', () => {
     expect(line({ kind: 'noise', output: 'out', source: 'R1', scale: 'dec', points: 1, fStart: '1', fStop: '2' })).toEqual({ unknown: 'R1' });
     expect(line({ kind: 'pz', input: ['in', '0'], output: ['x9', '0'], transfer: 'vol', find: 'pz' })).toEqual({ unknown: 'x9' });
   });
-  it('an FFT reads the transient\'s own vectors, linearized first, the window before both', () => {
-    const vectors = ['time', 'v(out)', 'v(in)', 'i(v1)'];
-    expect(fftLines({ kind: 'fft', of: 1, signals: ['V(OUT)'] }, vectors)).toEqual({ command: 'linearize v(out)\nfft v(out)' });
-    expect(fftLines({ kind: 'fft', of: 1, signals: ['v(out)', 'i(v1)'], window: 'hanning' }, vectors)).toEqual({ command: 'set specwindow=hanning\nlinearize v(out) i(v1)\nfft v(out) i(v1)' });
+  it('an FFT reads the transient\'s own vectors as KiCad\'s signals, linearized first, the window before both', () => {
+    const vectors = [{ name: 'time', signal: 'time' }, { name: '/out', signal: 'V(/out)' }, { name: '/in', signal: 'V(/in)' }, { name: 'v1#branch', signal: 'I(V1)' }];
+    // By KiCad's signal or ngspice's name, in any case; always written as the signal.
+    expect(fftLines({ kind: 'fft', of: 1, signals: ['v(/OUT)'] }, vectors)).toEqual({ command: 'linearize V(/out)\nfft V(/out)' });
+    expect(fftLines({ kind: 'fft', of: 1, signals: ['/out', 'v1#branch'], window: 'hanning' }, vectors)).toEqual({ command: 'set specwindow=hanning\nlinearize V(/out) I(V1)\nfft V(/out) I(V1)' });
     expect(fftLines({ kind: 'fft', of: 1, signals: ['v(nowhere)'] }, vectors)).toEqual({ unknown: 'v(nowhere)' });
   });
   it('the engine\'s args carry the run, its folder and nothing the host wrote as SPICE', () => {

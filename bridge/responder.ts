@@ -2519,7 +2519,7 @@ export function startResponder(opts: {
     if (a.analysis.kind === 'fft') {
       const source = simResults.get(a.analysis.of);
       if (source == null || source.result.kind !== 'tran' || simLatest.get('tran') !== a.analysis.of || source.life !== simLife) return fail('no_simulation', `run ${a.analysis.of}`);
-      const line = fftLines(a.analysis, source.result.plots.flatMap((p) => p.vectors.map((v) => v.name)));
+      const line = fftLines(a.analysis, source.result.plots.flatMap((p) => p.vectors));
       if ('unknown' in line) return fail('bad_args', `the transient has no ${line.unknown}`);
       command = line.command;
       fftOf = a.analysis.of;
