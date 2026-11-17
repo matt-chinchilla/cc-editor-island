@@ -52,6 +52,8 @@ import {
 } from './sim';
 import type { SimService } from '../src/sim-service';
 import { ChromeWatch } from './chromeWatch';
+import { EXPORT_DONE, EXPORT_EXPORTS, EXPORT_ROOT, exportFace, exportFailure, exportJson, parseExportArgs, readExportDone, readExportFolder, type ExportDone } from './export';
+import { parseRulesArgs, readRules, RULES_EXPORTS, rulesJson } from './rules';
 
 declare const __ISLAND_ID__: string;   // define'd by vite.config.ts from PIN.json
 
@@ -276,6 +278,12 @@ export const timing = {
   simAcceptMs: 60_000,
   simDeathMs: 5_000,
   simModelMs: 5_000,
+  /**
+   * Outputs (island v0.2.3-cc23): how long a project.export may take, from the
+   * export's call to its record in the folder (five times the slowest Glasgow
+   * row measured, at least 30 s, at most 300 s; tests/e2e/export.spec.ts).
+   */
+  exportMs: 120_000,
 };
 /** KiCad's Next Sheet (eeschema's PgDn, by virtual page number, the top-level sheets included). */
 const NEXT_SHEET_KEY: KeyPress = { key: 'PageDown', code: 'PageDown', ctrl: false, shift: false, alt: false };
@@ -388,6 +396,16 @@ export const BOARD_UPDATE_CAP = 'boardUpdate';
 export const DRC_CAP = 'drc';
 export const EXPLAIN_CAP = 'explain';
 export const BOARD_ITEM_CAP = 'boardItem';
+/**
+ * The pseudo-caps ev.ready lists for the outputs (island v0.2.3-cc23):
+ * `export` for project.export (the frame's own kind's export,
+ * kicadExportBoardOutput in a pcb frame or kicadExportSchematicOutput in a sch
+ * frame, with the apply queue probe; engine run 14), `rules` for board.rules
+ * (kicadResolveRules, in either frame's kind: a sch frame answers it
+ * unsupported). A symedit frame lists neither.
+ */
+export const EXPORT_CAP = 'export';
+export const RULES_CAP = 'rules';
 /** What a board op answers in a sch frame. */
 const BOARD_FRAME_ONLY = 'a board op runs in a pcb frame';
 /** What a symbol editor op answers in a sch or a pcb frame. */
@@ -403,6 +421,7 @@ const SYMEDIT_REFUSES: ReadonlySet<string> = new Set([
   'project.open', 'project.import', 'project.save', 'sheet.tree', 'sheet.enter', 'layers.get', 'layers.visible', 'layers.active',
   'place', 'footprint.models', 'project.plot', 'symbol.get', 'symbol.set', 'symbol.forEditor', 'symbol.push', 'lib.update',
   'sheet.annotate', 'sheet.check', 'board.preview', 'board.update', 'board.check', 'board.explain', 'board.item.get', 'board.item.set',
+  'project.export', 'board.rules',
 ]);
 const SYMEDIT_REFUSAL = 'a symbol editor opens symbols, not documents';
 /**
@@ -411,7 +430,7 @@ const SYMEDIT_REFUSAL = 'a symbol editor opens symbols, not documents';
  * the document, its view or the editor's state answers busy at once instead of
  * queueing behind it. Only these still run: the reads, and shutdown.
  */
-const CHECK_PASSES: ReadonlySet<string> = new Set(['symbol.get', 'sheet.tree', 'layers.get', 'board.item.get', 'board.explain', 'shutdown']);
+const CHECK_PASSES: ReadonlySet<string> = new Set(['symbol.get', 'sheet.tree', 'layers.get', 'board.item.get', 'board.explain', 'board.rules', 'shutdown']);
 /** A wx top-level window: the editor's own frame, or another window of KiCad's (its footprint chooser is a frame, not a dialog). */
 const FRAME_TYPE_RE = /Frame/;
 /**
@@ -993,6 +1012,8 @@ export function startResponder(opts: {
       case 'project.libs': return projectLibsOp(args);
       case 'footprint.models': return footprintModels(args);
       case 'project.plot': return projectPlot(args);
+      case 'project.export': return projectExport(args);
+      case 'board.rules': return boardRules(args);
       case 'symbol.get': return symbolGet(args);
       case 'symbol.set': return symbolSet(args);
       case 'board.explain': return boardExplain(args);
@@ -2949,6 +2970,98 @@ export function startResponder(opts: {
     return ok(read.rule as unknown as Record<string, unknown>);
   }
 
+  /**
+   * board.rules (PROTOCOL.md, bridge/rules.ts): the checks (bad_args, then
+   * boardGate), then the engine's synchronous read of KiCad's Constraints
+   * Resolution for one item or its Clearance Resolution for two: not_found
+   * when the board holds neither uuid, rules_invalid when the board's custom
+   * rules do not compile, no_rule when KiCad applies none.
+   */
+  function boardRules(args: unknown): Answer {
+    const op = 'board.rules';
+    const a = parseRulesArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = boardGate(op, RULES_EXPORTS);
+    if ('ok' in gate) return gate;
+    const named = a.b === undefined ? a.a : `${a.a} ${a.b}`;
+    let raw: unknown;
+    try { raw = (gate.mod.kicadResolveRules as (json: string) => unknown)(rulesJson(a)); } catch (err) { return fail('island_error', describeError(err)); }
+    if (raw === '' || raw == null) return fail('island_error', 'the engine refused the rules read');
+    const read = readRules(raw);
+    if (read == null) return fail('island_error', 'the engine answered rules of another shape');
+    if ('error' in read) return read.error === 'not_found' ? fail('not_found', named) : fail('rules_invalid', op);
+    if (read.rules.length === 0) return fail('no_rule', named);
+    return ok({ rules: read.rules, notes: read.notes });
+  }
+
+  /**
+   * project.export (PROTOCOL.md, bridge/export.ts): the checks, in order,
+   * every one before any effect: the args (bad_args), the frame's kind against
+   * the job's face (unsupported), the engine (not_ready, unsupported naming the
+   * export), a document (not_ready), busy as for project.plot. Then our
+   * engine's kicadExportBoardOutput or kicadExportSchematicOutput queues the
+   * job into a fresh folder under /tmp/cc-out/, and the answer waits for the
+   * apply queue to empty and the run's record (.cc-export.json, written last),
+   * closing any dialog met meanwhile without accepting it; then every file the
+   * run wrote is read with its path relative to the folder, and the folder
+   * removed. Nothing in the document changes: no undo step, no ev.edited.
+   */
+  async function projectExport(args: unknown): Promise<Answer> {
+    const op = 'project.export';
+    const a = parseExportArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const face = exportFace(a.job);
+    if (face !== frame) return fail('unsupported', face === 'pcb' ? 'a board output runs in a pcb frame' : 'a schematic output runs in a sch frame');
+    const w = win;
+    if (w == null) return fail('not_ready', op);
+    const mod = (w.Module ?? {}) as Record<string, unknown>;
+    const exports = EXPORT_EXPORTS[face];
+    for (const name of exports) if (typeof mod[name] !== 'function') return fail('unsupported', name);
+    if (staged == null || opened == null) return fail('not_ready', op);
+    if (engineBusy() || keysBlocked(w) || placeWatch?.hanging() === true) return fail('busy', op);
+    const FS = w.FS;
+    if (FS == null) return fail('island_error', 'the engine has no file system');
+    let dir: string;
+    try { dir = freshRunFolder(FS, EXPORT_ROOT); } catch (err) { return fail('island_error', describeError(err)); }
+    const run = runs;
+    const t0 = Date.now();
+    // The export answers false at once for settings it refuses (a known key of another
+    // JSON type, a cc_* output's key it does not take): that is the request's fault.
+    let refused = false;
+    const result = await watchedRun<ExportDone>(op, w, FS, dir, timing.exportMs,
+      async () => {
+        const queued = await (mod[exports[0]] as (json: string) => unknown)(exportJson(run, dir, a));
+        refused = queued !== true;
+        return queued;
+      },
+      () => readExportDone(readBytes(FS, `${dir}/${EXPORT_DONE}`)));
+    if (!('done' in result)) return refused ? fail('bad_args', 'the engine refused the settings') : result;
+    if (result.dialog != null) { dropRunFolder(FS, dir); return fail('island_error', result.dialog); }
+    const { done } = result;
+    const paths = (text: string): string => runText(text, dir).split(`${root}/`).join('');
+    const failure = exportFailure(done, dir);
+    if (failure != null) { dropRunFolder(FS, dir); return fail('export_failed', paths(failure)); }
+    let read: ReturnType<typeof readExportFolder>;
+    try {
+      read = readExportFolder(FS, dir);
+    } catch (err) {
+      dropRunFolder(FS, dir);
+      return fail('island_error', describeError(err));
+    }
+    dropRunFolder(FS, dir);
+    if ('error' in read) {
+      return fail('island_error', read.error === 'too_large' ? 'the export wrote more than the protocol carries'
+        : read.error === 'link' ? 'the export wrote a link' : 'the export wrote a folder inside a folder');
+    }
+    const notes = runNotes(done.lines, dir).map((n) => n.split(`${root}/`).join(''));
+    console.debug('[export]', a.job, `${read.files.length} files`, `${Date.now() - t0} ms`);
+    return {
+      ok: true,
+      result: { files: read.files.map((f) => ({ path: f.path, bytes: f.bytes })), notes, dropped: done.dropped },
+      transfer: read.files.map((f) => f.bytes.buffer as ArrayBuffer),
+    };
+  }
+
   /** kicadBoardItemGet's answer read: the items, or null for an answer of another shape (a throw included). */
   function boardItems(mod: Record<string, unknown>, uuids: readonly string[]): BoardItemSheet[] | null {
     try { return readBoardItems((mod.kicadBoardItemGet as (json: string) => unknown)(JSON.stringify(uuids))); } catch { return null; }
@@ -3621,6 +3734,9 @@ export function startResponder(opts: {
         if (BOARD_CHECK_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(DRC_CAP);
         if (EXPLAIN_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(EXPLAIN_CAP);
         if (BOARD_ITEM_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(BOARD_ITEM_CAP);
+        // The outputs (island v0.2.3-cc23): this frame's own kind's export, and the rules read.
+        if (hasAll(EXPORT_EXPORTS[frame])) caps.push(EXPORT_CAP);
+        if (hasAll(RULES_EXPORTS)) caps.push(RULES_CAP);
         // The simulator (island v0.2.3-cc23): a sch frame only (it lives in the schematic
         // engine); `simModel` with the four model exports, `sim` with the four run exports
         // and the service the island serves.

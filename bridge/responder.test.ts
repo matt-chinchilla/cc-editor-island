@@ -3843,7 +3843,7 @@ describe('project.plot (island v0.2.3-cc13)', () => {
     expect(new Set(ops).size).toBe(ops.length);
     const s = board();
     for (const op of ops) expect((await s.request(op, 1) as { error?: { code: string } }).error?.code).not.toBe('unknown_op');
-    expect(await s.request('project.export', {})).toMatchObject({ ok: false, error: { code: 'unknown_op', message: 'project.export' } });
+    expect(await s.request('project.teleport', {})).toMatchObject({ ok: false, error: { code: 'unknown_op', message: 'project.teleport' } });
   });
 });
 
@@ -5152,5 +5152,262 @@ describe('the simulator: the sim ops, ev.sim and the held Simulator (island v0.2
     await settle();
     expect(await noService.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
     expect(noService.slots.kicadHostAction?.onRequest?.(JSON.stringify({ action: 'eeschema.EditorControl.showSimulator' }))).toBe(false);
+  });
+});
+
+describe('outputs: project.export and board.rules (island v0.2.3-cc23)', () => {
+  const started: Array<{ close: () => void }> = [];
+  afterEach(() => { for (const r of started.splice(0)) r.close(); });
+  const OPEN_PCB = { name: 'x', files: [{ path: 'card.kicad_pcb', bytes: b('(kicad_pcb)') }] };
+  const OPEN_SCH = { name: 'x', files: [{ path: 'card.kicad_sch', bytes: b('(kicad_sch)') }] };
+  const A = 'bbbbbbbb-0000-4000-8000-000000000001';
+  const B = 'bbbbbbbb-0000-4000-8000-000000000002';
+  const POS = { job: 'pcb_export_pos', settings: { format: 'csv', units: 'mm' } };
+  const rule = (o: Record<string, unknown> = {}) => ({
+    constraint: 'clearance', unit: 'mm', min: 0.2, opt: null, max: null, verdict: '', source: 'netclass', name: 'Default',
+    condition: '', layer: 'F.Cu', items: [{ uuid: A, netclass: 'Default' }, { uuid: B, netclass: 'Default' }], ...o,
+  });
+
+  /**
+   * A booted engine with run 14's output exports. Each export writes `files`
+   * (path relative to its folder, a trailing "/" a folder) and its record
+   * `applyMs` after the call (never at -1), holding the apply queue busy until
+   * then; kicadResolveRules answers `rules` (a function of its args) at once.
+   */
+  function engine(opts: { frame?: 'sch' | 'pcb'; exports?: boolean; applyMs?: number; refuse?: boolean; files?: Record<string, string>; done?: unknown; rules?: (a: { a: string; b: string }) => string; dialogDuring?: boolean } = {}) {
+    const { page, parent } = fakePage(`?frame=${opts.frame ?? 'pcb'}&theme=day`);
+    const r = startResponder({ parentOrigin: PARENT, page });
+    started.push(r);
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    const queue = { until: 0, hold: false };
+    const state = { depth: 0, calls: [] as Array<Record<string, unknown>> };
+    const mod = eng.Module as Record<string, unknown>;
+    const exportFn = (json: string): boolean => {
+      const a = JSON.parse(json) as { dir: string };
+      state.calls.push(a);
+      if (opts.refuse) return false;
+      if (opts.dialogDuring) {
+        const m = eng.showModal({ id: 'd1', title: 'Save Changes?', x: 10, y: 10, w: 200, h: 100, buttons: [{ label: 'Save' }, { label: 'Cancel', on: () => eng.hideModal(m) }] });
+      }
+      const ms = opts.applyMs ?? 5;
+      if (ms < 0) { queue.hold = true; return true; }
+      queue.until = Date.now() + ms;
+      setTimeout(() => {
+        const FS = eng.win.FS!;
+        FS.mkdirTree(a.dir);
+        for (const [path, text] of Object.entries(opts.files ?? { 'card-pos.csv': 'Ref,Val\n' })) {
+          if (path.endsWith('/')) FS.mkdirTree(`${a.dir}/${path.slice(0, -1)}`);
+          else { FS.mkdirTree(`${a.dir}/${path}`.slice(0, `${a.dir}/${path}`.lastIndexOf('/'))); FS.writeFile(`${a.dir}/${path}`, text); }
+        }
+        FS.writeFile(`${a.dir}/.cc-export.json`, JSON.stringify(opts.done ?? { code: 0, lines: [{ severity: 'action', text: `Wrote '${a.dir}/card-pos.csv'.` }, { severity: 'warning', text: `A warning about '${ROOT}/card.kicad_pcb'` }], dropped: [] }));
+      }, ms);
+      return true;
+    };
+    if (opts.exports !== false) {
+      mod.kicadCollabBusy = () => queue.hold || Date.now() < queue.until || eng.modals.length > 0;
+      mod.kicadCollabTestUndoDepth = () => state.depth;
+      mod.kicadExportBoardOutput = vi.fn(exportFn);
+      mod.kicadExportSchematicOutput = vi.fn(exportFn);
+      mod.kicadResolveRules = vi.fn((json: string) => {
+        const a = JSON.parse(json) as { a: string; b: string };
+        state.calls.push({ rules: a });
+        return opts.rules ? opts.rules(a) : JSON.stringify({ rules: [rule()], notes: ['A note.'], error: '' });
+      });
+    }
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    let id = 0;
+    const send = (op: string, args?: unknown): number => {
+      const n = ++id;
+      port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+      return n;
+    };
+    const answer = async (n: number) => {
+      for (let i = 0; i < 400 && !got.some((m) => m.id === n); i++) await settle(5);
+      return got.find((m) => m.id === n);
+    };
+    const request = (op: string, args?: unknown) => answer(send(op, args));
+    const runPaths = () => [...eng.files.keys(), ...eng.dirs].filter((p) => p.startsWith('/tmp/cc-out/'));
+    return { eng, got, state, send, answer, request, runPaths, queue };
+  }
+
+  it('lists export by the frame\'s own kind\'s export and rules in either document frame, none on an older engine, and both ops in ops.json', async () => {
+    for (const frame of ['pcb', 'sch'] as const) {
+      const s = engine({ frame });
+      await settle();
+      const caps = s.got.find((m) => m.type === 'ev.ready')?.caps as string[];
+      expect(caps).toEqual(expect.arrayContaining(['export', 'rules']));
+      expect(caps).toEqual([...caps].sort());
+    }
+    // A pcb frame on an engine with only the schematic export lists no export.
+    const half = engine();
+    delete (half.eng.Module as Record<string, unknown>).kicadExportBoardOutput;
+    const { page, parent } = fakePage('?frame=pcb&theme=day');
+    const r = startResponder({ parentOrigin: PARENT, page });
+    started.push(r);
+    const c = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    r.engineReady(half.eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    await settle();
+    expect(c.got.find((m) => m.type === 'ev.ready')?.caps).not.toContain('export');
+    const old = engine({ exports: false });
+    await settle();
+    const caps = old.got.find((m) => m.type === 'ev.ready')?.caps as string[];
+    expect(caps).not.toContain('export');
+    expect(caps).not.toContain('rules');
+    expect(await old.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await old.request('project.export', POS)).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadExportBoardOutput' } });
+    expect(await old.request('board.rules', { a: A })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadResolveRules' } });
+    const ops = (await import('./ops.json')).default as string[];
+    expect(ops).toEqual(expect.arrayContaining(['project.export', 'board.rules']));
+  });
+
+  it('exports into a fresh folder under /tmp/cc-out/, answers every file by its relative path with the notes and dropped keys, and removes the folder', async () => {
+    const files = { 'card-pos.csv': 'Ref,Val\n', 'devices/r.txt': 'R', 'devices/c.txt': 'C', 'empty/': '' };
+    const s = engine({ applyMs: 30, files, done: { code: 0, lines: [{ severity: 'info', text: 'Done.' }, { severity: 'warning', text: `Unknown layer in '${ROOT}/card.kicad_pcb'` }, { severity: 'error', text: `Odd thing at '/tmp/cc-out/1/card-pos.csv'` }], dropped: ['hpgl_page_size'] } });
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    const t0 = Date.now();
+    const answer = await s.request('project.export', { ...POS, settings: { ...POS.settings, hpgl_page_size: 'A4' } }) as { ok: boolean; result: { files: Array<{ path: string; bytes: Uint8Array }>; notes: string[]; dropped: string[] } };
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(25);
+    expect(answer.ok).toBe(true);
+    expect(Object.keys(answer.result).sort()).toEqual(['dropped', 'files', 'notes']);
+    expect(answer.result.files.map((f) => f.path)).toEqual(['card-pos.csv', 'devices/c.txt', 'devices/r.txt']);
+    expect(new TextDecoder().decode(answer.result.files[0].bytes)).toBe('Ref,Val\n');
+    expect(answer.result.notes).toEqual(["Unknown layer in 'card.kicad_pcb'", "Odd thing at 'card-pos.csv'"]);
+    expect(answer.result.dropped).toEqual(['hpgl_page_size']);
+    expect(s.state.calls).toEqual([{ run: 1, dir: '/tmp/cc-out/1', job: 'pcb_export_pos', settings: { format: 'csv', units: 'mm', hpgl_page_size: 'A4' } }]);
+    expect(s.runPaths()).toEqual([]);
+    // The next run takes the next folder; a schematic job in a sch frame carries its pages.
+    const sch = engine({ frame: 'sch' });
+    expect(await sch.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(await sch.request('project.export', { job: 'sch_export_plot_pdf', settings: {}, pages: ['2'] })).toMatchObject({ ok: true });
+    expect(await sch.request('project.export', { job: 'cc_symbols', settings: {} })).toMatchObject({ ok: true });
+    expect(sch.state.calls).toEqual([
+      { run: 1, dir: '/tmp/cc-out/1', job: 'sch_export_plot_pdf', settings: {}, pages: ['2'] },
+      { run: 2, dir: '/tmp/cc-out/2', job: 'cc_symbols', settings: {} },
+    ]);
+  });
+
+  it('refuses whole, before any effect, in order: the args, the face, the engine, the document, busy', async () => {
+    const s = engine();
+    for (const args of [undefined, {}, { job: 'pcb_export_pos' }, { settings: {} }, { ...POS, extra: 1 }, { ...POS, job: 'pcb_export_hpgl' },
+      { ...POS, settings: { x: { y: 1 } } }, { ...POS, settings: { x: null } }, { ...POS, settings: { x: Infinity } }, { ...POS, settings: { x: [1] } },
+      { ...POS, settings: { x: 'a'.repeat(1025) } }, { ...POS, settings: Object.fromEntries(Array.from({ length: 129 }, (_, i) => [`k${i}`, 1])) },
+      { ...POS, pages: [] }, { job: 'sch_export_netlist', settings: {}, pages: ['1'] }, { job: 'sch_export_plot_pdf', settings: {}, pages: [''] }]) {
+      expect(await s.request('project.export', args)).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'project.export' } });
+    }
+    expect(await s.request('project.export', { job: 'sch_export_bom', settings: {} })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'a schematic output runs in a sch frame' } });
+    expect(await s.request('project.export', POS)).toMatchObject({ ok: false, error: { code: 'not_ready', message: 'project.export' } });
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    s.eng.dialogs.push({ typeName: 'wxDialog', visible: true });
+    expect(await s.request('project.export', POS)).toMatchObject({ ok: false, error: { code: 'busy', message: 'project.export' } });
+    s.eng.dialogs.length = 0;
+    expect(s.state.calls).toEqual([]);
+    const sch = engine({ frame: 'sch' });
+    expect(await sch.request('project.export', POS)).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'a board output runs in a pcb frame' } });
+    // A symedit frame opens symbols, not documents.
+    const sym = engine({ frame: 'symedit' as 'sch' });
+    expect(await sym.request('project.export', POS)).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'a symbol editor opens symbols, not documents' } });
+    expect(await sym.request('board.rules', { a: A })).toMatchObject({ ok: false, error: { code: 'unsupported' } });
+    // Before ev.ready there is no engine at all.
+    const { page, parent } = fakePage('?frame=pcb&theme=day');
+    const early = startResponder({ parentOrigin: PARENT, page });
+    started.push(early);
+    const c = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    c.port.postMessage({ id: 1, op: 'project.export', args: POS });
+    for (let i = 0; i < 50 && !c.got.some((m) => m.id === 1); i++) await settle(5);
+    expect(c.got.find((m) => m.id === 1)).toMatchObject({ ok: false, error: { code: 'not_ready' } });
+  });
+
+  it('answers bad_args when the engine refuses the settings, not_applied past its time with the folder removed, island_error for a dialog met', async () => {
+    const refused = engine({ refuse: true });
+    expect(await refused.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await refused.request('project.export', POS)).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'the engine refused the settings' } });
+    expect(refused.runPaths()).toEqual([]);
+    const stuck = engine({ applyMs: -1 });
+    stuck.queue.hold = false;
+    expect(await stuck.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    const saved = timing.exportMs;
+    timing.exportMs = 60;
+    try {
+      expect(await stuck.request('project.export', POS)).toMatchObject({ ok: false, error: { code: 'not_applied', message: 'project.export' } });
+    } finally { timing.exportMs = saved; }
+    expect(stuck.runPaths()).toEqual([]);
+    const dialog = engine({ dialogDuring: true });
+    expect(await dialog.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await dialog.request('project.export', POS)).toMatchObject({ ok: false, error: { code: 'island_error', message: 'Save Changes?' } });
+    expect(dialog.eng.clicks).toContain('Save Changes?:Cancel');
+    expect(dialog.runPaths()).toEqual([]);
+  });
+
+  it('answers export_failed with the first error line, else the first line, else the code; no files', async () => {
+    const cases: Array<[unknown, string]> = [
+      [{ code: 1, lines: [{ severity: 'info', text: 'Starting.' }, { severity: 'error', text: `Unable to export '${ROOT}/card.dsn': REF** twice` }], dropped: [] }, "Unable to export 'card.dsn': REF** twice"],
+      [{ code: -1, lines: [{ severity: 'info', text: 'The VRML exporter wrote no board (an empty scene).' }], dropped: [] }, 'The VRML exporter wrote no board (an empty scene).'],
+      [{ code: 3, lines: [], dropped: [] }, 'the export ended with code 3'],
+    ];
+    for (const [done, message] of cases) {
+      const s = engine({ done });
+      expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+      expect(await s.request('project.export', POS)).toEqual({ id: expect.any(Number), ok: false, error: { code: 'export_failed', message } });
+      expect(s.runPaths()).toEqual([]);
+    }
+  });
+
+  it('answers island_error for a folder deeper than one level, or more than the protocol carries', async () => {
+    const deep = engine({ files: { 'a/b/c.txt': 'x' } });
+    expect(await deep.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await deep.request('project.export', POS)).toMatchObject({ ok: false, error: { code: 'island_error', message: 'the export wrote a folder inside a folder' } });
+    expect(deep.runPaths()).toEqual([]);
+    const many = engine({ files: Object.fromEntries(Array.from({ length: 1025 }, (_, i) => [`f${i}.txt`, 'x'])) });
+    expect(await many.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await many.request('project.export', POS)).toMatchObject({ ok: false, error: { code: 'island_error', message: 'the export wrote more than the protocol carries' } });
+  });
+
+  it('board.rules answers the records and notes, not_found, rules_invalid, no_rule, and island_error for another shape', async () => {
+    const s = engine();
+    expect(await s.request('board.rules', { a: A })).toMatchObject({ ok: false, error: { code: 'not_ready', message: 'board.rules' } });
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    for (const args of [undefined, {}, { a: A.toUpperCase() }, { a: A, b: A }, { a: A, b: '' }, { a: A, c: B }]) {
+      expect(await s.request('board.rules', args)).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'board.rules' } });
+    }
+    expect(await s.request('board.rules', { a: A, b: B })).toEqual({ id: expect.any(Number), ok: true, result: { rules: [rule()], notes: ['A note.'] } });
+    expect(s.state.calls).toEqual([{ rules: { a: A, b: B } }]);
+    expect(await s.request('board.rules', { a: A })).toMatchObject({ ok: true });
+    expect(s.state.calls[1]).toEqual({ rules: { a: A, b: '' } });
+    const answers: Array<[string, string, string]> = [
+      [JSON.stringify({ rules: [], notes: [], error: 'not_found' }), 'not_found', `${A} ${B}`],
+      [JSON.stringify({ rules: [], notes: [], error: 'rules_invalid' }), 'rules_invalid', 'board.rules'],
+      [JSON.stringify({ rules: [], notes: [], error: '' }), 'no_rule', `${A} ${B}`],
+      ['', 'island_error', 'the engine refused the rules read'],
+      [JSON.stringify({ rules: [rule({ unit: 'deg' })], notes: [], error: '' }), 'island_error', 'the engine answered rules of another shape'],
+    ];
+    for (const [text, code, message] of answers) {
+      const e = engine({ rules: () => text });
+      expect(await e.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+      expect(await e.request('board.rules', { a: A, b: B })).toMatchObject({ ok: false, error: { code, message } });
+    }
+    const sch = engine({ frame: 'sch' });
+    expect(await sch.request('board.rules', { a: A })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'a board op runs in a pcb frame' } });
+  });
+
+  it('while a board check runs, board.rules is answered and project.export answers busy', async () => {
+    const s = engine({ applyMs: 150 });
+    const mod = s.eng.Module as Record<string, unknown>;
+    mod.kicadCheckBoard = (json: string) => {
+      const a = JSON.parse(json) as { dir: string };
+      s.queue.until = Date.now() + 150;
+      setTimeout(() => {
+        s.eng.win.FS!.mkdirTree(a.dir);
+        s.eng.win.FS!.writeFile(`${a.dir}/drc.json`, JSON.stringify({ violations: [], unconnected: [], parity: [], parityRun: 'no', filled: false, skipped: [], ignored: [], errors: 0, warnings: 0, excludedCount: 0, depth: 0 }));
+        s.eng.win.FS!.writeFile(`${a.dir}/.cc-drc.json`, JSON.stringify({ code: 0, error: '', message: '', lines: [] }));
+      }, 150);
+      return true;
+    };
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    const check = s.send('board.check', { fill: false, parity: false, allTrackErrors: false });
+    await settle(20);
+    expect(await s.request('board.rules', { a: A })).toMatchObject({ ok: true });
+    expect(await s.request('project.export', POS)).toMatchObject({ ok: false, error: { code: 'busy', message: 'project.export' } });
+    expect(await s.answer(check)).toMatchObject({ id: check });
   });
 });

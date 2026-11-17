@@ -61,5 +61,7 @@
   "sim.vectors",
   "sim.stop",
   "sim.opOnSheet",
-  "sim.release"
+  "sim.release",
+  "project.export",
+  "board.rules"
 ]
