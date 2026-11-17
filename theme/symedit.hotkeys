@@ -7,3 +7,4 @@ eeschema.SymbolLibraryControl.toggleSyncedPinsMode	Ctrl+Alt+Shift+7
 eeschema.SymbolLibraryControl.showElectricalTypes	Ctrl+Alt+Shift+8	
 eeschema.SymbolLibraryControl.showHiddenPins	Ctrl+Alt+Shift+9	
 eeschema.SymbolLibraryControl.showHiddenFields	Ctrl+Alt+Shift+0	
+eeschema.InteractiveEdit.rotateCW	Ctrl+Alt+Shift+6	Shift+R

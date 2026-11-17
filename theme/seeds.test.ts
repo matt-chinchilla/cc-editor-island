@@ -33,14 +33,16 @@ describe('the seeds', () => {
     const lines = (t: string) => t.split('\n').filter((l) => l !== '').map((l) => l.split('\t'));
     expect(seedsFor('day').hotkeys).toBe(ledger + symedit);
     const own = lines(symedit);
-    expect(own).toHaveLength(9);
+    expect(own).toHaveLength(10);
     const taken = new Set([...lines(ledger).map(([, k]) => k), ...Object.values(JSON.parse(defaultsJson) as Record<string, string | null>).filter((k): k is string => k != null)]);
     const actions = new Set(lines(ledger).map(([a]) => a));
     for (const [action, key, secondary] of own) {
       expect(key, action).toMatch(/^Ctrl\+Alt\+Shift\+[0-9]$/);
       expect(taken.has(key!), key).toBe(false);
       expect(actions.has(action!), action).toBe(false);
-      expect(secondary).toBe('');
+      // Rotate clockwise keeps KiCad's own Shift+R beside its chord: a host's
+      // key.press of a Shift and letter alone does not reach KiCad.
+      expect(secondary).toBe(action === 'eeschema.InteractiveEdit.rotateCW' ? 'Shift+R' : '');
     }
     expect(new Set(own.map(([, k]) => k)).size).toBe(own.length);
   });
