@@ -8,6 +8,7 @@ import dark from './colors/circuitcenter-dark.json?raw';
 import pcb from './toolbars/pcbnew-toolbars.json?raw';
 import sch from './toolbars/eeschema-toolbars.json?raw';
 import hotkeys from './user.hotkeys?raw';
+import symeditHotkeys from './symedit.hotkeys?raw';
 import type { Seeds } from '../loader/src/wasm/boot';
 import type { Theme } from '../src/types';
 
@@ -22,7 +23,9 @@ export function seedsFor(theme: Theme): Seeds {
     ],
     colorTheme: 'circuitcenter',
     toolbars: [{ name: 'pcbnew-toolbars.json', json: pcb }, { name: 'eeschema-toolbars.json', json: sch }],
-    hotkeys,
+    // The symbol editor's own chords follow the pencil-tools ledger: Ctrl+Alt+Shift
+    // and a digit, which neither the ledger's pool nor KiCad's defaults use.
+    hotkeys: hotkeys + symeditHotkeys,
     common: {
       appearance: { icon_theme: theme === 'night' ? 1 : 0, toolbar_icon_size: 24, use_icons_in_menus: true },
       api: { enable_server: false },

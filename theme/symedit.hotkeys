@@ -1,0 +1,10 @@
+eeschema.SymbolDrawing.placeSymbolText	Ctrl+Alt+Shift+1	
+eeschema.SymbolDrawing.drawSymbolTextBox	Ctrl+Alt+Shift+2	
+eeschema.SymbolDrawing.drawSymbolLines	Ctrl+Alt+Shift+3	
+eeschema.SymbolDrawing.drawSymbolPolygon	Ctrl+Alt+Shift+4	
+eeschema.SymbolDrawing.placeSymbolAnchor	Ctrl+Alt+Shift+5	
+eeschema.InteractiveEdit.rotateCW	Ctrl+Alt+Shift+6	
+eeschema.SymbolLibraryControl.toggleSyncedPinsMode	Ctrl+Alt+Shift+7	
+eeschema.SymbolLibraryControl.showElectricalTypes	Ctrl+Alt+Shift+8	
+eeschema.SymbolLibraryControl.showHiddenPins	Ctrl+Alt+Shift+9	
+eeschema.SymbolLibraryControl.showHiddenFields	Ctrl+Alt+Shift+0	
