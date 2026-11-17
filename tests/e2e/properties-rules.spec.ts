@@ -9,6 +9,8 @@
 // undo step per apply, previews and dry runs pushing none, a 263-row set.
 import { expect, test, type Page } from '@playwright/test';
 
+declare const process: { env: Record<string, string | undefined> };
+
 interface Ev { type: string; phase?: string; depth?: number; caps?: string[]; path?: string; text?: string; at: number }
 interface Harness { __events: Ev[]; __bridge: { request(op: string, args?: unknown): Promise<Record<string, unknown>> } }
 interface Row { uuid: string; sheetPath: string; ref: string; unit: number; value: string; footprint: string; fields: Array<{ name: string; value: string; shown: boolean }>; inBom: boolean; onBoard: boolean; inSim: boolean; inPos: boolean; dnp: boolean; sheetHeld: string[]; overrides: string[]; filters: string[]; pins: number }

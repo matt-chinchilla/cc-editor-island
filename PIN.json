@@ -1,5 +1,5 @@
 {
-  "islandId": "v0.2.3-cc22",
+  "islandId": "v0.2.3-cc23",
   "pcbjam": {
     "tag": "v0.2.3",
     "root": "7ec51c1c55aab45b21cd2956af413b4420520838",
@@ -19,8 +19,8 @@
     "toolTag": "v0.2.3",
     "build": {
       "recipe": "cc/main",
-      "pcbjam": "5f8bed47e70e63a75b540ee75dc3a0c3b75dad07",
-      "kicad": "f4b389766eea50dc68f6b581b55ca23be5777713",
+      "pcbjam": "44e3e9f4011a8171caa84236598a31d8d3186517",
+      "kicad": "1b214bab4c341d3a0af7ce2ec4a46288df9cc443",
       "wxwidgets": "d235efd78f89a26b44b7785bf14f1b6c6c465939",
       "shared": "7791275bdfbf54e1500e303121dacaa2c3fd7d00",
       "patches": [
@@ -45,7 +45,11 @@
         "BOARD_NETLIST_UPDATER change log, every change, warning and error report also kept as a record for the host's Update the board page (kicad cc/main 88eece91; the island's board.preview and board.update)",
         "kicadUpdateBoardFromSchematic, kicadCheckBoard, kicadExplainViolation, kicadBoardItemGet and kicadBoardItemSet, and the markers kicadHostBoardProperties and kicadHostActions: KiCad's Update PCB from Schematic through the hidden schematic editor's netlist, its design rules check as records with the board's own severities and exclusions, the rule behind one mark, and one board item read and changed as one undo step, each with no KiCad dialog and the run exports' done files written last (pcbjam cc/main 70fe8e2, bbdf4c6, e34d7a4, 3dd83b2; the island's board ops, the boardUpdate, drc, explain and boardItem caps)",
         "VECTOR2I map and set keys under libc++ 22, a __make_transparent specialization so std::map and std::set of points keep KiCad's own std::less<VECTOR2I> where libc++ 22 (emscripten 6.0.6) looked keys up through less<>, which compares lengths, so a point at (x, y) and the one at (y, x) were one key and unrelated wires were joined into one net (kicad cc/main 8ea2dfa0, pinned by pcbjam cc/main 17cb482)",
-        "GL error queue read once a frame, WEBGL_COMPOSITOR::Begin reads glGetError once (errors left by draw calls dropped, a lost context thrown so the canvas falls back) and SetBuffer and bindFb no longer drain the queue and check their own calls (kicad cc/main f4b38976, pinned by pcbjam cc/main 5f8bed4; five glGetError a draw, each a synchronous wait for the GPU process in a browser, were about 600 calls a second and a tenth of the editor's time while the pointer moved, and none ever answered an error)"
+        "GL error queue read once a frame, WEBGL_COMPOSITOR::Begin reads glGetError once (errors left by draw calls dropped, a lost context thrown so the canvas falls back) and SetBuffer and bindFb no longer drain the queue and check their own calls (kicad cc/main f4b38976, pinned by pcbjam cc/main 5f8bed4; five glGetError a draw, each a synchronous wait for the GPU process in a browser, were about 600 calls a second and a tenth of the editor's time while the pointer moved, and none ever answered an error)",
+        "The symbol editor frame in the island: no library walk and no progress box at boot, a host mode opening a symbol the host parsed with no library row (kicad cc/main 8cc0bdd9), the checker's findings as records (kicad cc/main 4cca1e74), the symbol editor's dialogs asking the host first (kicad cc/main be322767), and its exports kicadSymEditOpen through kicadSymbolLibConvert, kicadSymbolForEditor and kicadSymbolPushToSchematic and the marker kicadHostSymEdit (pcbjam cc/main 1e9ab40, 671c64c; the island's symedit ops, the symedit, symbolConvert, symbolEdit and symeditHeld caps)",
+        "The simulator: SCH_INSPECTION_TOOL::RunSimulation asks the host before KiCad's Simulator window is made (kicad cc/main e75ebe77), and the exports kicadSimModelCatalog through kicadSimOpOnSheet through KiCad's own SIM_MODEL tables and the NGSPICE client, with pegtl on the include path (pcbjam cc/main d45efd2, bf3d793; the island's sim ops, the sim and simModel caps, the separate ngspice_service files)",
+        "Outputs: kicadOutputJobs, kicadExportSchematicOutput, kicadExportBoardOutput and kicadResolveRules (pcbjam cc/main 94b8da2, 1acc0b1, 598e368), with the IDF, Hyperlynx and Allegro netlist exporters reporting in place of message boxes (kicad cc/main 42b16c34, 03537007, ddc90fe3), the real VRML exporter compiled (kicad cc/main 9a513448), the schematic plot jobs linked (pcbjam cc/main 1f335b2), the enum setting and BOM delimiter repairs (pcbjam cc/main 980faba, 39e7c0f), and a VRML file holding only its header refused as a failed output (pcbjam cc/main 44e3e9f; the island's project.export and board.rules, the export and rules caps)",
+        "Properties and rules: kicadSymbolsGet, kicadSymbolsSet, kicadSymbolsExchange, kicadSchEdit and the schematic settings (pcbjam cc/main 1ea64a7), kicadBoardFootprints, kicadBoardEdit, kicadFootprintsExchange and the board settings (pcbjam cc/main bfa82d1), the custom rules parse error caught by non-const reference (pcbjam cc/main efe58fb; the island's symbols, symbolExchange, schEdit, boardFootprints, boardEdit, footprintExchange and settings caps)"
       ],
       "reproduction": {
         "pristine": {
@@ -59,35 +63,45 @@
     },
     "files": {
       "kicad_editor.js": {
-        "sha256": "4aa64ce69be973d643886d61d03483b907609331748d799954b211bdd56c9daa",
-        "bytes": 489614,
-        "source": "5f8bed47e70e63a75b540ee75dc3a0c3b75dad07"
+        "sha256": "d41c1a34bf1fc2ef1f14617adcc88396d1dcc4075587392d2acc75d2e65d6256",
+        "bytes": 489931,
+        "source": "44e3e9f4011a8171caa84236598a31d8d3186517"
       },
       "kicad_editor.wasm": {
-        "sha256": "3725778f855af8197c4f898d21c4b5197e4bbcb6c04af99f62615610eabceb04",
-        "bytes": 63445683,
-        "source": "5f8bed47e70e63a75b540ee75dc3a0c3b75dad07"
+        "sha256": "173ce515ecbc352a06b140960e14efe7829de12f3d4ca9b188252f968c611cd2",
+        "bytes": 64202030,
+        "source": "44e3e9f4011a8171caa84236598a31d8d3186517"
       },
       "wx.js": {
         "sha256": "42d6b547f9a024f187f1b7812b64a3f76ca322d35393531340cb316ff88da351",
         "bytes": 79808,
-        "source": "5f8bed47e70e63a75b540ee75dc3a0c3b75dad07"
+        "source": "44e3e9f4011a8171caa84236598a31d8d3186517"
       },
       "wx-dom.js": {
         "sha256": "7edabd5571c9f2fd0ea1acf7005fb3628f2e3cf6b8f430f8e473c328fb042a10",
         "bytes": 68699,
-        "source": "5f8bed47e70e63a75b540ee75dc3a0c3b75dad07"
+        "source": "44e3e9f4011a8171caa84236598a31d8d3186517"
       },
       "images.tar.gz": {
-        "sha256": "cba8ceb4ea232832aa949d851b49bb496a59d48e099721b3daead4cec32ff795",
-        "bytes": 5369773,
-        "source": "5f8bed47e70e63a75b540ee75dc3a0c3b75dad07"
+        "sha256": "d5d297d41f4cb9780d8c673fe83ed243f5baad3ee3368c83a77187bd8892dc24",
+        "bytes": 5369698,
+        "source": "44e3e9f4011a8171caa84236598a31d8d3186517"
+      },
+      "ngspice_service.js": {
+        "sha256": "f4cad030845b182dc17e88818fda38ce93bb2757aac63906a0d94e988cd96dc6",
+        "bytes": 117051,
+        "source": "44e3e9f4011a8171caa84236598a31d8d3186517"
+      },
+      "ngspice_service.wasm": {
+        "sha256": "ffad30a50e50c1c1a86efad20a409e7ea0790c2cb85d691e69c15ab1e184867b",
+        "bytes": 5666939,
+        "source": "44e3e9f4011a8171caa84236598a31d8d3186517"
       }
     }
   },
   "icons": {
-    "stockArchiveSha256": "cba8ceb4ea232832aa949d851b49bb496a59d48e099721b3daead4cec32ff795",
-    "repackedSha256": "4bcd0c1f0729163155b31f9035142b1c2574f147f5e06c5a698703c57af18930",
+    "stockArchiveSha256": "d5d297d41f4cb9780d8c673fe83ed243f5baad3ee3368c83a77187bd8892dc24",
+    "repackedSha256": "d049a6d71ea10940ba241a1238dc826d43a02f75e748164c6854afd05f3e8908",
     "inputs": {
       "theme/icons/src/add_component.svg": "d8d2dfa56f179658a3b2bd458090683161f188ad13d84d89fdb82f1a0f2a12e6",
       "theme/icons/src/add_line.svg": "64db6c023211cd897ea1f3613fcc4d338bf86fbca3086cf832bf3bf25dd516f0",
