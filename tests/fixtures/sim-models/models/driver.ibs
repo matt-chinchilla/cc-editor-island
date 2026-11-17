@@ -1,0 +1,48 @@
+[IBIS Ver]   3.2
+[File Name]  driver.ibs
+[File Rev]   1.0
+[Date]       2026-11-17
+[Source]     Written by hand for the island's simulator tests.
+[Notes]      A minimal output buffer with symmetric drive.
+[Disclaimer] None.
+[Copyright]  CC0 1.0
+|
+[Component]  CC_BUF
+[Manufacturer] Circuit Center
+[Package]
+| variable   typ      min      max
+R_pkg        0.1      0.05     0.2
+L_pkg        1nH      0.5nH    2nH
+C_pkg        1pF      0.5pF    2pF
+|
+[Pin]  signal_name  model_name  R_pin  L_pin  C_pin
+1      OUT          BUF
+2      GND          GND
+3      VCC          POWER
+|
+[Model]  BUF
+Model_type  Output
+C_comp  2pF  1pF  3pF
+|
+[Voltage Range]  3.3V  3.0V  3.6V
+|
+[Pulldown]
+| Voltage   I(typ)    I(min)    I(max)
+-3.3        -50mA     -40mA     -60mA
+0           0         0         0
+3.3         50mA      40mA      60mA
+6.6         60mA      50mA      70mA
+|
+[Pullup]
+| Voltage   I(typ)    I(min)    I(max)
+-3.3        50mA      40mA      60mA
+0           0         0         0
+3.3         -50mA     -40mA     -60mA
+6.6         -60mA     -50mA     -70mA
+|
+[Ramp]
+| variable  typ        min        max
+dV/dt_r     1.0/0.5n   0.9/0.6n   1.1/0.4n
+dV/dt_f     1.0/0.5n   0.9/0.6n   1.1/0.4n
+|
+[End]

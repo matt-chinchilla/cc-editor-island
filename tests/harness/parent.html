@@ -22,6 +22,9 @@ const FIXTURES = {
   'drc-small': { files: ['drc-small.kicad_pro', 'drc-small.kicad_sch', 'drc-small.kicad_pcb', 'drc-small.kicad_dru'] },
   'first-board': { files: ['first-board.kicad_pro', 'first-board.kicad_sch', 'first-board.kicad_pcb'] },
   'symedit-small': { files: ['symedit-small.kicad_pro', 'symedit-small.kicad_sch', 'symedit-small_parts.kicad_sym', 'sym-lib-table'] },
+  'sim-rc': { files: ['sim-rc.kicad_pro', 'sim-rc.kicad_sch'] },
+  'sim-divider': { files: ['sim-divider.kicad_pro', 'sim-divider.kicad_sch'] },
+  'sim-models': { files: ['sim-models.kicad_pro', 'sim-models.kicad_sch', 'models/bjt.lib', 'models/driver.ibs'] },
 };
 const q = new URLSearchParams(location.search);
 const fixture = q.get('fixture');

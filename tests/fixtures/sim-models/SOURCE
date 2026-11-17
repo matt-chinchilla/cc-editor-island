@@ -1,0 +1,11 @@
+SPDX-License-Identifier: CC0-1.0
+
+Written by hand for this repository on 2026-11-17 (CC0 1.0: no rights
+reserved), for tests/e2e/sim-model.spec.ts: a common emitter stage. V1, DC
+5 V on "vcc"; R1, 10 kOhm, from "vcc" to "c"; R2, 100 kOhm, from "vcc" to
+"b"; Q1, an NPN whose model is Q2N3904 in models/bjt.lib (Sim.Library and
+Sim.Name, pins 1=C 2=B 3=E), emitter to ground; the directive ".op".
+models/bjt.lib holds that model (textbook Gummel-Poon figures, typed for this
+file) and AMP10, an ideal gain of ten as a subcircuit. models/driver.ibs is a
+minimal IBIS 3.2 file of one output buffer, CC_BUF, its curves made up for
+the test. The KiCad files carry no comment, so this file holds their license.

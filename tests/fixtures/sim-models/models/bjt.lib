@@ -1,0 +1,9 @@
+* Models for the island's simulator tests, written by hand (CC0, see ../SOURCE).
+* A general purpose NPN transistor with textbook Gummel-Poon figures.
+.model Q2N3904 NPN(IS=6.734f XTI=3 EG=1.11 VAF=74.03 BF=416.4 NE=1.259 ISE=6.734f IKF=66.78m
++ XTB=1.5 BR=.7371 NC=2 ISC=0 IKR=0 RC=1 CJC=3.638p MJC=.3085 VJC=.75 FC=.5 CJE=4.493p
++ MJE=.2593 VJE=.75 TR=239.5n TF=301.2p ITF=.4 VTF=4 XTF=2 RB=10)
+* An ideal amplifier of gain ten between its input and ground, as a subcircuit.
+.subckt AMP10 in out
+E1 out 0 in 0 10
+.ends AMP10

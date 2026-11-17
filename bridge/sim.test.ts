@@ -46,6 +46,9 @@ describe('the args of each op, closed', () => {
     expect(parseCatalogArgs({})).toEqual({});
     expect(parseCatalogArgs({ type: 'V.PULSE' })).toEqual({ type: 'V.PULSE' });
     expect(parseCatalogArgs({ type: 'NMOS.BSIM4' })).toEqual({ type: 'NMOS.BSIM4' });
+    // KiCad's behavioral types are spelled "=" (measured on engine run 14: R.=, C.=, L.=, V.=, I.=).
+    expect(parseCatalogArgs({ type: 'V.=' })).toEqual({ type: 'V.=' });
+    expect(parseCatalogArgs({ type: 'V.==' })).toBeNull();
     for (const bad of [{ type: '' }, { type: 'a b' }, { type: 'A.B.C' }, { type: 1 }, { type: 'R', x: 1 }, [], null, 'R']) expect(parseCatalogArgs(bad)).toBeNull();
   });
   it('sim.model.get takes exactly a uuid and a sheet path', () => {

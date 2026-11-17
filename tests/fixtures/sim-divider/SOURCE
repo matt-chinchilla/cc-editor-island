@@ -1,0 +1,9 @@
+SPDX-License-Identifier: CC0-1.0
+
+Written by hand for this repository on 2026-11-17 (CC0 1.0: no rights
+reserved): the simulator spec's divider (12.3). V1, DC 12 V on the net "vin";
+R1, 10 kOhm, from "vin" to "mid"; R2, 4.7 kOhm, from "mid" to ground (the
+label "0"); the sheet's directive is ".op". Reference answers, measured with
+desktop ngspice 44.2 in kicad/kicad:10.0: v(mid) 3.836735 V, i(V1) minus
+0.816327 mA. For tests/e2e/sim.spec.ts and sim-model.spec.ts. The KiCad files
+carry no comment, so this file holds their license.

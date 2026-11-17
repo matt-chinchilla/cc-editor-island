@@ -156,8 +156,8 @@ export const NAME_RE = /^[^\s"'`(),=;\\]{1,128}$/;
 export const VECTOR_RE = /^[^\s"'`,;\\]{1,256}$/;
 /** A designator a tuner names. */
 const REF_RE = /^[^\s"'`(),=;\\]{1,64}$/;
-/** A model type's key as the engine writes it ("R", "V.PULSE", "NMOS.BSIM4"). */
-const TYPE_KEY_RE = /^[A-Za-z0-9_]{1,32}(\.[A-Za-z0-9_]{1,32})?$/;
+/** A model type's key as the engine writes it ("R", "V.PULSE", "NMOS.BSIM4", and "R.=" for a behavioral one). */
+const TYPE_KEY_RE = /^[A-Za-z0-9_]{1,32}(\.(?:[A-Za-z0-9_]{1,32}|=))?$/;
 /** The FFT windows ngspice's specwindow takes. */
 export const FFT_WINDOWS: readonly string[] = ['none', 'rectangular', 'bartlet', 'blackman', 'hanning', 'hamming', 'gaussian', 'flattop'];
 

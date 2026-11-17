@@ -1,0 +1,15 @@
+SPDX-License-Identifier: CC0-1.0
+
+Written by hand for this repository on 2026-11-17 (CC0 1.0: no rights
+reserved): the simulator spec's RC step (docs/superpowers/specs/
+2026-11-16-simulator-design.md 12.3 on the site). V1, a PULSE source 0 to 5 V
+(delay 0, rise and fall 1 ns, width 10 ms, period 20 ms), drives R1, 1 kOhm,
+from the net "in" to the net "out"; C1, 1 uF, from "out" to ground (the label
+"0", which KiCad's SPICE netlist writes as node 0); the sheet's directive is
+".tran 1u 5m". Every connection is a label on a pin's end, so no wire is drawn.
+The resistor's and capacitor's definitions follow KiCad's Device:R and
+Device:C; the source and its symbol are ours. Reference answers, measured
+with desktop ngspice 44.2 in kicad/kicad:10.0: v(out) 3.160602 V at 1 ms and
+4.966310 V at 5 ms, crossing 63.2 percent at 0.9999989 ms.
+For tests/e2e/sim.spec.ts. The KiCad files carry no comment (their formats
+have none), so this file holds their license.
