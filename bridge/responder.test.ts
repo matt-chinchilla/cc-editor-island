@@ -5625,6 +5625,10 @@ describe('properties, numbering and rules: the nine ops (island v0.2.3-cc23)', (
     const dup = engine({ frame: 'pcb', done: { edit: { error: 'duplicate_designator', message: 'two parts would share a designator' } } });
     expect(await dup.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
     expect(await dup.request('board.edit', { op: 'reannotate', preview: false, filter: {}, set: {} })).toMatchObject({ ok: false, error: { code: 'duplicate_designator', message: 'two parts would share a designator' } });
+    const named = engine({ frame: 'pcb', done: { edit: { error: 'duplicate_designator', message: 'two parts would share a designator' } },
+      report: { edit: { op: 'reannotate', preview: true, rows: [], count: 0, truncated: false, depth: 0, lines: [{ severity: 'warning', text: 'REF** is not numbered and keeps its designator' }, { severity: 'error', text: 'Duplicate instances of REF**' }] } } });
+    expect(await named.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await named.request('board.edit', { op: 'reannotate', preview: true, filter: {}, set: {} })).toMatchObject({ ok: false, error: { code: 'duplicate_designator', message: 'two parts would share a designator: Duplicate instances of REF**' } });
     expect(dup.runPaths()).toEqual([]);
     const wrong = engine({ frame: 'pcb', report: { edit: { op: 'repair', preview: true, rows: [], count: 0, truncated: false, depth: 0 } } });
     expect(await wrong.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });

@@ -62,7 +62,7 @@ import {
   EXCHANGE_DONE, EXCHANGE_REPORT, EXCHANGE_ROOT, FOOTPRINT_EXCHANGE_EXPORTS, footprintExchangeJson, parseFootprintExchangeArgs,
   parseSymbolExchangeArgs, readExchangeReport, SYMBOL_EXCHANGE_EXPORTS, symbolExchangeJson,
 } from './exchange';
-import { BOARD_EDIT_EXPORTS, BOARD_OPS, EDIT_DONE, EDIT_ERRORS, EDIT_REPORT, EDIT_ROOT, editJson, parseEditArgs, readEditReport, SCH_EDIT_EXPORTS, SCH_OPS, type EditArgs } from './edit';
+import { BOARD_EDIT_EXPORTS, BOARD_OPS, EDIT_DONE, EDIT_ERRORS, EDIT_REPORT, EDIT_ROOT, editJson, parseEditArgs, readEditErrors, readEditReport, SCH_EDIT_EXPORTS, SCH_OPS, type EditArgs } from './edit';
 import { FOOTPRINTS_EXPORTS, readBoardFootprints } from './footprints';
 import {
   parseSettingsGetArgs, parseSettingsSetArgs, PCB_READ_ONLY, readSection, readSettingsRecord, rulesPathOf, sectionFrames, SETTINGS_DONE,
@@ -3291,7 +3291,7 @@ export function startResponder(opts: {
    * under /tmp/cc-edit/: a preview lists the rows and changes nothing, an
    * apply is ONE commit named for the op. The answer is its report
    * (edit.json); duplicate_designator when a board's numbering would give two
-   * parts one designator (nothing changed).
+   * parts one designator (nothing changed), its message naming them.
    */
   async function globalEdit(op: 'sch.edit' | 'board.edit', args: unknown): Promise<Answer> {
     const board = op === 'board.edit';
@@ -3301,10 +3301,17 @@ export function startResponder(opts: {
     if ('ok' in gate) return gate;
     const t0 = Date.now();
     const exportName = board ? 'kicadBoardEdit' : 'kicadSchEdit';
+    let errors: string[] = [];
     const run = await recordedRun(op, gate.w, EDIT_ROOT, EDIT_DONE, timing.editMs, EDIT_ERRORS, 'the engine refused the edit',
       (n, dir) => (gate.mod[exportName] as (json: string) => unknown)(editJson(n, dir, a)),
-      (FS, dir) => readEditReport(readBytes(FS, `${dir}/${EDIT_REPORT}`), board ? 'pcb' : 'sch', a));
+      (FS, dir) => {
+        const bytes = readBytes(FS, `${dir}/${EDIT_REPORT}`);
+        errors = readEditErrors(bytes);
+        return readEditReport(bytes, board ? 'pcb' : 'sch', a);
+      });
     if (!('done' in run)) return run;
+    // A numbering that would give two parts one designator names them: KiCad's own lines.
+    if (run.done.error === 'duplicate_designator' && errors.length > 0) return fail(run.done.error, cut(`${run.done.message}: ${errors.join('; ')}`, 2048));
     if (run.done.error !== '') return fail(run.done.error, run.done.message || op);
     if (run.report == null) return fail('island_error', 'the edit report was of another shape');
     console.debug('[edit]', op, a.op, a.preview ? 'preview' : 'apply', `${run.report.count} rows`, `${Date.now() - t0} ms`);

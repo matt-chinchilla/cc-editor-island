@@ -220,3 +220,15 @@ export function readEditReport(bytes: Uint8Array | null, frame: 'sch' | 'pcb', a
   }
   return { op: v.op as string, preview: v.preview as boolean, rows, count: v.count, truncated: v.truncated, depth: v.depth, notes };
 }
+
+/**
+ * The error lines of an edit's report (reannotate's "Duplicate instances of
+ * R4"), whatever else it holds: what a duplicate_designator answer names. An
+ * empty list when there are none or the report is unreadable.
+ */
+export function readEditErrors(bytes: Uint8Array | null): string[] {
+  const v = jsonOf(bytes);
+  if (!isObj(v) || !own(v, 'lines')) return [];
+  const lines = readLines(v.lines);
+  return lines == null ? [] : lines.filter((l) => l.severity === 'error').slice(0, MAX_EDIT_NOTES).map((l) => [...l.text].slice(0, TEXT_MAX).join(''));
+}
