@@ -31,6 +31,17 @@ import { placeBlob, PlacementWatch } from './place';
 import { BOARD_PROPERTIES_CAP, BOARD_PROPERTIES_EXPORT, installProperties, PROPERTIES_CAP, PROPERTIES_EXPORT, type BoardPropertiesKind, type PropertiesWindow } from './properties';
 import { misfit, parseSymbolGetArgs, parseSymbolSetArgs, readSymbolSheet, showsSet, SYMBOL_EXPORTS, symbolSetJson, type SymbolSheet } from './symbol';
 import { parseSelectArgs, SELECT_EXPORTS, selectItems, SelectionFeed, type Selection, type SelectionWindow } from './selection';
+import { installSymEditAsk, type SymEditAsk, type SymEditAskWindow } from './properties';
+import {
+  itemSetMisfit, makeToken, newJson, openJson, parseItemsAddArgs, parseItemsGetArgs, parseItemsRemoveArgs, parseItemsSetArgs, parseMarkSavedArgs,
+  parseNewArgs, parseOpenArgs, parseShowArgs, parseSymbolSetArgs as parseSymEditSymbolSetArgs, readFindings, readItems, readSelection, readState,
+  readSvgDone, readSymbolProps, readTaken, showsItemSet, showsSymbolSet, SVG_DONE, SVG_FILE, SVG_MAX_BYTES, SVG_ROOT, SYMEDIT_ASK_EXPORT,
+  SYMEDIT_CAP, SYMEDIT_EXPORTS, SYMEDIT_HELD_CAP, type SymEditState, type SymItem,
+} from './symedit';
+import {
+  CONVERT_CAP, CONVERT_EXPORTS, CONVERT_ROOT, LIB_UPDATE_CAP, LIB_UPDATE_EVENT, LIB_UPDATE_EXPORTS, parseConvertArgs, parseForEditorArgs,
+  parseLibUpdateArgs, parsePushArgs, readConverted, readForEditor, readLibUpdateDone, readLibUpdateQueued, SYMBOL_EDIT_CAP, SYMBOL_EDIT_EXPORTS,
+} from './symbolEdit';
 import { FitWatch, sampleDrawing, settleView, surfaceKey } from './view';
 import { ChromeWatch } from './chromeWatch';
 
@@ -50,6 +61,7 @@ export type IslandEvent =
   | { type: 'ev.properties'; uuids: string[]; sheetPath: string; field?: string }
   | { type: 'ev.boardProperties'; uuid: string; kind: BoardPropertiesKind }
   | { type: 'ev.held'; action: string }
+  | ({ type: 'ev.symedit' } & SymEditAsk)
   | { type: 'ev.key'; code: string; shift: boolean }
   | { type: 'ev.closing' };
 
@@ -229,6 +241,17 @@ export const timing = {
   boardCheckMs: 60_000,
   boardItemMs: 5_000,
   boardUpdateMs: 30_000,
+  /**
+   * The symbol editor (island v0.2.3-cc23): how long an open, a new symbol, a
+   * change or a show may take to read back (the engine run's own probe:
+   * STM32F405RGTx opened in 11 ms, a pin set in 34 ms); how long a symedit.svg
+   * may take to its record; how long a symbol.push and a lib.update may take
+   * in the schematic engine.
+   */
+  symeditMs: 5_000,
+  svgMs: 30_000,
+  symbolPushMs: 5_000,
+  libUpdateMs: 30_000,
 };
 /** KiCad's Next Sheet (eeschema's PgDn, by virtual page number, the top-level sheets included). */
 const NEXT_SHEET_KEY: KeyPress = { key: 'PageDown', code: 'PageDown', ctrl: false, shift: false, alt: false };
@@ -343,6 +366,21 @@ export const EXPLAIN_CAP = 'explain';
 export const BOARD_ITEM_CAP = 'boardItem';
 /** What a board op answers in a sch frame. */
 const BOARD_FRAME_ONLY = 'a board op runs in a pcb frame';
+/** What a symbol editor op answers in a sch or a pcb frame. */
+const SYMEDIT_FRAME_ONLY = 'a symbol edits in a symedit frame';
+/**
+ * The ops a symedit frame answers unsupported, whatever their args: it opens
+ * symbols, never a document, so nothing that reads, saves or edits one runs
+ * there. Every other op (project.write, project.libs, project.forget, the
+ * library reads, key.press, keys.claim, chrome.show, readonly, view.fit,
+ * select, shutdown and its own) runs as in any frame.
+ */
+const SYMEDIT_REFUSES: ReadonlySet<string> = new Set([
+  'project.open', 'project.import', 'project.save', 'sheet.tree', 'sheet.enter', 'layers.get', 'layers.visible', 'layers.active',
+  'place', 'footprint.models', 'project.plot', 'symbol.get', 'symbol.set', 'symbol.forEditor', 'symbol.push', 'lib.update',
+  'sheet.annotate', 'sheet.check', 'board.preview', 'board.update', 'board.check', 'board.explain', 'board.item.get', 'board.item.set',
+]);
+const SYMEDIT_REFUSAL = 'a symbol editor opens symbols, not documents';
 /**
  * While a sheet.check or a board.check runs (its run holds the editor for
  * seconds: KiCad's checker on the apply coroutine), every op that would change
@@ -357,7 +395,7 @@ const FRAME_TYPE_RE = /Frame/;
  * file of it (open_document), compared in any case. A sch frame holds the
  * whole sheet hierarchy, so every sheet; a pcb frame its board.
  */
-const OWN_DOCUMENT: Readonly<Record<Frame, string>> = { sch: '.kicad_sch', pcb: '.kicad_pcb' };
+const OWN_DOCUMENT: Readonly<Record<Frame, string | null>> = { sch: '.kicad_sch', pcb: '.kicad_pcb', symedit: null };
 /** A sheet path as the engine reports it: "/" then one UUID and a slash per level. */
 const SHEET_PATH_RE = /^\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/)*$/;
 
@@ -610,6 +648,9 @@ export function startResponder(opts: {
       case 'ev.held':
         port.postMessage({ type: ev.type, action: ev.action });
         return;
+      case 'ev.symedit':
+        port.postMessage({ type: ev.type, ask: ev.ask, uuid: ev.uuid, isNew: ev.isNew });
+        return;
       case 'ev.key':
         port.postMessage({ type: ev.type, code: ev.code, shift: ev.shift });
         return;
@@ -723,6 +764,7 @@ export function startResponder(opts: {
     if (checking && !CHECK_PASSES.has(op)) return reply(id, fail('busy', op));
     // A stopped engine is never entered again: the host reloads the frame.
     if (stopped != null && op !== 'shutdown') return reply(id, fail('not_ready', 'the engine stopped'));
+    if (frame === 'symedit' && SYMEDIT_REFUSES.has(op)) return reply(id, fail('unsupported', SYMEDIT_REFUSAL));
     if (op === 'project.import') return startImport(id, data.args);
     if (op === 'sheet.check') return startCheck(id, data.args);
     if (op === 'board.check') return startBoardCheck(id, data.args);
@@ -845,6 +887,22 @@ export function startResponder(opts: {
     emit({ type: 'ev.edited', depth });
   }
 
+  /**
+   * ev.edited in a symedit frame: the symbol editor's undo depth
+   * (kicadSymEditState), read while a symbol is open and on the same gates as
+   * pollEdits; the first read after an open or a new symbol is the baseline.
+   */
+  function pollSymEdits(mod: Record<string, unknown>): void {
+    if (closed || importing || inFlight > 0 || win == null) return;
+    if (engineBusy() || dialogUp(win, true)) return;
+    const state = symState(mod);
+    if (state == null || !state.open) return;
+    if (editDepth == null) { editDepth = state.depth; return; }
+    if (state.depth === editDepth) return;
+    editDepth = state.depth;
+    emit({ type: 'ev.edited', depth: state.depth });
+  }
+
   async function run(op: string, args: unknown): Promise<Answer> {
     if ((op === 'project.open' || op === 'project.save') && engineBusy()) return fail('busy', 'the engine is busy');
     switch (op) {
@@ -897,6 +955,24 @@ export function startResponder(opts: {
       case 'board.preview': return boardUpdate(op, args);
       case 'board.update': return boardUpdate(op, args);
       case 'sheet.annotate': return sheetAnnotate(args);
+      case 'symedit.open': return symEditOpen(args);
+      case 'symedit.new': return symEditNew(args);
+      case 'symedit.state': return symEditStateOp(args);
+      case 'symedit.take': return symEditTake(args);
+      case 'symedit.markSaved': return symEditMarkSaved(args);
+      case 'symedit.items.get': return symEditItemsGet(args);
+      case 'symedit.items.set': return symEditItemsSet(args);
+      case 'symedit.items.add': return symEditItemsAdd(args);
+      case 'symedit.items.remove': return symEditItemsRemove(args);
+      case 'symedit.symbol.get': return symEditSymbolGet(args);
+      case 'symedit.symbol.set': return symEditSymbolSet(args);
+      case 'symedit.show': return symEditShow(args);
+      case 'symedit.check': return symEditCheck(args);
+      case 'symedit.svg': return symEditSvg(args);
+      case 'symbol.convert': return symbolConvert(args);
+      case 'symbol.forEditor': return symbolForEditor(args);
+      case 'symbol.push': return symbolPush(args);
+      case 'lib.update': return libUpdate(args);
     }
     return fail('unknown_op', op);
   }
@@ -992,7 +1068,8 @@ export function startResponder(opts: {
     });
     if (bytes > MAX_WRITE_BYTES) return fail('bad_args', op);
     const own = OWN_DOCUMENT[frame];
-    const held = files.find((f) => f.path.toLowerCase().endsWith(own));
+    // A symedit frame holds no document (its symbol lives in the engine): every file is taken.
+    const held = own == null ? undefined : files.find((f) => f.path.toLowerCase().endsWith(own));
     if (held != null) return fail('open_document', held.path);
     const FS = win?.FS;
     if (FS == null) return fail('not_ready', op);
@@ -1754,6 +1831,7 @@ export function startResponder(opts: {
     const op = 'select';
     const a = parseSelectArgs(args);
     if (a == null) return fail('bad_args', op);
+    if (frame === 'symedit') return symEditSelect(a);
     const w = win;
     if (w == null) return fail('not_ready', op);
     const mod = (w.Module ?? {}) as Record<string, unknown>;
@@ -2462,6 +2540,437 @@ export function startResponder(opts: {
     return ok(op === 'board.preview' ? previewAnswer(report) : updateAnswer(report));
   }
 
+  // ── The symbol editor (island v0.2.3-cc23, bridge/symedit.ts) ─────────────────────────
+
+  /**
+   * Whether a symbol is open in a symedit frame, as last read (every state
+   * read keeps it): the engine's requests (ev.symedit, ev.held) arrive inside
+   * an engine call, where the island calls nothing back into the engine, so
+   * their gate reads this.
+   */
+  let symbolOpenSeen = false;
+
+  /** The engine's state read (kicadSymEditState), or null when it is missing, throws or answers another shape. */
+  function symState(mod: Record<string, unknown>): SymEditState | null {
+    let state: SymEditState | null;
+    try { state = readState((mod.kicadSymEditState as () => unknown)()); } catch { state = null; }
+    if (state != null) symbolOpenSeen = state.open;
+    return state;
+  }
+
+  /**
+   * The checks every symedit op makes after its args, in order, every one
+   * before any effect: the frame's kind (unsupported in a sch or a pcb frame),
+   * the engine (not_ready before ev.ready; unsupported naming a missing
+   * export), busy while a load is parked or a popup menu or a dialog is up,
+   * then (with `open`) a symbol open (no_symbol).
+   */
+  function symEditGate(op: string, open: boolean): Answer | { w: ToolWindow; mod: Record<string, unknown>; state: SymEditState } {
+    if (frame !== 'symedit') return fail('unsupported', SYMEDIT_FRAME_ONLY);
+    const w = win;
+    if (w == null) return fail('not_ready', op);
+    const mod = (w.Module ?? {}) as Record<string, unknown>;
+    for (const name of SYMEDIT_EXPORTS) if (typeof mod[name] !== 'function') return fail('unsupported', name);
+    if (engineBusy() || keysBlocked(w)) return fail('busy', op);
+    const state = symState(mod);
+    if (state == null) return fail('island_error', 'the engine answered a state of another shape');
+    if (open && !state.open) return fail('no_symbol', op);
+    return { w, mod, state };
+  }
+
+  /** One engine call that answers a string or a boolean; a throw reads as the refusal ("" or false). */
+  function callText(mod: Record<string, unknown>, name: string, ...args: unknown[]): string {
+    try { return String((mod[name] as (...a: unknown[]) => unknown)(...args) ?? ''); } catch { return ''; }
+  }
+  function callBool(mod: Record<string, unknown>, name: string, ...args: unknown[]): boolean {
+    try { return (mod[name] as (...a: unknown[]) => unknown)(...args) === true; } catch { return false; }
+  }
+
+  /**
+   * Waits for a queued symedit change: the apply queue empty and `read` giving
+   * a value (it answers null until the change shows), at most `ms`. Null when
+   * it never did (not_applied for the caller).
+   */
+  async function readBack<T>(w: ToolWindow, ms: number, read: () => T | null): Promise<T | null> {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      if (closed) return null;
+      if (await applyIdle(w, Math.max(0, deadline - Date.now()))) {
+        const got = read();
+        if (got != null) return got;
+      }
+      if (Date.now() >= deadline) return null;
+      await sleep(timing.applyPollMs);
+    }
+  }
+
+  /** The symbol's items by uuid, every unit and body style (null for an answer of another shape). */
+  function symItems(mod: Record<string, unknown>, uuids?: string[]): SymItem[] | null {
+    const args = uuids == null ? { unit: 0, bodyStyle: 0 } : { uuids, unit: 0, bodyStyle: 0 };
+    return readItems(callText(mod, 'kicadSymEditItemsGet', JSON.stringify(args)));
+  }
+
+  /** A new symbol is open: ev.edited's baseline and the host's selection start again. */
+  function symbolOpened(): void {
+    editDepth = null;
+    selectionFeed?.reset();
+  }
+
+  /**
+   * symedit.open and symedit.new: past the gate, held_edits when the open
+   * symbol holds changes and `discard` is false; then the engine's call with a
+   * fresh token, bad_args when it refuses the text (no symbol of that name
+   * KiCad reads, or a parent it cannot read), and the answer is the state once
+   * the engine shows the token open.
+   */
+  async function symEditOpening(op: string, discard: boolean, call: (mod: Record<string, unknown>, token: string) => boolean, why: string): Promise<Answer> {
+    const gate = symEditGate(op, false);
+    if ('ok' in gate) return gate;
+    const { w, mod, state } = gate;
+    if (state.open && state.modified && !discard) return fail('held_edits', op);
+    const token = makeToken();
+    const t0 = Date.now();
+    if (!call(mod, token)) return fail('bad_args', `${op}: ${why}`);
+    const after = await readBack(w, timing.symeditMs, () => {
+      const now = symState(mod);
+      return now != null && now.open && now.token === token ? now : null;
+    });
+    if (after == null) return fail('not_applied', op);
+    symbolOpened();
+    console.debug('[symedit]', op, after.name, `${Date.now() - t0} ms`);
+    return ok(after as unknown as Record<string, unknown>);
+  }
+
+  function symEditOpen(args: unknown): Promise<Answer> {
+    const a = parseOpenArgs(args);
+    if (a == null) return Promise.resolve(fail('bad_args', 'symedit.open'));
+    return symEditOpening('symedit.open', a.discard, (mod, token) => callBool(mod, 'kicadSymEditOpen', openJson(a, token)),
+      `the text holds no symbol ${a.name} KiCad reads`);
+  }
+
+  function symEditNew(args: unknown): Promise<Answer> {
+    const a = parseNewArgs(args);
+    if (a == null) return Promise.resolve(fail('bad_args', 'symedit.new'));
+    return symEditOpening('symedit.new', a.discard, (mod, token) => callBool(mod, 'kicadSymEditNew', newJson(a, token)),
+      a.parent === '' ? 'KiCad refused the new symbol' : `the parent text holds no symbol ${a.parent} KiCad reads`);
+  }
+
+  function symEditStateOp(args: unknown): Answer {
+    if (!noArgs(args)) return fail('bad_args', 'symedit.state');
+    const gate = symEditGate('symedit.state', false);
+    return 'ok' in gate ? gate : ok(gate.state as unknown as Record<string, unknown>);
+  }
+
+  function symEditTake(args: unknown): Answer {
+    const op = 'symedit.take';
+    if (!noArgs(args)) return fail('bad_args', op);
+    const gate = symEditGate(op, true);
+    if ('ok' in gate) return gate;
+    const taken = readTaken(callText(gate.mod, 'kicadSymEditTake'));
+    if (taken == null) return fail('island_error', 'the engine answered a symbol of another shape');
+    return ok({ name: taken.name, text: taken.text, parent: taken.parent });
+  }
+
+  function symEditMarkSaved(args: unknown): Answer {
+    const op = 'symedit.markSaved';
+    const a = parseMarkSavedArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = symEditGate(op, true);
+    if ('ok' in gate) return gate;
+    if (gate.state.token !== a.token) return fail('bad_args', `${op}: the token is not the open symbol's`);
+    if (!callBool(gate.mod, 'kicadSymEditMarkSaved', a.token)) return fail('not_applied', op);
+    const after = symState(gate.mod);
+    return after == null ? fail('island_error', 'the engine answered a state of another shape') : ok(after as unknown as Record<string, unknown>);
+  }
+
+  function symEditItemsGet(args: unknown): Answer {
+    const op = 'symedit.items.get';
+    const a = parseItemsGetArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = symEditGate(op, true);
+    if ('ok' in gate) return gate;
+    const items = readItems(callText(gate.mod, 'kicadSymEditItemsGet', JSON.stringify(a)));
+    return items == null ? fail('island_error', 'the engine answered items of another shape') : ok({ items });
+  }
+
+  /** The items asked, every one of them, or the refusal: not_found naming the first the symbol does not hold. */
+  function heldItems(op: string, mod: Record<string, unknown>, uuids: string[]): SymItem[] | Answer {
+    const items = symItems(mod, uuids);
+    if (items == null) return fail('island_error', 'the engine answered items of another shape');
+    const missing = uuids.find((u) => !items.some((i) => i.uuid === u));
+    return missing != null ? fail('not_found', missing) : items;
+  }
+
+  async function symEditItemsSet(args: unknown): Promise<Answer> {
+    const op = 'symedit.items.set';
+    const a = parseItemsSetArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = symEditGate(op, true);
+    if ('ok' in gate) return gate;
+    const { w, mod } = gate;
+    const before = heldItems(op, mod, a.uuids);
+    if (!Array.isArray(before)) return before;
+    const why = itemSetMisfit(a.set, before);
+    if (why != null) return fail('bad_args', `${op}: ${why}`);
+    const t0 = Date.now();
+    // The engine refuses what only the symbol bounds (a unit past its units, a field's name another field holds).
+    if (!callBool(mod, 'kicadSymEditItemsSet', JSON.stringify({ uuids: a.uuids, set: a.set }))) return fail('bad_args', op);
+    const after = await readBack(w, timing.symeditMs, () => {
+      const items = symItems(mod, a.uuids);
+      // KiCad's synced pins rule may drop a twin pin: the ones still there show the set.
+      return items != null && items.length > 0 && items.every((i) => showsItemSet(a.set, i)) ? items : null;
+    });
+    if (after == null) return fail('not_applied', op);
+    console.debug('[symedit]', op, Object.keys(a.set).join(' '), `${Date.now() - t0} ms`);
+    return ok({ items: after });
+  }
+
+  async function symEditItemsAdd(args: unknown): Promise<Answer> {
+    const op = 'symedit.items.add';
+    const a = parseItemsAddArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = symEditGate(op, true);
+    if ('ok' in gate) return gate;
+    const { w, mod } = gate;
+    const all = symItems(mod);
+    if (all == null) return fail('island_error', 'the engine answered items of another shape');
+    const taken = a.items.find((n) => all.some((i) => i.uuid === n.uuid));
+    if (taken != null) return fail('bad_args', `${op}: ${taken.uuid} is taken`);
+    const uuids = a.items.map((n) => n.uuid);
+    if (!callBool(mod, 'kicadSymEditItemsAdd', JSON.stringify({ items: a.items }))) return fail('bad_args', op);
+    const after = await readBack(w, timing.symeditMs, () => {
+      const items = symItems(mod, uuids);
+      return items != null && items.length === uuids.length ? items : null;
+    });
+    return after == null ? fail('not_applied', op) : ok({ items: after });
+  }
+
+  async function symEditItemsRemove(args: unknown): Promise<Answer> {
+    const op = 'symedit.items.remove';
+    const a = parseItemsRemoveArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = symEditGate(op, true);
+    if ('ok' in gate) return gate;
+    const { w, mod } = gate;
+    const before = heldItems(op, mod, a.uuids);
+    if (!Array.isArray(before)) return before;
+    const mandatory = before.find((i) => i.kind === 'field' && ['Reference', 'Value', 'Footprint', 'Datasheet', 'Description'].includes(i.name));
+    if (mandatory != null && mandatory.kind === 'field') return fail('bad_args', `${op}: ${mandatory.name} is one of the five fields every symbol keeps`);
+    if (!callBool(mod, 'kicadSymEditItemsRemove', JSON.stringify({ uuids: a.uuids }))) return fail('bad_args', op);
+    const gone = await readBack(w, timing.symeditMs, () => {
+      const items = symItems(mod, a.uuids);
+      return items != null && items.length === 0 ? true : null;
+    });
+    return gone == null ? fail('not_applied', op) : ok({ removed: a.uuids });
+  }
+
+  function symEditSymbolGet(args: unknown): Answer {
+    const op = 'symedit.symbol.get';
+    if (!noArgs(args)) return fail('bad_args', op);
+    const gate = symEditGate(op, true);
+    if ('ok' in gate) return gate;
+    const props = readSymbolProps(callText(gate.mod, 'kicadSymEditSymbolGet'));
+    return props == null ? fail('island_error', 'the engine answered a symbol of another shape') : ok(props as unknown as Record<string, unknown>);
+  }
+
+  async function symEditSymbolSet(args: unknown): Promise<Answer> {
+    const op = 'symedit.symbol.set';
+    const a = parseSymEditSymbolSetArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = symEditGate(op, true);
+    if ('ok' in gate) return gate;
+    const { w, mod } = gate;
+    const t0 = Date.now();
+    // The engine refuses what only the symbol bounds (a field it lacks, a taken name, a parent's fields on a root symbol).
+    if (!callBool(mod, 'kicadSymEditSymbolSet', JSON.stringify({ set: a.set }))) return fail('bad_args', op);
+    const after = await readBack(w, timing.symeditMs, () => {
+      const p = readSymbolProps(callText(mod, 'kicadSymEditSymbolGet'));
+      return p != null && showsSymbolSet(a.set, p) ? p : null;
+    });
+    if (after == null) return fail('not_applied', op);
+    console.debug('[symedit]', op, Object.keys(a.set).join(' '), `${Date.now() - t0} ms`);
+    return ok(after as unknown as Record<string, unknown>);
+  }
+
+  async function symEditShow(args: unknown): Promise<Answer> {
+    const op = 'symedit.show';
+    const a = parseShowArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = symEditGate(op, true);
+    if ('ok' in gate) return gate;
+    const { w, mod, state } = gate;
+    const bodies = state.bodyStyles.mode === 'one' ? 1 : state.bodyStyles.mode === 'demorgan' ? 2 : state.bodyStyles.names.length;
+    if (a.unit > state.unitCount) return fail('bad_args', `${op}: the symbol has ${state.unitCount} units`);
+    if (a.bodyStyle > Math.max(1, bodies)) return fail('bad_args', `${op}: the symbol has ${Math.max(1, bodies)} body styles`);
+    if (!callBool(mod, 'kicadSymEditShow', JSON.stringify(a))) return fail('not_applied', op);
+    const after = await readBack(w, timing.symeditMs, () => {
+      const now = symState(mod);
+      return now != null && now.unit === a.unit && now.bodyStyle === a.bodyStyle ? now : null;
+    });
+    return after == null ? fail('not_applied', op) : ok(after as unknown as Record<string, unknown>);
+  }
+
+  function symEditCheck(args: unknown): Answer {
+    const op = 'symedit.check';
+    if (!noArgs(args)) return fail('bad_args', op);
+    const gate = symEditGate(op, true);
+    if ('ok' in gate) return gate;
+    const found = readFindings(callText(gate.mod, 'kicadSymEditCheck'));
+    return found == null ? fail('island_error', 'the engine answered findings of another shape') : ok({ grid: found.grid, findings: found.findings });
+  }
+
+  /**
+   * symedit.svg: KiCad's own SVG plot of the shown unit and body style
+   * (SYMBOL_EDIT_FRAME::SVGPlotSymbol) in a fresh folder under /tmp/cc-svg/,
+   * its record (.cc-svg.json) written last; the answer is the file's bytes,
+   * the folder removed.
+   */
+  async function symEditSvg(args: unknown): Promise<Answer> {
+    const op = 'symedit.svg';
+    if (!noArgs(args)) return fail('bad_args', op);
+    const gate = symEditGate(op, true);
+    if ('ok' in gate) return gate;
+    const { w, mod } = gate;
+    const FS = w.FS;
+    if (FS == null) return fail('island_error', 'the engine has no file system');
+    let dir: string;
+    try { dir = freshRunFolder(FS, SVG_ROOT); } catch (err) { return fail('island_error', describeError(err)); }
+    const t0 = Date.now();
+    const run = await queuedRun(op, w, FS, dir, timing.svgMs,
+      () => (mod.kicadSymEditPlotSvg as (json: string) => unknown)(JSON.stringify({ dir })),
+      () => readSvgDone(readBytes(FS, `${dir}/${SVG_DONE}`)));
+    if (!('done' in run)) return run;
+    const bytes = readBytes(FS, `${dir}/${SVG_FILE}`);
+    dropRunFolder(FS, dir);
+    if (run.done.error !== '' || bytes == null || bytes.byteLength === 0) return fail('plot_failed', 'KiCad wrote no SVG');
+    if (bytes.byteLength > SVG_MAX_BYTES) return fail('island_error', 'the SVG is larger than the protocol carries');
+    const own = bytes.slice();
+    console.debug('[symedit]', op, `${own.byteLength} bytes`, `${Date.now() - t0} ms`);
+    return { ok: true, result: { bytes: own }, transfer: [own.buffer as ArrayBuffer] };
+  }
+
+  /**
+   * select in a symedit frame (PROTOCOL.md select): the symbol's own items by
+   * uuid (footprint paths select nothing), an id the symbol does not hold
+   * selecting nothing; the answer once the editor holds exactly the items found.
+   */
+  async function symEditSelect(a: { uuids: string[]; fpPaths: string[]; zoom: boolean }): Promise<Answer> {
+    const op = 'select';
+    const gate = symEditGate(op, true);
+    if ('ok' in gate) return gate;
+    const { w, mod } = gate;
+    const held = a.uuids.length === 0 ? [] : symItems(mod, a.uuids);
+    if (held == null) return fail('island_error', 'the engine answered items of another shape');
+    const found = a.uuids.filter((u) => held.some((i) => i.uuid === u));
+    if (!callBool(mod, 'kicadSymEditSelect', JSON.stringify({ uuids: found, zoom: a.zoom && found.length > 0 }))) return fail('not_applied', op);
+    if (a.zoom && found.length > 0) fitWatch?.disarm();
+    const want = new Set(found);
+    const done = await readBack(w, timing.selectMs, () => {
+      const now = readSelection(callText(mod, 'kicadSymEditSelection'));
+      return now != null && now.length === want.size && now.every((u) => want.has(u)) ? true : null;
+    });
+    return done == null ? fail('not_applied', op) : ok();
+  }
+
+  /**
+   * symbol.convert (a sch or a symedit frame): the file is written under a
+   * fresh /tmp/cc-import/<n>/, read by the engine's KiCad readers, and the
+   * folder removed. unreadable when no reader takes it (message KiCad's),
+   * too_large past 2,000 symbols or 4 MiB of text.
+   */
+  function symbolConvert(args: unknown): Answer {
+    const op = 'symbol.convert';
+    const a = parseConvertArgs(args);
+    if (a == null) return fail('bad_args', op);
+    if (frame === 'pcb') return fail('unsupported', 'symbols are read in a sch or a symedit frame');
+    const w = win;
+    if (w == null) return fail('not_ready', op);
+    const mod = (w.Module ?? {}) as Record<string, unknown>;
+    for (const name of CONVERT_EXPORTS) if (typeof mod[name] !== 'function') return fail('unsupported', name);
+    if (engineBusy() || keysBlocked(w)) return fail('busy', op);
+    const FS = w.FS;
+    if (FS == null) return fail('island_error', 'the engine has no file system');
+    let dir: string;
+    try {
+      dir = freshRunFolder(FS, CONVERT_ROOT);
+      FS.writeFile(`${dir}/${a.name}`, a.bytes);
+    } catch (err) { return fail('island_error', describeError(err)); }
+    const t0 = Date.now();
+    const raw = callText(mod, 'kicadSymbolLibConvert', JSON.stringify({ path: `${dir}/${a.name}` }));
+    dropRunFolder(FS, dir);
+    const out = readConverted(raw);
+    if (out == null) return fail('island_error', 'the engine answered a reading of another shape');
+    if ('error' in out) return out.error === 'too_large' ? fail('too_large', op) : fail('unreadable', out.message);
+    console.debug('[symedit]', op, out.format, `${out.symbols.length} symbols`, `${Date.now() - t0} ms`);
+    return ok({ format: out.format, symbols: out.symbols });
+  }
+
+  /** symbol.forEditor (a sch frame): the placed symbol as KiCad's Edit with Symbol Editor builds it, as text. */
+  function symbolForEditor(args: unknown): Answer {
+    const op = 'symbol.forEditor';
+    const a = parseForEditorArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = schematicGate(op, SYMBOL_EDIT_EXPORTS);
+    if ('ok' in gate) return gate;
+    const got = readForEditor(callText(gate.mod, 'kicadSymbolForEditor', JSON.stringify(a)));
+    return got == null ? fail('not_found', a.uuid) : ok({ name: got.name, libId: got.libId, text: got.text });
+  }
+
+  /**
+   * symbol.push (a sch frame): KiCad's save of an edited symbol to the
+   * schematic (every unit of the part, one commit "Edit symbol"), `libId`
+   * relinking the part in the same commit. The answer is the symbol sheet read
+   * back once the apply queue is empty (and, with a libId, the part names it).
+   */
+  async function symbolPush(args: unknown): Promise<Answer> {
+    const op = 'symbol.push';
+    const a = parsePushArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = schematicGate(op, SYMBOL_EDIT_EXPORTS);
+    if ('ok' in gate) return gate;
+    const { w, mod } = gate;
+    const before = readSymbolSheet(symbolText(mod, a.uuid, a.sheetPath));
+    if (before == null || before.sheetPath !== a.sheetPath) return fail('not_found', `${a.uuid} on ${a.sheetPath}`);
+    const t0 = Date.now();
+    if (!callBool(mod, 'kicadSymbolPushToSchematic', JSON.stringify({ ...a, token: makeToken() }))) return fail('bad_args', `${op}: the text holds no symbol ${a.name} KiCad reads`);
+    const after = await readBack(w, timing.symbolPushMs, () => {
+      const sheet = readSymbolSheet(symbolText(mod, a.uuid, a.sheetPath));
+      return sheet != null && (a.libId === '' || sheet.libId === a.libId) ? sheet : null;
+    });
+    if (after == null) return fail('not_applied', op);
+    console.debug('[symedit]', op, a.uuid, `${Date.now() - t0} ms`);
+    return ok(after as unknown as Record<string, unknown>);
+  }
+
+  /**
+   * lib.update (a sch frame): KiCad's Update Symbols from Library for the
+   * named symbols of one library (the engine's kicadUpdateFromLibrary, the
+   * dialog's defaults), one commit; the answer is its pcbjam:lib-update-done
+   * event: how many placed parts took the new drawing, and what was missing.
+   */
+  async function libUpdate(args: unknown): Promise<Answer> {
+    const op = 'lib.update';
+    const a = parseLibUpdateArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = schematicGate(op, LIB_UPDATE_EXPORTS);
+    if ('ok' in gate) return gate;
+    const { w, mod } = gate;
+    if (typeof w.addEventListener !== 'function') return fail('island_error', 'the engine window takes no listener');
+    let resolve: (d: unknown) => void = () => {};
+    const done = new Promise<unknown>((r) => { resolve = r; });
+    const listen = (e: Event): void => resolve((e as CustomEvent).detail);
+    w.addEventListener(LIB_UPDATE_EVENT, listen);
+    try {
+      if (!readLibUpdateQueued(callText(mod, 'kicadUpdateFromLibrary', 'symbol', a.lib, JSON.stringify(a.names)))) return fail('not_applied', op);
+      const detail = await withTimeout(done, timing.libUpdateMs);
+      if (detail === 'timeout') return fail('not_applied', op);
+      const r = readLibUpdateDone(detail);
+      return r == null ? fail('island_error', 'the update answered another shape') : ok({ updated: r.updated, missing: r.missing });
+    } finally {
+      w.removeEventListener(LIB_UPDATE_EVENT, listen);
+    }
+  }
+
   let ready = false;
   /** ev.ready went out: only then does a properties request reach the host. */
   let readySent = false;
@@ -2533,21 +3042,28 @@ export function startResponder(opts: {
       // The picker (PICKER.md) needs the mirror (the example library has no index to search) and the
       // engine's place and selection exports; ev.ready says so with the pseudo-cap `picker`, and
       // with `fields` that its place writes the placed item's Value and Footprint.
-      pickerOn = libs?.mirror != null && typeof mod.kicadPlaceImportedItem === 'function' && typeof mod.kicadCollabGetSelection === 'function';
+      // A symedit frame places nothing (place is unsupported there): its keys stay KiCad's.
+      pickerOn = frame !== 'symedit' && libs?.mirror != null && typeof mod.kicadPlaceImportedItem === 'function' && typeof mod.kicadCollabGetSelection === 'function';
       if (pickerOn) { caps.push(PICKER_CAP, FIELDS_CAP, IDENTITY_CAP); caps.sort(); }
       // ev.selected from the engine's own selection hook: its slot taken here, the hook
       // armed here in a pcb frame and by the first document in a sch frame (SelectionFeed.arm);
       // sent only while a document is open.
+      // In a symedit frame the selection is the symbol editor's own (kicadSymEditSelection),
+      // sent while a symbol is open; its select is the symedit cap's.
+      const symedit = frame === 'symedit';
+      const symeditOn = symedit && SYMEDIT_EXPORTS.every((name) => typeof mod[name] === 'function');
+      const symbolOpen = (): boolean => symeditOn && symState(mod)?.open === true;
       const feed = new SelectionFeed(w as unknown as SelectionWindow, {
         timing,
         frame,
-        live: () => !closed && !importing && staged != null && opened != null,
+        live: () => !closed && !importing && (symedit ? symbolOpen() : staged != null && opened != null),
         send: (s) => emit({ type: 'ev.selected', uuids: s.uuids, fpPaths: s.fpPaths }),
         log: (m, err) => console.debug('[select]', m, err),
+        ...(symedit ? { read: () => (symeditOn ? (mod.kicadSymEditSelection as () => unknown)() : '') } : {}),
       });
-      if (feed.start()) {
+      if ((!symedit || symeditOn) && feed.start()) {
         selectionFeed = feed;
-        if (SELECT_EXPORTS.every((name) => typeof mod[name] === 'function')) { caps.push(SELECTION_CAP); caps.sort(); }
+        if (!symedit && SELECT_EXPORTS.every((name) => typeof mod[name] === 'function')) { caps.push(SELECTION_CAP); caps.sort(); }
       }
       // project.write needs only the file system, which is up by now.
       caps.push(WRITE_CAP);
@@ -2555,34 +3071,57 @@ export function startResponder(opts: {
       caps.push(HOST_KEYS_CAP);
       // project.libs: the run time library rows; footprint.models: our engine's export.
       if (projectLibs != null && LIBS_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(PROJECT_LIBS_CAP);
-      if (MODEL_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(MODELS_CAP);
-      // project.plot: our engine's kicadPlotBoard.
-      if (PLOT_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(PLOT_CAP);
-      // The Editing window's ops: our engine's symbol, numbering and check exports.
-      if (SYMBOL_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(SYMBOL_CAP);
-      if (ANNOTATE_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(ANNOTATE_CAP);
-      if (CHECK_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(CHECK_CAP);
-      // Engine run A: the board's update, check, rule and item exports.
-      if (BOARD_UPDATE_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(BOARD_UPDATE_CAP);
-      if (BOARD_CHECK_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(DRC_CAP);
-      if (EXPLAIN_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(EXPLAIN_CAP);
-      if (BOARD_ITEM_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(BOARD_ITEM_CAP);
-      if (typeof mod[BOARD_PROPERTIES_EXPORT] === 'function') caps.push(BOARD_PROPERTIES_CAP);
-      // ev.properties and ev.boardProperties: our engine asks the page before
-      // KiCad's properties dialogs open (the schematic's from run 11, the
-      // board's from run 12); each frame takes its own kind's request while a
-      // document is open, so the host's own window edits that item instead.
-      const admit = (): boolean => readySent && !closed && !importing && staged != null && opened != null;
-      if (frame === 'sch' && typeof mod[PROPERTIES_EXPORT] === 'function') caps.push(PROPERTIES_CAP);
-      if ((frame === 'sch' && typeof mod[PROPERTIES_EXPORT] === 'function') || (frame === 'pcb' && typeof mod[BOARD_PROPERTIES_EXPORT] === 'function')) {
-        installProperties(w as unknown as PropertiesWindow, {
-          frame,
-          admit,
-          send: (req) => {
-            if (req.type === 'board') emit({ type: 'ev.boardProperties', uuid: req.uuid, kind: req.kind });
-            else emit(req.field === undefined ? { type: 'ev.properties', uuids: [req.uuid], sheetPath: req.sheetPath } : { type: 'ev.properties', uuids: [req.uuid], sheetPath: req.sheetPath, field: req.field });
-          },
-        });
+      // The symbol editor's caps (island v0.2.3-cc23), each frame its own kind's only: a
+      // symedit frame lists none of the document frames' pseudo-caps, and they none of its.
+      const hasAll = (names: readonly string[]): boolean => names.every((name) => typeof mod[name] === 'function');
+      if (frame !== 'pcb' && hasAll(CONVERT_EXPORTS)) caps.push(CONVERT_CAP);
+      if (symedit) {
+        if (symeditOn) caps.push(SYMEDIT_CAP);
+        if (symeditOn && typeof mod[SYMEDIT_ASK_EXPORT] === 'function') {
+          caps.push(SYMEDIT_HELD_CAP);
+          // ev.symedit: the symbol editor asks the page before its pin, field, text,
+          // text box, shape and symbol dialogs; taken after ev.ready with a symbol open.
+          installSymEditAsk(w as unknown as SymEditAskWindow, {
+            admit: () => readySent && !closed && symbolOpenSeen,
+            send: (a) => emit({ type: 'ev.symedit', ask: a.ask, uuid: a.uuid, isNew: a.isNew }),
+          });
+        }
+      }
+      if (frame === 'sch' && hasAll(SYMBOL_EDIT_EXPORTS)) caps.push(SYMBOL_EDIT_CAP);
+      if (frame === 'sch' && hasAll(LIB_UPDATE_EXPORTS)) caps.push(LIB_UPDATE_CAP);
+      // Whether a request of KiCad's (a properties dialog, a held key) reaches the host
+      // now: after ev.ready, while a document is open (a symbol in a symedit frame).
+      const admit = (): boolean => readySent && !closed && !importing && (symedit ? symbolOpenSeen : staged != null && opened != null);
+      // A symedit frame lists none of the document frames' pseudo-caps (spec 3.3).
+      if (!symedit) {
+        if (MODEL_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(MODELS_CAP);
+        // project.plot: our engine's kicadPlotBoard.
+        if (PLOT_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(PLOT_CAP);
+        // The Editing window's ops: our engine's symbol, numbering and check exports.
+        if (SYMBOL_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(SYMBOL_CAP);
+        if (ANNOTATE_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(ANNOTATE_CAP);
+        if (CHECK_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(CHECK_CAP);
+        // Engine run A: the board's update, check, rule and item exports.
+        if (BOARD_UPDATE_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(BOARD_UPDATE_CAP);
+        if (BOARD_CHECK_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(DRC_CAP);
+        if (EXPLAIN_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(EXPLAIN_CAP);
+        if (BOARD_ITEM_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(BOARD_ITEM_CAP);
+        if (typeof mod[BOARD_PROPERTIES_EXPORT] === 'function') caps.push(BOARD_PROPERTIES_CAP);
+        // ev.properties and ev.boardProperties: our engine asks the page before
+        // KiCad's properties dialogs open (the schematic's from run 11, the
+        // board's from run 12); each frame takes its own kind's request while a
+        // document is open, so the host's own window edits that item instead.
+        if (frame === 'sch' && typeof mod[PROPERTIES_EXPORT] === 'function') caps.push(PROPERTIES_CAP);
+        if ((frame === 'sch' && typeof mod[PROPERTIES_EXPORT] === 'function') || (frame === 'pcb' && typeof mod[BOARD_PROPERTIES_EXPORT] === 'function')) {
+          installProperties(w as unknown as PropertiesWindow, {
+            frame,
+            admit,
+            send: (req) => {
+              if (req.type === 'board') emit({ type: 'ev.boardProperties', uuid: req.uuid, kind: req.kind });
+              else emit(req.field === undefined ? { type: 'ev.properties', uuids: [req.uuid], sheetPath: req.sheetPath } : { type: 'ev.properties', uuids: [req.uuid], sheetPath: req.sheetPath, field: req.field });
+            },
+          });
+        }
       }
       caps.sort();
       // ev.held: our engine (run 12) asks the page before a hotkey's action;
@@ -2601,8 +3140,9 @@ export function startResponder(opts: {
       }
       // ev.edited: polled only when the engine has the undo depth export at
       // boot; an older build is never polled and nothing is said about it.
-      if (typeof mod.kicadCollabTestUndoDepth === 'function') {
-        const edits = setInterval(() => pollEdits(w), timing.editPollMs);
+      // In a symedit frame the depth is the symbol editor's own (kicadSymEditState), read while a symbol is open.
+      if (symedit ? symeditOn : typeof mod.kicadCollabTestUndoDepth === 'function') {
+        const edits = setInterval(() => (symedit ? pollSymEdits(mod) : pollEdits(w)), timing.editPollMs);
         stopEdits = () => clearInterval(edits);
       }
       const n = help.attempts();

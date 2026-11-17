@@ -170,6 +170,12 @@ export class SelectionFeed {
       live: () => boolean;
       send: (s: Selection) => void;
       log?: (m: string, err?: unknown) => void;
+      /**
+       * The selection read, when not the collab one: a symedit frame reads its
+       * own (the engine's kicadSymEditSelection, `{"uuids": [...]}`), since the
+       * collab reads resolve the schematic editor's frame.
+       */
+      read?: () => unknown;
     },
   ) {}
 
@@ -280,6 +286,12 @@ export class SelectionFeed {
   /** The editor's selection now, in the emit's shape (the board's with its footprint paths). */
   private pull(): void {
     if (this.stopped) return;
+    if (this.opts.read != null) {
+      let own: unknown;
+      try { own = this.opts.read(); } catch { return; }
+      if (typeof own === 'string') this.see(parseSelectionEmit(own));
+      return;
+    }
     const mod = this.w.Module as SelectionExports | undefined;
     const read = typeof mod?.kicadCollabGetSelectionFull === 'function' ? mod.kicadCollabGetSelectionFull : mod?.kicadCollabGetSelection;
     if (typeof read !== 'function') return;

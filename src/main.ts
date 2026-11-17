@@ -222,7 +222,8 @@ async function main(): Promise<void> {
   // the frame's search index and the common libraries of its kind, at low
   // priority, nothing shown and nothing sent. KiCad's own chooser keeps its
   // first-enumerate warm-up above.
-  if (choice?.mirror != null) void quietWarmUp({ frame, mirror: choice.mirror, signal: libsWarmUp.signal, busy: () => responder.busy(), log: libsLog });
+  // A symedit frame places nothing, so it warms nothing (spec 2026-11-16, section 6.1).
+  if (frame !== 'symedit' && choice?.mirror != null) void quietWarmUp({ frame, mirror: choice.mirror, signal: libsWarmUp.signal, busy: () => responder.busy(), log: libsLog });
 }
 
 void main();

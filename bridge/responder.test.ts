@@ -4492,3 +4492,328 @@ describe('engine run A: the board check, the board items, the update, the held k
     expect(s.got.filter((m) => m.type === 'ev.properties' || m.type === 'ev.boardProperties')).toEqual([{ type: 'ev.properties', uuids: [FP], sheetPath: '/', field: 'Footprint' }]);
   });
 });
+
+describe('the symbol editor: the symedit frame, its ops and caps, and the schematic\'s symbol ops (island v0.2.3-cc23)', () => {
+  const started: Array<{ close: () => void }> = [];
+  afterEach(() => { for (const r of started.splice(0)) r.close(); });
+  const P1 = 'cccccccc-0000-4000-8000-000000000001';
+  const P2 = 'cccccccc-0000-4000-8000-000000000002';
+  const REF = 'cccccccc-0000-4000-8000-0000000000f1';
+  const NEWPIN = 'cccccccc-0000-4000-8000-0000000000a1';
+  const SYM = 'dddddddd-0000-4000-8000-000000000001';
+  const DOC = '(kicad_symbol_lib (version 20251024) (symbol "OPAMP2"))';
+  const OPEN = { text: DOC, name: 'OPAMP2', lib: 'board_parts', mode: 'library', discard: false };
+  const STROKE = { width: 0.254, style: 'default', color: '' };
+  const pin = (uuid: string, o: Record<string, unknown> = {}) => ({
+    kind: 'pin', uuid, unit: 1, bodyStyle: 1, number: '1', name: 'IN+', type: 'input', shape: 'line', x: -7.62, y: 2.54,
+    orientation: 'right', length: 2.54, nameSize: 1.27, numberSize: 1.27, visible: true, alternates: [], ...o,
+  });
+  const reference = { kind: 'field', uuid: REF, unit: 0, bodyStyle: 0, name: 'Reference', text: 'U', x: 0, y: 5.08, angle: 0, size: 1.27, bold: false, italic: false, hJustify: 'left', vJustify: 'center', visible: true, showName: false };
+  const props = () => ({
+    name: 'OPAMP2', refPrefix: 'U', value: 'OPAMP2', footprint: '', datasheet: '', description: '', keywords: '', fpFilters: [],
+    fields: [{ name: 'Reference', value: 'U', visible: true, kind: 'reference' }], unitCount: 2, unitsInterchangeable: false, unitNames: {},
+    bodyStyles: { mode: 'one', names: [] }, power: 'none', pinNameOffset: 0.508, showPinNames: true, showPinNumbers: true, pinNamesInside: true,
+    inBom: true, onBoard: true, inSim: true, inPosFiles: true, jumpers: { duplicateNumbersAreJumpers: false, groups: [] }, parent: '',
+  });
+  const sheet = (o: Record<string, unknown> = {}) => ({
+    uuid: SYM, sheetPath: '/', sheetName: 'card', ref: 'U1', value: 'OPAMP2', footprint: '', libId: 'Amplifier:OPAMP2',
+    fields: [{ name: 'Reference', value: 'U1', shown: true, kind: 'reference' }], inBom: true, onBoard: true, inSim: true, dnp: false,
+    rotation: 0, mirror: 'none', x: 10, y: 20, unit: 1, units: 2, bodyStyle: 1, bodyStyles: 1, filters: [], ...o,
+  });
+
+  /**
+   * A booted engine of the frame `frame` with every export the merged engine
+   * carries (the symedit ones as a small symbol editor: one symbol, its items,
+   * its undo depth; each change `applyMs` later), the board and schematic
+   * exports as stubs, and the markers.
+   */
+  function engine(opts: { frame?: 'sch' | 'pcb' | 'symedit'; symedit?: boolean; applyMs?: number; refuse?: boolean; projectLibs?: boolean } = {}) {
+    const frame = opts.frame ?? 'symedit';
+    const { page, parent } = fakePage(`?frame=${frame}&theme=day`);
+    const eng = fakeEngine();
+    const projectLibs = opts.projectLibs ? createProjectLibs({ root: ROOT, fs: () => eng.win.FS as unknown as EmscriptenFS }) : undefined;
+    const r = startResponder({ parentOrigin: PARENT, page, projectLibs });
+    started.push(r);
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const mod = eng.win.Module as Record<string, unknown>;
+    const queue = { until: 0 };
+    const st = {
+      token: '', open: false, name: '', lib: '', mode: 'library', modified: false, depth: 0, unit: 1, unitCount: 2, bodyStyle: 1,
+      bodyStyles: { mode: 'one', names: [] as string[] }, parent: '', syncedPins: true,
+    };
+    const sym = { items: [] as Array<Record<string, unknown>>, props: props() as Record<string, unknown>, selection: [] as string[] };
+    const calls: Array<[string, unknown]> = [];
+    const later = (fn: () => void): void => { const ms = opts.applyMs ?? 5; queue.until = Date.now() + ms; setTimeout(fn, ms); };
+    const commit = (fn: () => void): void => later(() => { fn(); st.depth += 1; st.modified = true; });
+    const listeners = new Map<string, Set<(e: Event) => void>>();
+    Object.assign(eng.win, {
+      addEventListener: (t: string, h: (e: Event) => void) => { const s = listeners.get(t) ?? new Set(); s.add(h); listeners.set(t, s); },
+      removeEventListener: (t: string, h: (e: Event) => void) => listeners.get(t)?.delete(h),
+    });
+    const fire = (t: string, detail: unknown) => { for (const h of listeners.get(t) ?? []) h({ type: t, detail } as unknown as Event); };
+    mod.kicadCollabBusy = () => Date.now() < queue.until;
+    mod.kicadCollabTestUndoDepth = () => 0;
+    mod.kicadCollabPresenceStart = () => true;
+    mod.kicadCollabGetSelection = () => '[]';
+    mod.kicadLibsAddEntry = () => true;
+    mod.kicadLibsReload = () => true;
+    mod.kicadPlotBoard = () => true;
+    mod.kicadBoardItemGet = () => '';
+    mod.kicadBoardItemSet = () => false;
+    mod.kicadSymbolGet = (u: string, p: string) => (u === SYM ? JSON.stringify(sheet({ sheetPath: p === '' ? '/' : p, libId: (sym as unknown as { libId?: string }).libId ?? 'Amplifier:OPAMP2' })) : '');
+    mod.kicadSymbolSet = () => false;
+    mod.kicadHostActions = () => true;
+    mod.kicadHostProperties = () => true;
+    mod.kicadSymbolLibConvert = (json: string) => {
+      const a = JSON.parse(json) as { path: string };
+      calls.push(['convert', a.path]);
+      const there = eng.files.has(a.path);
+      return there ? JSON.stringify(a.path.endsWith('.bad') ? { error: 'unreadable', message: 'no reader takes this file' } : { format: 'EAGLE', symbols: [{ name: 'R', text: DOC }] }) : '';
+    };
+    mod.kicadSymbolForEditor = (json: string) => (JSON.parse(json).uuid === SYM ? JSON.stringify({ name: 'OPAMP2', libId: 'Amplifier:OPAMP2', text: DOC }) : '');
+    mod.kicadSymbolPushToSchematic = (json: string) => {
+      const a = JSON.parse(json) as Record<string, string>;
+      calls.push(['push', a]);
+      if (opts.refuse) return false;
+      later(() => { if (a.libId !== '') (sym as unknown as { libId?: string }).libId = a.libId; });
+      return true;
+    };
+    mod.kicadUpdateFromLibrary = (kind: string, lib: string, names: string) => {
+      calls.push(['update', [kind, lib, JSON.parse(names)]]);
+      setTimeout(() => fire('pcbjam:lib-update-done', { ok: true, updated: 4, missing: [] }), 5);
+      return '{"ok":true,"queued":true}';
+    };
+    if (opts.symedit !== false) {
+      mod.kicadHostSymEdit = () => true;
+      mod.kicadSymEditState = () => JSON.stringify(st);
+      const opening = (json: string, mode: string) => {
+        const a = JSON.parse(json) as Record<string, unknown>;
+        calls.push([mode, a]);
+        if (opts.refuse || (st.open && st.modified && a.discard !== true)) return false;
+        later(() => {
+          Object.assign(st, { token: a.token, open: true, name: a.name, lib: a.lib, mode: mode === 'new' ? 'new' : a.mode, modified: false, depth: 0, unit: 1, bodyStyle: 1 });
+          sym.items = [pin(P1), pin(P2, { number: '2', name: 'IN-' }), reference];
+        });
+        return true;
+      };
+      mod.kicadSymEditOpen = (json: string) => opening(json, 'open');
+      mod.kicadSymEditNew = (json: string) => opening(json, 'new');
+      mod.kicadSymEditTake = () => (st.open ? JSON.stringify({ name: st.name, text: DOC, parent: '' }) : '');
+      mod.kicadSymEditMarkSaved = (t: string) => { if (t !== st.token) return false; st.modified = false; return true; };
+      mod.kicadSymEditItemsGet = (json: string) => {
+        const a = JSON.parse(json) as { uuids?: string[]; kinds?: string[] };
+        return JSON.stringify({ items: sym.items.filter((i) => (a.uuids == null || a.uuids.includes(i.uuid as string)) && (a.kinds == null || a.kinds.includes(i.kind as string))) });
+      };
+      mod.kicadSymEditItemsSet = (json: string) => {
+        const a = JSON.parse(json) as { uuids: string[]; set: Record<string, unknown> };
+        calls.push(['set', a]);
+        if (opts.refuse) return false;
+        commit(() => { sym.items = sym.items.map((i) => (a.uuids.includes(i.uuid as string) ? { ...i, ...a.set } : i)); });
+        return true;
+      };
+      mod.kicadSymEditItemsAdd = (json: string) => {
+        const a = JSON.parse(json) as { items: Array<Record<string, unknown>> };
+        commit(() => { sym.items = [...sym.items, ...a.items]; });
+        return true;
+      };
+      mod.kicadSymEditItemsRemove = (json: string) => {
+        const a = JSON.parse(json) as { uuids: string[] };
+        commit(() => { sym.items = sym.items.filter((i) => !a.uuids.includes(i.uuid as string)); });
+        return true;
+      };
+      mod.kicadSymEditSymbolGet = () => (st.open ? JSON.stringify(sym.props) : '');
+      mod.kicadSymEditSymbolSet = (json: string) => {
+        const a = JSON.parse(json) as { set: Record<string, unknown> };
+        commit(() => { sym.props = { ...sym.props, ...a.set }; });
+        return true;
+      };
+      mod.kicadSymEditShow = (json: string) => { const a = JSON.parse(json) as { unit: number; bodyStyle: number }; later(() => { st.unit = a.unit; st.bodyStyle = a.bodyStyle; }); return true; };
+      mod.kicadSymEditSelection = () => JSON.stringify({ uuids: sym.selection });
+      mod.kicadSymEditSelect = (json: string) => { const a = JSON.parse(json) as { uuids: string[] }; later(() => { sym.selection = a.uuids; }); return true; };
+      mod.kicadSymEditCheck = () => JSON.stringify({ grid: 0.635, findings: [{ code: 'duplicate_pin', severity: 'warning', pins: ['1'], unit: 1, bodyStyle: 1, x: 0, y: 0, uuids: [P1, P2] }] });
+      mod.kicadSymEditPlotSvg = (json: string) => {
+        const a = JSON.parse(json) as { dir: string };
+        later(() => { eng.win.FS!.mkdirTree(a.dir); eng.win.FS!.writeFile(`${a.dir}/symbol.svg`, '<svg/>'); eng.win.FS!.writeFile(`${a.dir}/.cc-svg.json`, '{"error":""}'); });
+        return true;
+      };
+    }
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    let id = 0;
+    const request = async (op: string, args?: unknown) => {
+      const n = ++id;
+      port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+      for (let i = 0; i < 400 && !got.some((m) => m.id === n); i++) await settle(5);
+      return got.find((m) => m.id === n);
+    };
+    type Slots = { kicadHostSymEdit?: { onRequest?: (j: unknown) => boolean }; kicadHostAction?: { onRequest?: (j: unknown) => boolean } };
+    return { r, eng, got, st, sym, calls, request, fire, slots: eng.win as unknown as Slots, caps: () => got.find((m) => m.type === 'ev.ready')?.caps as string[] };
+  }
+
+  it('lists each frame its own caps: a symedit frame none of the document frames\' pseudo-caps, they none of its', async () => {
+    const se = engine({ projectLibs: true });
+    await settle();
+    const pseudo = (caps: string[]) => caps.filter((c) => !/^kicad/.test(c));
+    expect(pseudo(se.caps())).toEqual(['heldKeys', 'hostKeys', 'projectLibs', 'symbolConvert', 'symedit', 'symeditHeld', 'write']);
+    expect(se.caps()).toContain('kicadSymEditOpen');
+    const sch = engine({ frame: 'sch' });
+    await settle();
+    expect(pseudo(sch.caps())).toEqual(expect.arrayContaining(['symbolEdit', 'symbolConvert', 'libUpdate', 'properties', 'heldKeys']));
+    expect(sch.caps()).not.toContain('symedit');
+    expect(sch.caps()).not.toContain('symeditHeld');
+    const pcb = engine({ frame: 'pcb' });
+    await settle();
+    for (const c of ['symedit', 'symeditHeld', 'symbolEdit', 'symbolConvert', 'libUpdate']) expect(pcb.caps()).not.toContain(c);
+    const old = engine({ symedit: false });
+    await settle();
+    expect(old.caps()).not.toContain('symedit');
+    expect(old.slots.kicadHostSymEdit).toBeUndefined();
+    const ops = (await import('./ops.json')).default as string[];
+    expect(ops).toEqual(expect.arrayContaining(['symedit.open', 'symedit.new', 'symedit.state', 'symedit.take', 'symedit.markSaved', 'symedit.items.get',
+      'symedit.items.set', 'symedit.items.add', 'symedit.items.remove', 'symedit.symbol.get', 'symedit.symbol.set', 'symedit.show', 'symedit.check',
+      'symedit.svg', 'symbol.convert', 'symbol.forEditor', 'symbol.push', 'lib.update']));
+  });
+
+  it('a symedit frame answers every document op unsupported, whatever its args, and the document frames every symedit op', async () => {
+    const se = engine();
+    for (const op of ['project.open', 'project.import', 'project.save', 'sheet.tree', 'place', 'symbol.get', 'symbol.push', 'board.check', 'project.plot', 'footprint.models', 'sheet.check']) {
+      expect(await se.request(op, { anything: 1 }), op).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'a symbol editor opens symbols, not documents' } });
+    }
+    expect(await se.request('project.write', { files: [{ path: 'board_parts.kicad_sym', text: DOC }] })).toMatchObject({ ok: true, result: { written: ['board_parts.kicad_sym'] } });
+    const sch = engine({ frame: 'sch' });
+    expect(await sch.request('symedit.open', OPEN)).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'a symbol edits in a symedit frame' } });
+    expect(await sch.request('symedit.state')).toMatchObject({ ok: false, error: { code: 'unsupported' } });
+  });
+
+  it('each symedit op checks in order, before any effect: the args, the frame, the engine, busy, then a symbol open', async () => {
+    const { page, parent } = fakePage('?frame=symedit&theme=day');
+    const r = startResponder({ parentOrigin: PARENT, page });
+    started.push(r);
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    port.postMessage({ id: 1, op: 'symedit.open', args: { ...OPEN, extra: 1 } });
+    port.postMessage({ id: 2, op: 'symedit.open', args: OPEN });
+    await settle(30);
+    expect(got.find((m) => m.id === 1)).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    expect(got.find((m) => m.id === 2)).toMatchObject({ ok: false, error: { code: 'not_ready' } });
+    const old = engine({ symedit: false });
+    expect(await old.request('symedit.open', OPEN)).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadSymEditOpen' } });
+    const s = engine();
+    for (const op of ['symedit.take', 'symedit.symbol.get', 'symedit.check', 'symedit.svg']) expect(await s.request(op), op).toMatchObject({ ok: false, error: { code: 'no_symbol', message: op } });
+    expect(await s.request('symedit.items.get', { unit: 0, bodyStyle: 0 })).toMatchObject({ ok: false, error: { code: 'no_symbol' } });
+    expect(await s.request('symedit.state')).toMatchObject({ ok: true, result: { open: false } });
+    s.eng.dialogs.push({ typeName: 'wxDialog', visible: true });
+    expect(await s.request('symedit.open', OPEN)).toMatchObject({ ok: false, error: { code: 'busy' } });
+    s.eng.dialogs.length = 0;
+    expect(s.calls).toEqual([]);
+  });
+
+  it('opens a symbol with a fresh token, refuses one over held edits unless discarded, takes it back and marks it saved', async () => {
+    const s = engine();
+    const opened = await s.request('symedit.open', OPEN);
+    expect(opened).toMatchObject({ ok: true, result: { open: true, name: 'OPAMP2', lib: 'board_parts', mode: 'library', modified: false, depth: 0 } });
+    const token = (opened?.result as { token: string }).token;
+    expect(token).toMatch(/^t[0-9a-f]{24}$/);
+    expect(s.calls[0]).toEqual(['open', { ...OPEN, unit: 1, bodyStyle: 1, token }]);
+    expect(await s.request('symedit.items.set', { uuids: [P1], set: { number: '3' } })).toMatchObject({ ok: true });
+    expect(await s.request('symedit.open', OPEN)).toMatchObject({ ok: false, error: { code: 'held_edits', message: 'symedit.open' } });
+    expect(await s.request('symedit.take')).toMatchObject({ ok: true, result: { name: 'OPAMP2', text: DOC, parent: '' } });
+    expect(await s.request('symedit.markSaved', { token: 'tother' })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    expect(await s.request('symedit.markSaved', { token })).toMatchObject({ ok: true, result: { modified: false } });
+    const again = await s.request('symedit.open', { ...OPEN, mode: 'placed', discard: true });
+    expect(again).toMatchObject({ ok: true, result: { mode: 'placed' } });
+    expect((again?.result as { token: string }).token).not.toBe(token);
+  });
+
+  it('a change is the item read back once it shows, then an ev.edited; a refused change bad_args; an unknown uuid not_found', async () => {
+    const s = engine();
+    await s.request('symedit.open', OPEN);
+    await settle(30);
+    const set = await s.request('symedit.items.set', { uuids: [P1, P2], set: { length: 5.08, type: 'power_in' } });
+    expect(set).toMatchObject({ ok: true, result: { items: [{ uuid: P1, length: 5.08, type: 'power_in' }, { uuid: P2, length: 5.08 }] } });
+    await settle(30);
+    expect(s.got.filter((m) => m.type === 'ev.edited')).toEqual([{ type: 'ev.edited', depth: 1 }]);
+    expect(await s.request('symedit.items.set', { uuids: [REF], set: { name: 'Ref' } })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'symedit.items.set: Reference keeps its name' } });
+    expect(await s.request('symedit.items.set', { uuids: [NEWPIN], set: { x: 1 } })).toMatchObject({ ok: false, error: { code: 'not_found', message: NEWPIN } });
+    expect(await s.request('symedit.items.add', { items: [pin(NEWPIN, { number: '9' })] })).toMatchObject({ ok: true, result: { items: [{ uuid: NEWPIN, number: '9' }] } });
+    expect(await s.request('symedit.items.add', { items: [pin(NEWPIN)] })).toMatchObject({ ok: false, error: { code: 'bad_args', message: `symedit.items.add: ${NEWPIN} is taken` } });
+    expect(await s.request('symedit.items.remove', { uuids: [REF] })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    expect(await s.request('symedit.items.remove', { uuids: [NEWPIN] })).toMatchObject({ ok: true, result: { removed: [NEWPIN] } });
+    expect(await s.request('symedit.items.get', { unit: 0, bodyStyle: 0, kinds: ['field'] })).toMatchObject({ ok: true, result: { items: [{ uuid: REF }] } });
+    expect(await s.request('symedit.symbol.set', { set: { value: 'TL072', inBom: false } })).toMatchObject({ ok: true, result: { value: 'TL072', inBom: false } });
+    expect(await s.request('symedit.show', { unit: 2, bodyStyle: 1 })).toMatchObject({ ok: true, result: { unit: 2, bodyStyle: 1 } });
+    expect(await s.request('symedit.show', { unit: 3, bodyStyle: 1 })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    expect(await s.request('symedit.check')).toMatchObject({ ok: true, result: { grid: 0.635, findings: [{ code: 'duplicate_pin', uuids: [P1, P2] }] } });
+  });
+
+  it('a set the engine never shows answers not_applied', async () => {
+    const s = engine({ applyMs: 5 });
+    await s.request('symedit.open', OPEN);
+    (s.eng.win.Module as Record<string, unknown>).kicadSymEditItemsSet = () => true;
+    const was = timing.symeditMs;
+    timing.symeditMs = 60;
+    try {
+      expect(await s.request('symedit.items.set', { uuids: [P1], set: { x: 1 } })).toMatchObject({ ok: false, error: { code: 'not_applied' } });
+    } finally { timing.symeditMs = was; }
+  });
+
+  it('select takes the symbol\'s own items, an unknown one selecting nothing; ev.selected reads the symbol editor\'s selection', async () => {
+    const s = engine();
+    await s.request('symedit.open', OPEN);
+    expect(await s.request('select', { uuids: [P1, NEWPIN] })).toMatchObject({ ok: true });
+    expect(s.sym.selection).toEqual([P1]);
+    s.fire('pointerup', {});
+    await settle(60);
+    expect(s.got.filter((m) => m.type === 'ev.selected')).toEqual([{ type: 'ev.selected', uuids: [P1], fpPaths: [] }]);
+  });
+
+  it('ev.symedit: a request after ev.ready with a symbol open is taken once; before that KiCad\'s dialog opens', async () => {
+    const s = engine();
+    await settle();
+    const ask = (o: Record<string, unknown>) => s.slots.kicadHostSymEdit?.onRequest?.(JSON.stringify({ ask: 'pin', uuid: P1, isNew: true, ...o }));
+    expect(ask({})).toBe(false);
+    await s.request('symedit.open', OPEN);
+    expect(ask({})).toBe(true);
+    expect(ask({ ask: 'symbol', uuid: '', isNew: false })).toBe(true);
+    await settle();
+    expect(s.got.filter((m) => m.type === 'ev.symedit')).toEqual([
+      { type: 'ev.symedit', ask: 'pin', uuid: P1, isNew: true },
+      { type: 'ev.symedit', ask: 'symbol', uuid: '', isNew: false },
+    ]);
+    const held = (a: string) => s.slots.kicadHostAction?.onRequest?.(JSON.stringify({ action: a }));
+    expect(held('common.Control.save')).toBe(true);
+    expect(held('eeschema.InteractiveEdit.pinTable')).toBe(true);
+    expect(held('eeschema.InspectionTool.runERC')).toBe(false);
+    await settle();
+    expect(s.got.filter((m) => m.type === 'ev.held').map((m) => m.action)).toEqual(['common.Control.save', 'eeschema.InteractiveEdit.pinTable']);
+  });
+
+  it('symedit.svg answers KiCad\'s SVG and leaves no folder; symbol.convert reads a file and leaves none', async () => {
+    const s = engine();
+    await s.request('symedit.open', OPEN);
+    const svg = await s.request('symedit.svg');
+    expect(svg).toMatchObject({ ok: true });
+    expect(new TextDecoder().decode((svg?.result as { bytes: Uint8Array }).bytes)).toBe('<svg/>');
+    const conv = await s.request('symbol.convert', { name: 'parts.lbr', bytes: b('<eagle/>') });
+    expect(conv).toMatchObject({ ok: true, result: { format: 'EAGLE', symbols: [{ name: 'R', text: DOC }] } });
+    expect(s.calls.find((c) => c[0] === 'convert')?.[1]).toMatch(/^\/tmp\/cc-import\/\d+\/parts\.lbr$/);
+    expect(await s.request('symbol.convert', { name: 'x.bad', bytes: b('?') })).toMatchObject({ ok: false, error: { code: 'unreadable', message: 'no reader takes this file' } });
+    expect([...s.eng.files.keys()].filter((p) => p.startsWith('/tmp/'))).toEqual([]);
+    const pcb = engine({ frame: 'pcb' });
+    expect(await pcb.request('symbol.convert', { name: 'parts.lbr', bytes: b('<eagle/>') })).toMatchObject({ ok: false, error: { code: 'unsupported' } });
+  });
+
+  it('in a sch frame: symbol.forEditor, symbol.push (relinked and not) and lib.update with its event', async () => {
+    const s = engine({ frame: 'sch' });
+    expect(await s.request('symbol.forEditor', { uuid: SYM, sheetPath: '/' })).toMatchObject({ ok: false, error: { code: 'not_ready' } });
+    expect(await s.request('project.open', { name: 'x', files: [{ path: 'card.kicad_sch', bytes: b('(kicad_sch)') }] })).toMatchObject({ ok: true });
+    expect(await s.request('symbol.forEditor', { uuid: SYM, sheetPath: '/' })).toMatchObject({ ok: true, result: { name: 'OPAMP2', libId: 'Amplifier:OPAMP2', text: DOC } });
+    expect(await s.request('symbol.forEditor', { uuid: P1, sheetPath: '/' })).toMatchObject({ ok: false, error: { code: 'not_found', message: P1 } });
+    const push = { uuid: SYM, sheetPath: '/', text: DOC, name: 'OPAMP2', libId: '' };
+    expect(await s.request('symbol.push', push)).toMatchObject({ ok: true, result: { uuid: SYM, libId: 'Amplifier:OPAMP2' } });
+    expect(await s.request('symbol.push', { ...push, libId: 'card_parts:OPAMP2' })).toMatchObject({ ok: true, result: { libId: 'card_parts:OPAMP2' } });
+    const sent = s.calls.filter((c) => c[0] === 'push').map((c) => c[1] as Record<string, string>);
+    expect(sent[0]).toMatchObject(push);
+    expect(sent[0].token).toMatch(/^t[0-9a-f]{24}$/);
+    expect(await s.request('lib.update', { lib: 'card_parts', names: ['OPAMP2'] })).toMatchObject({ ok: true, result: { updated: 4, missing: [] } });
+    expect(s.calls.find((c) => c[0] === 'update')?.[1]).toEqual(['symbol', 'card_parts', ['OPAMP2']]);
+  });
+});
