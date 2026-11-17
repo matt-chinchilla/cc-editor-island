@@ -73,8 +73,8 @@ export const SERVICE_PARTS = [
   { part: 'XSPICE (src/xspice)', license: 'public domain' },
   { part: 'the XSPICE table code models (src/xspice/icm/table)', license: 'GPL-2.0-or-later' },
   { part: 'numparam (src/frontend/numparam)', license: 'LGPL-2.0-or-later' },
-  { part: 'KLU (src/maths/KLU)', license: 'LGPL-2.0, as COPYING names it (its text there is the LGPL version 2.1)' },
-  { part: 'the sparse matrix package (src/maths/sparse)', license: 'an unnamed MIT style license' },
+  { part: 'KLU, the sparse matrix solver', license: 'LGPL-2.0, as COPYING names it (its text there is the LGPL version 2.1)' },
+  { part: 'Sparse 1.3, the sparse matrix package', license: 'an unnamed MIT style license' },
   { part: 'the numerical device models (src/spicelib/devices/ndev)', license: 'public domain' },
   { part: 'OSDI (src/osdi), the loader of compiled Verilog-A models, when the build compiles it', license: 'MPL-2.0' },
 ];
