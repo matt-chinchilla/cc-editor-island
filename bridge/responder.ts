@@ -281,9 +281,10 @@ export const timing = {
   /**
    * Outputs (island v0.2.3-cc23): how long a project.export may take, from the
    * export's call to its record in the folder (five times the slowest Glasgow
-   * row measured, at least 30 s, at most 300 s; tests/e2e/export.spec.ts).
+   * row measured, at least 30 s, at most 300 s: ODB++ of Glasgow took 6.0 to
+   * 8.4 s over the local pair, tests/e2e/export.spec.ts, 2026-11-17).
    */
-  exportMs: 120_000,
+  exportMs: 45_000,
 };
 /** KiCad's Next Sheet (eeschema's PgDn, by virtual page number, the top-level sheets included). */
 const NEXT_SHEET_KEY: KeyPress = { key: 'PageDown', code: 'PageDown', ctrl: false, shift: false, alt: false };
