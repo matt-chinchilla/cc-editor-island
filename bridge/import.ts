@@ -67,8 +67,13 @@ export const IMPORT_EXTENSIONS_SCH = Object.keys(SCHEMATIC_TYPES) as ReadonlyArr
 /** An Altium project's sheets and its project file. */
 export const ALTIUM_SHEET = '.schdoc';
 export const ALTIUM_PROJECT = '.prjpcb';
-/** Each frame's own KiCad document: what project.open opens and an import's converted file. */
-export const DOCUMENT_EXTENSION: Readonly<Record<Frame, string>> = Object.freeze({ pcb: '.kicad_pcb', sch: '.kicad_sch' });
+/**
+ * Each frame's own KiCad document: what project.open opens and an import's
+ * converted file. A symedit frame opens symbols, never a document: the
+ * responder answers its project.open and project.import unsupported before
+ * either reads this, so its entry is only the kind of file it edits.
+ */
+export const DOCUMENT_EXTENSION: Readonly<Record<Frame, string>> = Object.freeze({ pcb: '.kicad_pcb', sch: '.kicad_sch', symedit: '.kicad_sym' });
 /** The answer's warnings: at most this many lines, each at most WARNING_CHARS characters. */
 export const MAX_WARNINGS = 40;
 export const WARNING_CHARS = 200;

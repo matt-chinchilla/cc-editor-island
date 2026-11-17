@@ -21,5 +21,6 @@ export function parentOriginFor(hostname: string, port: string): string | null {
 
 export function parseBoot(search: string): { frame: Frame; theme: Theme } {
   const q = new URLSearchParams(search);
-  return { frame: q.get('frame') === 'pcb' ? 'pcb' : 'sch', theme: q.get('theme') === 'night' ? 'night' : 'day' };
+  const f = q.get('frame');
+  return { frame: f === 'pcb' || f === 'symedit' ? f : 'sch', theme: q.get('theme') === 'night' ? 'night' : 'day' };
 }

@@ -16,8 +16,8 @@
 import type { Frame } from '../src/types';
 import { drawingSurface, readViewport, type Viewport, type ViewWindow } from './view';
 
-/** The engine's units in a millimeter: a schematic's 100 nm steps, a board's nanometers. */
-export const UNITS_PER_MM: Readonly<Record<Frame, number>> = Object.freeze({ sch: 1e4, pcb: 1e6 });
+/** The engine's units in a millimeter: a schematic's (and a symbol's) 100 nm steps, a board's nanometers. */
+export const UNITS_PER_MM: Readonly<Record<Frame, number>> = Object.freeze({ sch: 1e4, pcb: 1e6, symedit: 1e4 });
 /** What the chip prints before the pointer has been on the drawing (the viewing drawing's own first text). */
 export const COORDS_START = '0.00, 0.00 mm';
 /** The chip's class (src/theme.css). */

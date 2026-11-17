@@ -32,7 +32,7 @@ describe('coordsText', () => {
     expect(coordsText(-1, -0, 'pcb')).toBe('0.00, 0.00 mm');
   });
   it('a schematic counts 100 nm steps and a board nanometers', () => {
-    expect(UNITS_PER_MM).toEqual({ sch: 1e4, pcb: 1e6 });
+    expect(UNITS_PER_MM).toEqual({ sch: 1e4, pcb: 1e6, symedit: 1e4 });
   });
 });
 

@@ -24,7 +24,7 @@ const FIXTURES = {
 };
 const q = new URLSearchParams(location.search);
 const fixture = q.get('fixture');
-const frame = q.get('frame') === 'pcb' ? 'pcb' : 'sch';
+const frame = ['pcb', 'symedit'].includes(q.get('frame')) ? q.get('frame') : 'sch';
 const theme = q.get('theme') === 'night' ? 'night' : 'day';
 const stateEl = document.getElementById('state');
 const note = (line) => { stateEl.textContent += `${line}\n`; };   // island strings only ever reach textContent

@@ -18,5 +18,7 @@ describe('parseBoot', () => {
     expect(parseBoot('')).toEqual({ frame: 'sch', theme: 'day' });
     expect(parseBoot('?frame=pcb&theme=night')).toEqual({ frame: 'pcb', theme: 'night' });
     expect(parseBoot('?frame=x&theme=y')).toEqual({ frame: 'sch', theme: 'day' });
+    expect(parseBoot('?frame=symedit')).toEqual({ frame: 'symedit', theme: 'day' });
+    expect(parseBoot('?frame=SYMEDIT')).toEqual({ frame: 'sch', theme: 'day' });
   });
 });
