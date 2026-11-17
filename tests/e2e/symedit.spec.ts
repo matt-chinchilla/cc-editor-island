@@ -7,7 +7,6 @@
 // step, the symbol taken back as text, KiCad's checker and SVG plot read as
 // data, and every dialog and window of the frame held for the host
 // (ev.symedit, ev.held). The fixture is tests/fixtures/symedit-small.
-import { readFileSync } from 'node:fs';
 import { expect, test, type Frame, type Page } from '@playwright/test';
 
 const ISLAND = 'http://editor.localhost:4174';
@@ -269,8 +268,11 @@ test('KiCad\'s dialogs and windows are held: P places a pin with ev.symedit, E o
   for (const [key, action] of held) expect((await pressFor(page, key, 'ev.held')).action, JSON.stringify(key)).toBe(action);
 });
 
-test('the held actions\' names are in the engine\'s own strings', () => {
-  const wasm = readFileSync('engine/kicad_editor/v0.2.3/kicad_editor.wasm').toString('latin1');
+test('the held actions\' names are in the engine\'s own strings', async ({ request }) => {
+  // The engine the island serves (its action names are ASCII, so a text read keeps them whole).
+  const res = await request.get('http://127.0.0.1:4174/current/wasm/kicad_editor/v0.2.3/kicad_editor.wasm');   // the island server, by address (Node does not resolve *.localhost)
+  expect(res.ok()).toBe(true);
+  const wasm = await res.text();
   const names = ['common.Control.save', 'common.Control.saveAs', 'common.Control.saveAll', 'eeschema.SymbolLibraryControl.saveSymbolAs',
     'eeschema.SymbolLibraryControl.saveSymbolCopyAs', 'eeschema.SymbolLibraryControl.saveLibraryAs', 'eeschema.SymbolLibraryControl.newSymbol',
     'common.Interactive.find', 'common.Interactive.findAndReplace', 'common.Control.showDatasheet', 'common.Control.showProperties',
