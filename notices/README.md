@@ -11,6 +11,7 @@ The sources of the release's license page and the census that guards it. `script
 | `versions.sh` | The dependency versions and sha256 pins of PCBJam's build recipe | `scripts/common/versions.sh` at the same commit (copied by `npm run sync-upstream`) |
 | `kicad-LICENSE.README` | KiCad's statement of its licenses | `LICENSE.README` at the kicad-source-mirror gitlink in `PIN.json` |
 | `phosphor-LICENSE` | The MIT notice of Phosphor Icons, whose Light style the redrawn toolbar glyphs follow | `LICENSE` of `phosphor-icons/core` |
+| `ngspice-COPYING` | ngspice's statement of its licenses, reproduced under "ngspice's COPYING" when the release serves the simulator service | `COPYING` in `ngspice-46.tar.gz` (sha256 `a0d1699af1940b06649276dcd6ff5a566c8c0cad01b2f7b5e99dedbb4d64c19b`, the archive `versions.sh` pins) |
 
 The page also reads `PIN.json` (the islandId, the pinned commits, the engine files and the icon repack) and `LICENSE` (served beside the page as `LICENSE.txt`). Everything the page says of our own is written in `scripts/notices.mjs`; the reproduced texts go in unchanged.
 
@@ -22,7 +23,8 @@ The page also reads `PIN.json` (the islandId, the pinned commits, the engine fil
 2. the section 6(d) directions: the release tag of this repository, the `cc/<islandId>` tags of the pcbjam, kicad-source-mirror and wxWidgets mirrors, the dependency source archives attached to the release, the build instructions, and the served engine files with their sha256;
 3. the copied loader files we changed, each with the dated notices quoted from the file;
 4. every dependency `versions.sh` names, with its license, from the `DEPS` table in the script;
-5. Phosphor's notice, PCBJam's page and KiCad's `LICENSE.README`, each reproduced as its authors wrote it.
+5. when `PIN.json` records the simulator service (`ngspice_service.js` and `ngspice_service.wasm`, both or neither), a section naming it, where its source is, and each part ngspice's `COPYING` gives a license of its own (`SERVICE_PARTS` in the script);
+6. Phosphor's notice, PCBJam's page and KiCad's `LICENSE.README`, each reproduced as its authors wrote it, and ngspice's `COPYING` when the release serves the simulator.
 
 `NOTICE.txt` is the same content as plain text.
 
@@ -33,6 +35,8 @@ The page also reads `PIN.json` (the islandId, the pinned commits, the engine fil
 - **(a)** a `NAME=` in `versions.sh` belongs to no `DEPS` entry. A variable belongs to the entry whose prefix it is or starts with followed by `_` (`OCC_URL` is OCCT's, `EMSDK_TARBALL_SHA256` is Emscripten's). A new dependency in the recipe therefore fails the build until it has a license entry.
 - **(b)** a file in `loader/src` differs from its copy in `loader/pristine` and carries no `Modified by Circuit Center on YYYY-MM-DD:` line, or its newest such line is dated before the pristine copy was taken. That date is the pristine file's last commit date when git holds it unchanged, else its mtime (so a fresh clone, whose files all carry the clone's mtime, does not fail on dates).
 - **(c)** a copied file lost its original header. PCBJam's files carry no license header at the pin, so the header kept is the pristine file's leading comment block, verbatim; a file that starts with code has none to keep. A file in `loader/src` with no pristine counterpart is ours and must carry our SPDX line.
+
+- **(d)** `PIN.json` records an engine file the page has no entry for, one simulator service file without the other, or the simulator service while `ngspice-COPYING` is missing.
 
 The generator also refuses a page whose own prose has an en or em dash or speaks of a download, and a page that would load anything or link off itself.
 

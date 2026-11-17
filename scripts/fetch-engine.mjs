@@ -2,7 +2,10 @@
 // Copyright (c) 2026 Chirichella Inc.
 // Puts the pinned tool's five files in engine/<tool>/<toolTag>/, verifies every
 // file, and records the result in PIN.json. Refuses to write an unverified file:
-// nothing is written until all five verify. Two sources, one verify-and-write path:
+// nothing is written until all five verify. Our own build may also carry the
+// simulator service, ngspice_service.js and ngspice_service.wasm (both or
+// neither; engine run 14 on), copied, verified and recorded beside the five.
+// Two sources, one verify-and-write path:
 //
 //   node scripts/fetch-engine.mjs [--cdn]
 //       PCBJam's CDN build, each file checked against the meta.json PCBJam published.
@@ -40,6 +43,8 @@ import { join } from 'node:path';
 const pin = JSON.parse(readFileSync('PIN.json', 'utf8'));
 const { tool, toolTag } = pin.engine;
 const FILES = ['kicad_editor.js', 'kicad_editor.wasm', 'wx.js', 'wx-dom.js', 'images.tar.gz'];
+/** The simulator service our build makes beside the engine (scripts/engine/build.sh): both or neither. */
+const SERVICE_FILES = ['ngspice_service.js', 'ngspice_service.wasm'];
 const SOURCES = ['pcbjam', 'kicad', 'wxwidgets', 'shared'];
 const out = join('engine', tool, toolTag);
 const sha256hex = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -68,7 +73,7 @@ function parseArgs(argv) {
   return a;
 }
 
-const sameNames = (names) => [...names].sort().join('\n') === [...FILES].sort().join('\n');
+const sameNames = (names, files = FILES) => [...names].sort().join('\n') === [...files].sort().join('\n');
 
 /** PCBJam's CDN: the verified sha256 of each file, and a reader that fetches it. */
 async function fromCdn() {
@@ -187,9 +192,11 @@ function fromLocal(dir, notesPath) {
   const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
   if (meta.tool !== tool) throw new Error(`${metaPath} describes ${meta.tool}, expected ${tool}`);
   if (meta.files == null || typeof meta.files !== 'object') throw new Error(`${metaPath} has no files map`);
-  if (!sameNames(Object.keys(meta.files))) throw new Error(`${metaPath} lists ${Object.keys(meta.files).sort().join(', ')}, expected ${[...FILES].sort().join(', ')}`);
+  const withService = [...FILES, ...SERVICE_FILES];
+  const names = sameNames(Object.keys(meta.files), withService) ? withService : FILES;
+  if (!sameNames(Object.keys(meta.files), names)) throw new Error(`${metaPath} lists ${Object.keys(meta.files).sort().join(', ')}, expected ${[...FILES].sort().join(', ')}, with or without ${SERVICE_FILES.join(' and ')}`);
   const expected = {};
-  for (const name of FILES) {
+  for (const name of names) {
     const { sha256, bytes } = meta.files[name] ?? {};
     if (!HEX64.test(sha256 ?? '') || !Number.isSafeInteger(bytes) || bytes < 0) throw new Error(`${name}: ${metaPath} has no sha256 and bytes for it`);
     expected[name] = { sha256, bytes };
@@ -205,13 +212,13 @@ function fromLocal(dir, notesPath) {
   const notes = notesPath != null ? JSON.parse(readFileSync(notesPath, 'utf8')) : pin.engine.build;
   const { recipe, patches, reproduction } = checkNotes(notes, sources, notesPath ?? 'PIN.json engine.build');
   const build = { recipe, ...sources, patches, reproduction };
-  return { expected, read: (name) => readFileSync(join(dir, name)), source: sources.pcbjam, build, from: dir };
+  return { expected, names, read: (name) => readFileSync(join(dir, name)), source: sources.pcbjam, build, from: dir };
 }
 
-/** The one verify-and-write path: all five checked in memory, then written, then PIN.json. */
-async function install({ expected, read, source, build, from }) {
+/** The one verify-and-write path: all five (and the service's two) checked in memory, then written, then PIN.json. */
+async function install({ expected, names = FILES, read, source, build, from }) {
   const verified = new Map();
-  for (const name of FILES) {
+  for (const name of names) {
     const bytes = await read(name);
     const sha256 = sha256hex(bytes);
     if (sha256 !== expected[name].sha256) throw new Error(`${name}: sha256 ${sha256} differs from ${from} ${expected[name].sha256}`);

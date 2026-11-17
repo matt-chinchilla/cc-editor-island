@@ -19,7 +19,13 @@ if (typeof id !== 'string' || !/^[a-z0-9][a-z0-9.-]{0,63}$/.test(id)) throw new 
 const rel = join('dist', 'r', id);
 const { tool, toolTag } = pin.engine;
 const engineSrc = join('engine', tool, toolTag);
-const FILES = ['kicad_editor.js', 'kicad_editor.wasm', 'wx.js', 'wx-dom.js', 'images.tar.gz'];
+const ENGINE_FILES = ['kicad_editor.js', 'kicad_editor.wasm', 'wx.js', 'wx-dom.js', 'images.tar.gz'];
+// The simulator service (engine run 14 on): served beside the engine when PIN.json records
+// it, both files or neither (src/main.ts installs it from the wasm's recorded size).
+const SERVICE_FILES = ['ngspice_service.js', 'ngspice_service.wasm'];
+const serviceListed = SERVICE_FILES.filter((name) => pin.engine.files?.[name] != null);
+if (serviceListed.length === 1) throw new Error(`PIN.json records ${serviceListed[0]} alone; the simulator service is both ${SERVICE_FILES.join(' and ')}, or neither`);
+const FILES = serviceListed.length === SERVICE_FILES.length ? [...ENGINE_FILES, ...SERVICE_FILES] : ENGINE_FILES;
 if (!existsSync(engineSrc)) throw new Error('run npm run fetch-engine first');
 // The commits the engine was built from: PIN.json engine.build for our own build, else
 // PCBJam's pin (servedSources). Whether they are reachable in the mirrors is ship.sh's

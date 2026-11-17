@@ -50,13 +50,44 @@ export const DEPS = [
   { key: 'protobuf', name: 'Protocol Buffers', prefixes: ['PROTOBUF'], recipe: 'built from source', license: 'BSD-3-Clause' },
   { key: 'glm', name: 'GLM', prefixes: ['GLM'], recipe: 'header only library', license: 'MIT (GLM is also offered under the Happy Bunny License; we take it under MIT)' },
   { key: 'occt', name: 'Open CASCADE Technology (OCCT)', prefixes: ['OCC'], recipe: 'built from source', license: 'LGPL-2.1 with the Open CASCADE exception' },
-  { key: 'ngspice', name: 'ngspice', prefixes: ['NGSPICE'], recipe: 'built from source', license: 'BSD (the modified BSD license ngspice ships under)' },
+  { key: 'ngspice', name: 'ngspice', prefixes: ['NGSPICE'], recipe: 'built from source into the simulator service (ngspice_service.wasm), with XSPICE and CIDER', license: 'BSD (the modified BSD license ngspice ships under), with the other licenses its COPYING names for some of its parts (listed under "The simulator service" when this release serves it)' },
   { key: 'rapidjson', name: 'RapidJSON', prefixes: ['RAPIDJSON'], recipe: 'header only, required by the OCCT glTF writer', license: 'MIT', added: true },
   { key: 'curl', name: 'curl', prefixes: ['CURL'], recipe: 'headers only; curl calls are stubbed in the WebAssembly build', license: 'curl (an MIT style license)', added: true },
   { key: 'libgit2', name: 'libgit2', prefixes: ['LIBGIT2'], recipe: 'headers only; git functions do not run in the browser', license: 'GPL-2.0 with the libgit2 linking exception', added: true },
   { key: 'python', name: 'Python', prefixes: ['PYTHON'], recipe: 'a build time interpreter only; Python scripting is disabled in the WebAssembly build and nothing of Python is linked', license: 'PSF-2.0 (Python Software Foundation License)', added: true },
   { key: 'swig', name: 'SWIG', prefixes: ['SWIG'], recipe: 'named only as the minimum version KiCad\'s CMakeLists.txt asks for; the WebAssembly recipe does not run it', license: 'GPL-3.0-or-later for SWIG itself; nothing of SWIG is linked', added: true },
 ];
+
+/** The engine files a release may serve: the editor's five, and the simulator service's two. */
+export const ENGINE_FILES = ['kicad_editor.js', 'kicad_editor.wasm', 'wx.js', 'wx-dom.js', 'images.tar.gz'];
+export const SERVICE_FILES = ['ngspice_service.js', 'ngspice_service.wasm'];
+
+/**
+ * The simulator service's parts and their licenses, as ngspice 46's own
+ * COPYING lists them (read from the archive the release attaches): every part
+ * is under ngspice's modified BSD license but these. The recipe enables XSPICE
+ * and CIDER by name; the other parts follow ngspice's own configure defaults.
+ */
+export const SERVICE_PARTS = [
+  { part: 'ngspice\'s core (from Spice3f5 and the contributions integrated since, CIDER among them)', license: 'the modified BSD license' },
+  { part: 'XSPICE (src/xspice)', license: 'public domain' },
+  { part: 'the XSPICE table code models (src/xspice/icm/table)', license: 'GPL-2.0-or-later' },
+  { part: 'numparam (src/frontend/numparam)', license: 'LGPL-2.0-or-later' },
+  { part: 'KLU (src/maths/KLU)', license: 'LGPL-2.0, as COPYING names it (its text there is the LGPL version 2.1)' },
+  { part: 'the sparse matrix package (src/maths/sparse)', license: 'an unnamed MIT style license' },
+  { part: 'the numerical device models (src/spicelib/devices/ndev)', license: 'public domain' },
+  { part: 'OSDI (src/osdi), the loader of compiled Verilog-A models, when the build compiles it', license: 'MPL-2.0' },
+];
+
+/** Whether PIN.json records the simulator service: both its files, or neither (else the census fails). */
+export function servesSimulator(pin) {
+  const listed = SERVICE_FILES.filter((name) => pin.engine?.files?.[name] != null);
+  if (listed.length === 1) fail(`PIN.json records ${listed[0]} alone; the simulator service is both ${SERVICE_FILES.join(' and ')}, or neither`);
+  for (const name of Object.keys(pin.engine?.files ?? {})) {
+    if (![...ENGINE_FILES, ...SERVICE_FILES].includes(name)) fail(`PIN.json records the engine file ${name}, which has no entry on the licenses page (ENGINE_FILES or SERVICE_FILES in scripts/notices.mjs)`);
+  }
+  return listed.length === SERVICE_FILES.length;
+}
 
 // ---------------------------------------------------------------- inputs
 
@@ -299,10 +330,22 @@ ${deps.map((d) => `<tr><td data-label="Dependency">${esc(d.name)}</td><td data-l
 </tbody></table>
 <p>The kicad-source-mirror commit the engine was built from is <code>${esc(src.kicad)}</code>, the gitlink at ${src.ours ? 'the pcbjam commit above' : 'PCBJam\'s commit'}; the commit versions.sh names for KiCad is the recipe's own record and may be older. The wxWidgets fork is at <code>${esc(src.wxwidgets)}</code>.</p>`]);
 
+  const simulator = servesSimulator(pin);
+  if (simulator) {
+    own.push(['The simulator service', `
+<p>This release also serves the simulator, ngspice ${esc(versionOf(DEPS.find((d) => d.key === 'ngspice'), versions).text)} built for the browser by PCBJam's recipe as a program of its own, <code>ngspice_service.wasm</code> with its script <code>ngspice_service.js</code>, run in a worker of the editor's frame only when a simulation runs. Its sha256 sums are in the table of engine files above. Its complete corresponding source is ngspice's source archive attached to the release (its sha256 is in the dependency table below), with the recipe in the pcbjam mirror at the tag above: <code>scripts/deps/build-ngspice.sh</code>, the patches in <code>scripts/deps/ngspice-wasm/</code>, <code>scripts/kicad/build-ngspice_service.sh</code> and <code>wasm/ngspice-service/</code>.</p>
+<p>ngspice is offered under its modified BSD license, except for the parts its <code>COPYING</code> names, which keep their own licenses:</p>
+<table><thead><tr><th>Part</th><th>License</th></tr></thead><tbody>
+${SERVICE_PARTS.map((p) => `<tr><td data-label="Part">${esc(p.part)}</td><td data-label="License">${esc(p.license)}</td></tr>`).join('\n')}
+</tbody></table>
+<p>ngspice's <code>COPYING</code> is reproduced in full below, with the text of each license it names.</p>`]);
+  }
+
   own.push(['Phosphor Icons', `
 <p>The six toolbar glyphs ${esc(BRAND)} redrew for the icon archive follow the Phosphor Icons Light style. Phosphor Icons is released under the MIT License; its notice follows as its authors wrote it.</p>`]);
 
   const theirs = [
+    ...(simulator ? [["ngspice's COPYING", texts.ngspice, 'COPYING in the ngspice source archive the release attaches']] : []),
     ['Phosphor Icons license', texts.phosphor, 'notices/phosphor-LICENSE'],
     ["PCBJam's notices, reproduced as theirs", texts.pcbjam, `site/src/content/legal/licenses.md at PCBJam commit ${pin.pcbjam.root}`],
     ["KiCad's LICENSE.README", texts.kicad, `LICENSE.README at kicad-source-mirror commit ${pin.pcbjam.kicad}`],
@@ -311,6 +354,7 @@ ${deps.map((d) => `<tr><td data-label="Dependency">${esc(d.name)}</td><td data-l
     "PCBJam's notices, reproduced as theirs": `<p>PCBJam's licenses page at the pinned commit, reproduced unchanged. Its offer of source, its links and its contact address are PCBJam's and describe PCBJam's service, not this release; for this release use the places under "Where the source is" above.</p>`,
     "KiCad's LICENSE.README": `<p>KiCad's own statement of its licenses, reproduced unchanged.</p>`,
     'Phosphor Icons license': '',
+    "ngspice's COPYING": `<p>ngspice's own statement of its licenses, reproduced unchanged.</p>`,
   };
   for (const [h] of theirs) own.push([`${h} (introduction)`, theirsIntro[h]]);
 
@@ -398,6 +442,8 @@ function main() {
   const args = process.argv.slice(2);
   const pin = JSON.parse(read('PIN.json'));
   const result = census();
+  // A served simulator needs its licenses on the page: refused here, before anything is written.
+  if (servesSimulator(pin) && !existsSync('notices/ngspice-COPYING')) fail('PIN.json records the simulator service, and notices/ngspice-COPYING is missing');
   console.log(`notices: census passed: ${result.versions.size} versions.sh names, all in the table; ${result.pristineCount} copied files, the ${result.headers} with a leading comment keep it verbatim; ${result.modified.length} modified, each with a dated notice`);
   for (const f of result.modified) console.log(`  ${f.path}: ${f.notices.length} notice(s), newest ${f.notices.map((n) => n.date).sort().at(-1)}, pristine ${f.since.day} (${f.since.from})`);
   if (args.includes('--check')) return;
@@ -406,6 +452,8 @@ function main() {
     pcbjam: read('notices/pcbjam-licenses.md'),
     kicad: read('notices/kicad-LICENSE.README'),
     phosphor: read('notices/phosphor-LICENSE'),
+    // The simulator service's licenses: the census refuses a release that serves it without them.
+    ngspice: servesSimulator(pin) ? (existsSync('notices/ngspice-COPYING') ? read('notices/ngspice-COPYING') : fail('PIN.json records the simulator service, and notices/ngspice-COPYING is missing')) : '',
   };
   const { html, notice } = render(result, pin, texts);
   if (!existsSync(out)) mkdirSync(out, { recursive: true });
