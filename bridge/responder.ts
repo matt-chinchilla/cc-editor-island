@@ -2799,10 +2799,10 @@ export function startResponder(opts: {
     const gate = symEditGate(op, true);
     if ('ok' in gate) return gate;
     const { w, mod, state } = gate;
-    const bodies = state.bodyStyles.mode === 'one' ? 1 : state.bodyStyles.mode === 'demorgan' ? 2 : state.bodyStyles.names.length;
     if (a.unit > state.unitCount) return fail('bad_args', `${op}: the symbol has ${state.unitCount} units`);
-    if (a.bodyStyle > Math.max(1, bodies)) return fail('bad_args', `${op}: the symbol has ${Math.max(1, bodies)} body styles`);
-    if (!callBool(mod, 'kicadSymEditShow', JSON.stringify(a))) return fail('not_applied', op);
+    // The body style count is the engine's to bound: a new symbol with a De Morgan
+    // drawing reads `one` in the state's bodyStyles (engine run 14) and still has two.
+    if (!callBool(mod, 'kicadSymEditShow', JSON.stringify(a))) return fail('bad_args', `${op}: the symbol has no body style ${a.bodyStyle}`);
     const after = await readBack(w, timing.symeditMs, () => {
       const now = symState(mod);
       return now != null && now.unit === a.unit && now.bodyStyle === a.bodyStyle ? now : null;
