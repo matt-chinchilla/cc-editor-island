@@ -54,6 +54,20 @@ import type { SimService } from '../src/sim-service';
 import { ChromeWatch } from './chromeWatch';
 import { EXPORT_DONE, EXPORT_EXPORTS, EXPORT_ROOT, exportFace, exportFailure, exportJson, parseExportArgs, readExportDone, readExportFolder, type ExportDone } from './export';
 import { parseRulesArgs, readRules, RULES_EXPORTS, rulesJson } from './rules';
+import {
+  instanceKey, parseSymbolsGetArgs, parseSymbolsSetArgs, readRunError, readSymbolsRecord, readSymbolTable, symbolsGetJson, symbolsSetJson,
+  SYMBOLS_DONE, SYMBOLS_ERRORS, SYMBOLS_EXPORTS, SYMBOLS_REPORT, SYMBOLS_ROOT, type RunError, type SymbolTable,
+} from './symbols';
+import {
+  EXCHANGE_DONE, EXCHANGE_REPORT, EXCHANGE_ROOT, FOOTPRINT_EXCHANGE_EXPORTS, footprintExchangeJson, parseFootprintExchangeArgs,
+  parseSymbolExchangeArgs, readExchangeReport, SYMBOL_EXCHANGE_EXPORTS, symbolExchangeJson,
+} from './exchange';
+import { BOARD_EDIT_EXPORTS, BOARD_OPS, EDIT_DONE, EDIT_ERRORS, EDIT_REPORT, EDIT_ROOT, editJson, parseEditArgs, readEditReport, SCH_EDIT_EXPORTS, SCH_OPS, type EditArgs } from './edit';
+import { FOOTPRINTS_EXPORTS, readBoardFootprints } from './footprints';
+import {
+  parseSettingsGetArgs, parseSettingsSetArgs, PCB_READ_ONLY, readSection, readSettingsRecord, rulesPathOf, sectionFrames, SETTINGS_DONE,
+  SETTINGS_ERRORS, SETTINGS_EXPORTS, SETTINGS_REPORT, SETTINGS_ROOT, settingsSetJson,
+} from './settings';
 
 declare const __ISLAND_ID__: string;   // define'd by vite.config.ts from PIN.json
 
@@ -285,6 +299,17 @@ export const timing = {
    * 8.4 s over the local pair, tests/e2e/export.spec.ts, 2026-11-17).
    */
   exportMs: 45_000,
+  /**
+   * Properties, numbering and rules (island v0.2.3-cc23): how long a
+   * symbols.set, a symbols.exchange or footprints.exchange, a sch.edit or
+   * board.edit and a settings.set may take, from the export's call to its
+   * record in the folder (five times the slowest case measured, at least 30 s,
+   * at most 120 s: properties spec 6; tests/e2e/properties-rules.spec.ts).
+   */
+  symbolsMs: 30_000,
+  exchangeMs: 30_000,
+  editMs: 30_000,
+  settingsMs: 30_000,
 };
 /** KiCad's Next Sheet (eeschema's PgDn, by virtual page number, the top-level sheets included). */
 const NEXT_SHEET_KEY: KeyPress = { key: 'PageDown', code: 'PageDown', ctrl: false, shift: false, alt: false };
@@ -407,6 +432,24 @@ export const BOARD_ITEM_CAP = 'boardItem';
  */
 export const EXPORT_CAP = 'export';
 export const RULES_CAP = 'rules';
+/**
+ * The pseudo-caps ev.ready lists for properties, numbering and rules (island
+ * v0.2.3-cc23, engine run 14), each in its own frame's kind only, with the
+ * apply queue probe: a sch frame `symbols` (symbols.get and symbols.set,
+ * kicadSymbolsGet and kicadSymbolsSet), `symbolExchange` (symbols.exchange,
+ * kicadSymbolsExchange) and `schEdit` (sch.edit, kicadSchEdit); a pcb frame
+ * `boardFootprints` (board.footprints, kicadBoardFootprints), `boardEdit`
+ * (board.edit, kicadBoardEdit) and `footprintExchange` (footprints.exchange,
+ * kicadFootprintsExchange); either `settings` (settings.get and settings.set,
+ * kicadSettingsGet and kicadSettingsSet). A symedit frame lists none.
+ */
+export const SYMBOLS_CAP = 'symbols';
+export const SYMBOL_EXCHANGE_CAP = 'symbolExchange';
+export const SCH_EDIT_CAP = 'schEdit';
+export const BOARD_FOOTPRINTS_CAP = 'boardFootprints';
+export const BOARD_EDIT_CAP = 'boardEdit';
+export const FOOTPRINT_EXCHANGE_CAP = 'footprintExchange';
+export const SETTINGS_CAP = 'settings';
 /** What a board op answers in a sch frame. */
 const BOARD_FRAME_ONLY = 'a board op runs in a pcb frame';
 /** What a symbol editor op answers in a sch or a pcb frame. */
@@ -423,6 +466,7 @@ const SYMEDIT_REFUSES: ReadonlySet<string> = new Set([
   'place', 'footprint.models', 'project.plot', 'symbol.get', 'symbol.set', 'symbol.forEditor', 'symbol.push', 'lib.update',
   'sheet.annotate', 'sheet.check', 'board.preview', 'board.update', 'board.check', 'board.explain', 'board.item.get', 'board.item.set',
   'project.export', 'board.rules',
+  'symbols.get', 'symbols.set', 'symbols.exchange', 'sch.edit', 'board.footprints', 'board.edit', 'footprints.exchange', 'settings.get', 'settings.set',
 ]);
 const SYMEDIT_REFUSAL = 'a symbol editor opens symbols, not documents';
 /**
@@ -431,7 +475,9 @@ const SYMEDIT_REFUSAL = 'a symbol editor opens symbols, not documents';
  * the document, its view or the editor's state answers busy at once instead of
  * queueing behind it. Only these still run: the reads, and shutdown.
  */
-const CHECK_PASSES: ReadonlySet<string> = new Set(['symbol.get', 'sheet.tree', 'layers.get', 'board.item.get', 'board.explain', 'board.rules', 'shutdown']);
+const CHECK_PASSES: ReadonlySet<string> = new Set([
+  'symbol.get', 'sheet.tree', 'layers.get', 'board.item.get', 'board.explain', 'board.rules', 'symbols.get', 'board.footprints', 'settings.get', 'shutdown',
+]);
 /** A wx top-level window: the editor's own frame, or another window of KiCad's (its footprint chooser is a frame, not a dialog). */
 const FRAME_TYPE_RE = /Frame/;
 /**
@@ -1015,6 +1061,15 @@ export function startResponder(opts: {
       case 'project.plot': return projectPlot(args);
       case 'project.export': return projectExport(args);
       case 'board.rules': return boardRules(args);
+      case 'symbols.get': return symbolsGet(args);
+      case 'symbols.set': return symbolsSet(args);
+      case 'symbols.exchange': return symbolsExchange(args);
+      case 'sch.edit': return globalEdit('sch.edit', args);
+      case 'board.footprints': return boardFootprints(args);
+      case 'board.edit': return globalEdit('board.edit', args);
+      case 'footprints.exchange': return footprintsExchange(args);
+      case 'settings.get': return settingsGet(args);
+      case 'settings.set': return settingsSet(args);
       case 'symbol.get': return symbolGet(args);
       case 'symbol.set': return symbolSet(args);
       case 'board.explain': return boardExplain(args);
@@ -3063,6 +3118,266 @@ export function startResponder(opts: {
     };
   }
 
+  /**
+   * The checks a settings op makes after its args, in order, every one before
+   * any effect: the frame's kind against the section (unsupported when the
+   * frame does not hold it), then as schematicGate and boardGate: the engine
+   * (not_ready, unsupported naming a missing export), a document opened
+   * (not_ready), busy.
+   */
+  function documentGate(op: string, exports: readonly string[], section: string): Answer | { w: ToolWindow; mod: Record<string, unknown> } {
+    if (frame !== 'sch' && frame !== 'pcb') return fail('unsupported', SYMEDIT_REFUSAL);
+    if (!(sectionFrames(section) as string[]).includes(frame)) return fail('unsupported', `${section} is a ${frame === 'sch' ? 'board' : 'schematic'} setting`);
+    const w = win;
+    if (w == null) return fail('not_ready', op);
+    const mod = (w.Module ?? {}) as Record<string, unknown>;
+    for (const name of exports) if (typeof mod[name] !== 'function') return fail('unsupported', name);
+    if (staged == null || opened == null) return fail('not_ready', op);
+    if (engineBusy() || keysBlocked(w) || placeWatch?.hanging() === true) return fail('busy', op);
+    return { w, mod };
+  }
+
+  /**
+   * One recorded write of properties spec 5 (symbols.set, an exchange, an
+   * edit, settings.set): a fresh folder under `rootDir`, the export called
+   * with it, and once the apply queue is empty and the run's last file is
+   * there, that file (`{ error, message }`) and the run's report. bad_args
+   * when the export refuses the args at once (nothing queued), not_applied
+   * past `ms` (the folder removed), island_error for a dialog met meanwhile,
+   * closed without accepting it. The folder is removed in every case.
+   * `doneName` is the run's last file, `.cc-<name>.json`.
+   */
+  async function recordedRun<T>(op: string, w: ToolWindow, rootDir: string, doneName: string, ms: number, codes: readonly string[], refusal: string,
+    call: (run: number, dir: string) => unknown, report: (FS: EmscriptenFS, dir: string) => T | null): Promise<{ done: RunError; report: T | null } | Answer> {
+    const FS = w.FS;
+    if (FS == null) return fail('island_error', 'the engine has no file system');
+    let dir: string;
+    try { dir = freshRunFolder(FS, rootDir); } catch (err) { return fail('island_error', describeError(err)); }
+    const run = runs;
+    let refused = false;
+    const result = await watchedRun<RunError>(op, w, FS, dir, ms,
+      async () => {
+        const queued = await call(run, dir);
+        refused = queued !== true;
+        return queued;
+      },
+      () => readRunError(readBytes(FS, `${dir}/${doneName}`), codes));
+    if (!('done' in result)) return refused ? fail('bad_args', refusal) : result;
+    const read = report(FS, dir);
+    dropRunFolder(FS, dir);
+    if (result.dialog != null) return fail('island_error', result.dialog);
+    return { done: result.done, report: read };
+  }
+
+  /** The table kicadSymbolsGet answers for these args, or null for an empty answer or another shape (a throw included). */
+  function symbolTable(mod: Record<string, unknown>, json: string): SymbolTable | null {
+    try { return readSymbolTable((mod.kicadSymbolsGet as (j: string) => unknown)(json)); } catch { return null; }
+  }
+
+  /**
+   * symbols.get (PROTOCOL.md, bridge/symbols.ts): the checks (bad_args, then
+   * schematicGate), then the engine's synchronous read of every part's fields
+   * and flags (or those asked) under the variant. no_variant when the design
+   * has no such variant (the engine answers nothing; a read under the default
+   * variant says which it has).
+   */
+  function symbolsGet(args: unknown): Answer {
+    const op = 'symbols.get';
+    const a = parseSymbolsGetArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = schematicGate(op, ['kicadSymbolsGet']);
+    if ('ok' in gate) return gate;
+    const t0 = Date.now();
+    const table = symbolTable(gate.mod, symbolsGetJson(a));
+    if (table == null) {
+      if (a.variant !== '') {
+        const plain = symbolTable(gate.mod, symbolsGetJson({ ...a, variant: '' }));
+        if (plain != null && !plain.variants.includes(a.variant)) return fail('no_variant', a.variant);
+      }
+      return fail('island_error', 'the engine answered a table of another shape');
+    }
+    console.debug('[symbols]', `${table.rows.length} rows`, `${Date.now() - t0} ms`);
+    return ok(table as unknown as Record<string, unknown>);
+  }
+
+  /**
+   * symbols.set (PROTOCOL.md, bridge/symbols.ts): the checks (bad_args, then
+   * schematicGate), then a read of the instances asked: no_variant when the
+   * design has no such variant, not_found when an instance is not in it. Then
+   * our engine's kicadSymbolsSet queues ONE commit "Edit fields" (one undo
+   * step) in a fresh folder under /tmp/cc-symbols/; the answer is the record,
+   * `{ applied, depth }`. An ev.edited follows when the depth moved.
+   */
+  async function symbolsSet(args: unknown): Promise<Answer> {
+    const op = 'symbols.set';
+    const a = parseSymbolsSetArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = schematicGate(op, SYMBOLS_EXPORTS);
+    if ('ok' in gate) return gate;
+    const { w, mod } = gate;
+    const asked = a.changes.map((c) => ({ uuid: c.uuid, sheetPath: c.sheetPath }));
+    const held = symbolTable(mod, symbolsGetJson({ variant: '', items: asked }));
+    if (held == null) return fail('island_error', 'the engine answered a table of another shape');
+    if (a.variant !== '' && !held.variants.includes(a.variant)) return fail('no_variant', a.variant);
+    const missing = asked.length - held.rows.length - held.power;
+    if (missing > 0) {
+      const listed = new Set(held.rows.map((r) => instanceKey(r)));
+      const first = held.power === 0 ? asked.find((i) => !listed.has(instanceKey(i))) : undefined;
+      return fail('not_found', first != null ? `${first.uuid} on ${first.sheetPath}` : `${missing} of the instances asked are not in the design`);
+    }
+    const t0 = Date.now();
+    const run = await recordedRun(op, w, SYMBOLS_ROOT, SYMBOLS_DONE, timing.symbolsMs, SYMBOLS_ERRORS, 'the engine refused the set',
+      (n, dir) => (mod.kicadSymbolsSet as (json: string) => unknown)(symbolsSetJson(n, dir, a)),
+      (FS, dir) => readSymbolsRecord(readBytes(FS, `${dir}/${SYMBOLS_REPORT}`)));
+    if (!('done' in run)) return run;
+    if (run.done.error !== '') return fail(run.done.error, run.done.error === 'no_variant' ? a.variant : run.done.message || op);
+    if (run.report == null || run.report.depth < 0) return fail('island_error', 'the set report was of another shape');
+    console.debug('[symbols]', `${run.report.applied} set`, `${Date.now() - t0} ms`);
+    return ok({ applied: run.report.applied, depth: run.report.depth });
+  }
+
+  /**
+   * symbols.exchange (PROTOCOL.md, bridge/exchange.ts): the checks (bad_args,
+   * then schematicGate). Then our engine's kicadSymbolsExchange runs KiCad's
+   * Change Symbols or Update Symbols from Library in a fresh folder under
+   * /tmp/cc-exchange/: a preview lists the rows and changes nothing, an apply
+   * is ONE commit. The answer is its report (exchange.json).
+   */
+  async function symbolsExchange(args: unknown): Promise<Answer> {
+    const op = 'symbols.exchange';
+    const a = parseSymbolExchangeArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = schematicGate(op, SYMBOL_EXCHANGE_EXPORTS);
+    if ('ok' in gate) return gate;
+    const t0 = Date.now();
+    const run = await recordedRun(op, gate.w, EXCHANGE_ROOT, EXCHANGE_DONE, timing.exchangeMs, ['island_error'], 'the engine refused the exchange',
+      (n, dir) => (gate.mod.kicadSymbolsExchange as (json: string) => unknown)(symbolExchangeJson(n, dir, a)),
+      (FS, dir) => readExchangeReport(readBytes(FS, `${dir}/${EXCHANGE_REPORT}`), 'sch'));
+    if (!('done' in run)) return run;
+    if (run.done.error !== '') return fail(run.done.error, run.done.message || op);
+    if (run.report == null || run.report.preview !== a.preview) return fail('island_error', 'the exchange report was of another shape');
+    console.debug('[exchange]', a.mode, a.preview ? 'preview' : 'apply', `${run.report.rows.length} rows`, `${Date.now() - t0} ms`);
+    return ok(run.report as unknown as Record<string, unknown>);
+  }
+
+  /**
+   * footprints.exchange (PROTOCOL.md, bridge/exchange.ts): the checks
+   * (bad_args, then boardGate). Then our engine's kicadFootprintsExchange runs
+   * KiCad's Change Footprints or Update Footprints from Library over the
+   * footprints matched, in a fresh folder under /tmp/cc-exchange/: a preview
+   * changes nothing, an apply is ONE commit. The answer is its report.
+   */
+  async function footprintsExchange(args: unknown): Promise<Answer> {
+    const op = 'footprints.exchange';
+    const a = parseFootprintExchangeArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = boardGate(op, FOOTPRINT_EXCHANGE_EXPORTS);
+    if ('ok' in gate) return gate;
+    const t0 = Date.now();
+    const run = await recordedRun(op, gate.w, EXCHANGE_ROOT, EXCHANGE_DONE, timing.exchangeMs, ['island_error'], 'the engine refused the exchange',
+      (n, dir) => (gate.mod.kicadFootprintsExchange as (json: string) => unknown)(footprintExchangeJson(n, dir, a)),
+      (FS, dir) => readExchangeReport(readBytes(FS, `${dir}/${EXCHANGE_REPORT}`), 'pcb'));
+    if (!('done' in run)) return run;
+    if (run.done.error !== '') return fail(run.done.error, run.done.message || op);
+    if (run.report == null || run.report.preview !== a.preview) return fail('island_error', 'the exchange report was of another shape');
+    console.debug('[exchange]', a.mode, a.preview ? 'preview' : 'apply', `${run.report.rows.length} rows`, `${Date.now() - t0} ms`);
+    return ok(run.report as unknown as Record<string, unknown>);
+  }
+
+  /**
+   * sch.edit and board.edit (PROTOCOL.md, bridge/edit.ts): the checks
+   * (bad_args, then schematicGate or boardGate). Then our engine's
+   * kicadSchEdit or kicadBoardEdit runs the global edit in a fresh folder
+   * under /tmp/cc-edit/: a preview lists the rows and changes nothing, an
+   * apply is ONE commit named for the op. The answer is its report
+   * (edit.json); duplicate_designator when a board's numbering would give two
+   * parts one designator (nothing changed).
+   */
+  async function globalEdit(op: 'sch.edit' | 'board.edit', args: unknown): Promise<Answer> {
+    const board = op === 'board.edit';
+    const a: EditArgs | null = parseEditArgs(args, board ? BOARD_OPS : SCH_OPS);
+    if (a == null) return fail('bad_args', op);
+    const gate = board ? boardGate(op, BOARD_EDIT_EXPORTS) : schematicGate(op, SCH_EDIT_EXPORTS);
+    if ('ok' in gate) return gate;
+    const t0 = Date.now();
+    const exportName = board ? 'kicadBoardEdit' : 'kicadSchEdit';
+    const run = await recordedRun(op, gate.w, EDIT_ROOT, EDIT_DONE, timing.editMs, EDIT_ERRORS, 'the engine refused the edit',
+      (n, dir) => (gate.mod[exportName] as (json: string) => unknown)(editJson(n, dir, a)),
+      (FS, dir) => readEditReport(readBytes(FS, `${dir}/${EDIT_REPORT}`), board ? 'pcb' : 'sch', a));
+    if (!('done' in run)) return run;
+    if (run.done.error !== '') return fail(run.done.error, run.done.message || op);
+    if (run.report == null) return fail('island_error', 'the edit report was of another shape');
+    console.debug('[edit]', op, a.op, a.preview ? 'preview' : 'apply', `${run.report.count} rows`, `${Date.now() - t0} ms`);
+    return ok(run.report as unknown as Record<string, unknown>);
+  }
+
+  /**
+   * board.footprints (PROTOCOL.md, bridge/footprints.ts): no args, then
+   * boardGate, then the engine's synchronous read of every footprint under
+   * the board's current variant.
+   */
+  function boardFootprints(args: unknown): Answer {
+    const op = 'board.footprints';
+    if (!noArgs(args)) return fail('bad_args', op);
+    const gate = boardGate(op, FOOTPRINTS_EXPORTS);
+    if ('ok' in gate) return gate;
+    let read: ReturnType<typeof readBoardFootprints>;
+    try { read = readBoardFootprints((gate.mod.kicadBoardFootprints as () => unknown)()); } catch { read = null; }
+    if (read == null) return fail('island_error', 'the engine answered footprints of another shape');
+    return ok(read as unknown as Record<string, unknown>);
+  }
+
+  /**
+   * settings.get (PROTOCOL.md, bridge/settings.ts): the checks (bad_args, then
+   * documentGate), then the engine's synchronous read of the section from the
+   * editor's memory (unsaved changes included).
+   */
+  function settingsGet(args: unknown): Answer {
+    const op = 'settings.get';
+    const a = parseSettingsGetArgs(args);
+    if (a == null) return fail('bad_args', op);
+    const gate = documentGate(op, ['kicadSettingsGet'], a.section);
+    if ('ok' in gate) return gate;
+    let section: Record<string, unknown> | null;
+    try { section = readSection((gate.mod.kicadSettingsGet as (s: string) => unknown)(a.section)); } catch { section = null; }
+    if (section == null) return fail('island_error', 'the engine answered a section of another shape');
+    return ok(section);
+  }
+
+  /**
+   * settings.set (PROTOCOL.md, bridge/settings.ts): the checks (bad_args, then
+   * documentGate; a pcb frame's variants answer unsupported). Then our
+   * engine's kicadSettingsSet applies the patch (or the action) in memory with
+   * the frame's own sync, in a fresh folder under /tmp/cc-settings/; the answer
+   * is the record: the section read back, a dry run's rule errors or the items
+   * a removed layer holds. No undo step (KiCad's rule; removing a layer that
+   * holds items clears the undo list, as Board Setup does). A custom rules
+   * file written (no dry run) is sent as ev.saved before the answer.
+   */
+  async function settingsSet(args: unknown): Promise<Answer> {
+    const op = 'settings.set';
+    const a = parseSettingsSetArgs(args);
+    if (a == null) return fail('bad_args', op);
+    if (frame === 'pcb' && PCB_READ_ONLY.includes(a.section)) return fail('unsupported', 'the board takes variants through Update the board');
+    const gate = documentGate(op, SETTINGS_EXPORTS, a.section);
+    if ('ok' in gate) return gate;
+    const { w, mod } = gate;
+    const t0 = Date.now();
+    const run = await recordedRun(op, w, SETTINGS_ROOT, SETTINGS_DONE, timing.settingsMs, SETTINGS_ERRORS, 'the engine refused the setting',
+      (n, dir) => (mod.kicadSettingsSet as (json: string) => unknown)(settingsSetJson(n, dir, a)),
+      (FS, dir) => readSettingsRecord(readBytes(FS, `${dir}/${SETTINGS_REPORT}`)));
+    if (!('done' in run)) return run;
+    if (run.done.error !== '') return fail(run.done.error, run.done.message || op);
+    if (run.report == null) return fail('island_error', 'the settings record was of another shape');
+    if (a.section === 'customRules' && a.dryRun !== true && opened != null && w.FS != null) {
+      const path = rulesPathOf(opened);
+      const bytes = path == null ? null : readBytes(w.FS, `${root}/${path}`);
+      if (path != null && bytes != null) emit({ type: 'ev.saved', path, bytes });
+    }
+    console.debug('[settings]', a.section, a.dryRun === true ? 'dry run' : 'set', `${Date.now() - t0} ms`);
+    return ok(run.report as unknown as Record<string, unknown>);
+  }
+
   /** kicadBoardItemGet's answer read: the items, or null for an answer of another shape (a throw included). */
   function boardItems(mod: Record<string, unknown>, uuids: readonly string[]): BoardItemSheet[] | null {
     try { return readBoardItems((mod.kicadBoardItemGet as (json: string) => unknown)(JSON.stringify(uuids))); } catch { return null; }
@@ -3738,6 +4053,14 @@ export function startResponder(opts: {
         // The outputs (island v0.2.3-cc23): this frame's own kind's export, and the rules read.
         if (hasAll(EXPORT_EXPORTS[frame])) caps.push(EXPORT_CAP);
         if (hasAll(RULES_EXPORTS)) caps.push(RULES_CAP);
+        // Properties, numbering and rules (island v0.2.3-cc23): each frame its own kind's.
+        if (frame === 'sch' && hasAll(SYMBOLS_EXPORTS)) caps.push(SYMBOLS_CAP);
+        if (frame === 'sch' && hasAll(SYMBOL_EXCHANGE_EXPORTS)) caps.push(SYMBOL_EXCHANGE_CAP);
+        if (frame === 'sch' && hasAll(SCH_EDIT_EXPORTS)) caps.push(SCH_EDIT_CAP);
+        if (frame === 'pcb' && hasAll([...FOOTPRINTS_EXPORTS, 'kicadCollabBusy'])) caps.push(BOARD_FOOTPRINTS_CAP);
+        if (frame === 'pcb' && hasAll(BOARD_EDIT_EXPORTS)) caps.push(BOARD_EDIT_CAP);
+        if (frame === 'pcb' && hasAll(FOOTPRINT_EXCHANGE_EXPORTS)) caps.push(FOOTPRINT_EXCHANGE_CAP);
+        if (hasAll(SETTINGS_EXPORTS)) caps.push(SETTINGS_CAP);
         // The simulator (island v0.2.3-cc23): a sch frame only (it lives in the schematic
         // engine); `simModel` with the four model exports, `sim` with the four run exports
         // and the service the island serves.

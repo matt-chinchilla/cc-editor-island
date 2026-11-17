@@ -5412,3 +5412,286 @@ describe('outputs: project.export and board.rules (island v0.2.3-cc23)', () => {
     expect(await s.answer(check)).toMatchObject({ id: check });
   });
 });
+
+describe('properties, numbering and rules: the nine ops (island v0.2.3-cc23)', () => {
+  const started: Array<{ close: () => void }> = [];
+  afterEach(() => { for (const r of started.splice(0)) r.close(); });
+  const OPEN_PCB = { name: 'x', files: [{ path: 'card.kicad_pcb', bytes: b('(kicad_pcb)') }] };
+  const OPEN_SCH = { name: 'x', files: [{ path: 'card.kicad_sch', bytes: b('(kicad_sch)') }] };
+  const U1 = 'cccccccc-0000-4000-8000-000000000001';
+  const U2 = 'cccccccc-0000-4000-8000-000000000002';
+  const U3 = 'cccccccc-0000-4000-8000-000000000003';
+  const row = (uuid: string, ref: string, o: Record<string, unknown> = {}) => ({
+    uuid, sheetPath: '/', sheetName: 'Root', ref, unit: 1, units: 1, libId: 'Device:R', value: '10k', footprint: 'Resistor_SMD:R_0603_1608Metric',
+    fields: [], inBom: true, onBoard: true, inSim: true, inPos: true, dnp: false, sheetHeld: [], overrides: [], filters: ['R_*'], pins: 2, ...o,
+  });
+  const fp = (uuid: string, ref: string) => ({ uuid, ref, value: '10k', libId: 'Resistor_SMD:R_0603_1608Metric', symbolPath: `/${uuid}`, side: 'front', locked: false, dnp: false, inBom: true, inPos: true, boardOnly: false, fields: [] });
+  const TRACKS = { op: 'tracksVias', preview: true, filter: { tracks: true }, set: { width: 0.3 } };
+
+  /**
+   * A booted engine with run 14's properties exports. The design holds U1 and
+   * U2 (and U3, a power symbol, counted); variants Lite and Pro. Each write
+   * writes its report and its last file `applyMs` after the call, holding the
+   * apply queue busy until then (never at -1); `done` and `report` override
+   * the written files per root. An apply raises the undo depth by one.
+   */
+  function engine(opts: { frame?: 'sch' | 'pcb' | 'symedit'; exports?: boolean; applyMs?: number; refuse?: boolean; done?: Record<string, unknown>; report?: Record<string, unknown>; get?: () => string } = {}) {
+    const { page, parent } = fakePage(`?frame=${opts.frame ?? 'sch'}&theme=day`);
+    const r = startResponder({ parentOrigin: PARENT, page });
+    started.push(r);
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    const queue = { until: 0, hold: false };
+    const state = { depth: 0, calls: [] as Array<{ fn: string; args: Record<string, unknown> }>, variants: ['Lite', 'Pro'], section: { classes: [{ name: 'Default', clearance: 0.2 }] } as Record<string, unknown> };
+    const mod = eng.Module as Record<string, unknown>;
+    const writeRun = (fn: string, name: string, report: (a: Record<string, unknown>) => unknown) => vi.fn((json: string): boolean => {
+      const a = JSON.parse(json) as Record<string, unknown>;
+      state.calls.push({ fn, args: a });
+      if (opts.refuse) return false;
+      const ms = opts.applyMs ?? 5;
+      if (ms < 0) { queue.hold = true; return true; }
+      queue.until = Date.now() + ms;
+      setTimeout(() => {
+        const FS = eng.win.FS!;
+        const dir = a.dir as string;
+        FS.mkdirTree(dir);
+        const done = (opts.done?.[name] ?? { error: '', message: '' }) as { error: string };
+        if (a.preview !== true && a.dryRun !== true && done.error === '') state.depth += 1;
+        FS.writeFile(`${dir}/${name}.json`, JSON.stringify(opts.report?.[name] ?? report(a)));
+        FS.writeFile(`${dir}/.cc-${name}.json`, JSON.stringify(done));
+      }, ms);
+      return true;
+    });
+    if (opts.exports !== false) {
+      mod.kicadCollabBusy = () => queue.hold || Date.now() < queue.until || eng.modals.length > 0;
+      mod.kicadCollabTestUndoDepth = () => state.depth;
+      mod.kicadSymbolsGet = vi.fn((json: string) => {
+        const a = JSON.parse(json) as { variant: string; scope?: string; items?: Array<{ uuid: string; sheetPath: string }> };
+        state.calls.push({ fn: 'get', args: a });
+        if (opts.get) return opts.get();
+        if (a.variant !== '' && !state.variants.includes(a.variant)) return '';
+        const all = [row(U1, 'R1'), row(U2, 'R2', { dnp: a.variant === 'Lite', overrides: a.variant === 'Lite' ? ['dnp'] : [] })];
+        const asked = a.items == null ? all : all.filter((x) => a.items!.some((i) => i.uuid === x.uuid && i.sheetPath === x.sheetPath));
+        const power = a.items == null ? 1 : a.items.filter((i) => i.uuid === U3).length;
+        return JSON.stringify({ variant: a.variant, variants: state.variants, rows: asked, power, truncated: false, depth: state.depth });
+      });
+      mod.kicadSymbolsSet = writeRun('kicadSymbolsSet', 'symbols', (a) => ({ applied: (a.changes as unknown[]).length, depth: state.depth }));
+      mod.kicadSymbolsExchange = writeRun('kicadSymbolsExchange', 'exchange', (a) => ({ preview: a.preview, rows: [{ uuid: U1, sheetPath: '/', ref: 'R1', from: 'Device:R', to: (a.libId as string) || 'Device:R', status: 'changed' }], applied: 1, truncated: false, depth: state.depth }));
+      mod.kicadFootprintsExchange = writeRun('kicadFootprintsExchange', 'exchange', (a) => ({ preview: a.preview, rows: [{ uuid: U1, ref: 'R1', from: 'R:A', to: 'R:B', status: 'same' }], applied: 0, truncated: false, depth: state.depth }));
+      const edit = (a: Record<string, unknown>) => ({ op: a.op, preview: a.preview, rows: [{ uuid: U1, kind: a.op === 'reannotate' ? 'footprint' : 'track', words: 'R1 to R7', from: 'R1', to: 'R7', ...(a.op === 'reannotate' ? { symbolPath: `/${U1}` } : {}) }], count: 1, truncated: false, depth: state.depth });
+      mod.kicadSchEdit = writeRun('kicadSchEdit', 'edit', (a) => ({ ...edit(a), rows: [{ uuid: U1, kind: 'reference', words: 'R1 Reference: size' }] }));
+      mod.kicadBoardEdit = writeRun('kicadBoardEdit', 'edit', edit);
+      mod.kicadBoardFootprints = vi.fn(() => JSON.stringify({ footprints: [fp(U1, 'R1'), fp(U2, 'R2')], variant: '', truncated: false }));
+      mod.kicadSettingsGet = vi.fn((section: string) => (section === 'customRules' ? JSON.stringify({ text: '' }) : JSON.stringify(state.section)));
+      mod.kicadSettingsSet = writeRun('kicadSettingsSet', 'settings', (a) => {
+        if (a.section === 'customRules' && a.dryRun !== true) eng.win.FS!.writeFile(`${ROOT}/card.kicad_dru`, (a.value as { text: string }).text);
+        return { value: a.value };
+      });
+    }
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    let id = 0;
+    const send = (op: string, args?: unknown): number => {
+      const n = ++id;
+      port.postMessage(args === undefined ? { id: n, op } : { id: n, op, args });
+      return n;
+    };
+    const answer = async (n: number) => {
+      for (let i = 0; i < 400 && !got.some((m) => m.id === n); i++) await settle(5);
+      return got.find((m) => m.id === n);
+    };
+    const request = (op: string, args?: unknown) => answer(send(op, args));
+    const runPaths = () => [...eng.files.keys(), ...eng.dirs].filter((p) => /^\/tmp\/cc-(symbols|exchange|edit|settings)\/./.test(p));
+    const writes = () => state.calls.filter((c) => c.fn !== 'get');
+    return { eng, got, state, send, answer, request, runPaths, queue, writes };
+  }
+
+  it('lists each frame\'s own caps, none on an older engine or in a symedit frame, and the nine ops in ops.json', async () => {
+    const sch = engine();
+    const pcb = engine({ frame: 'pcb' });
+    await settle();
+    const capsOf = (s: ReturnType<typeof engine>) => s.got.find((m) => m.type === 'ev.ready')?.caps as string[];
+    expect(capsOf(sch)).toEqual(expect.arrayContaining(['symbols', 'symbolExchange', 'schEdit', 'settings']));
+    expect(capsOf(sch)).not.toEqual(expect.arrayContaining(['boardFootprints']));
+    for (const c of ['boardFootprints', 'boardEdit', 'footprintExchange']) expect(capsOf(sch)).not.toContain(c);
+    expect(capsOf(pcb)).toEqual(expect.arrayContaining(['boardFootprints', 'boardEdit', 'footprintExchange', 'settings']));
+    for (const c of ['symbols', 'symbolExchange', 'schEdit']) expect(capsOf(pcb)).not.toContain(c);
+    expect(capsOf(pcb)).toEqual([...capsOf(pcb)].sort());
+    const old = engine({ exports: false });
+    await settle();
+    for (const c of ['symbols', 'symbolExchange', 'schEdit', 'settings']) expect(capsOf(old)).not.toContain(c);
+    expect(await old.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(await old.request('symbols.get', { variant: '', scope: 'all' })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadSymbolsGet' } });
+    expect(await old.request('settings.get', { section: 'netClasses' })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadSettingsGet' } });
+    const sym = engine({ frame: 'symedit' });
+    await settle();
+    for (const c of ['symbols', 'settings', 'boardEdit']) expect(capsOf(sym)).not.toContain(c);
+    for (const op of ['symbols.get', 'symbols.set', 'symbols.exchange', 'sch.edit', 'board.footprints', 'board.edit', 'footprints.exchange', 'settings.get', 'settings.set']) {
+      expect(await sym.request(op, {})).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'a symbol editor opens symbols, not documents' } });
+    }
+    const ops = (await import('./ops.json')).default as string[];
+    expect(ops).toEqual(expect.arrayContaining(['symbols.get', 'symbols.set', 'symbols.exchange', 'sch.edit', 'board.footprints', 'board.edit', 'footprints.exchange', 'settings.get', 'settings.set']));
+  });
+
+  it('symbols.get answers the table under a variant, no_variant for one the design lacks, and refuses in order', async () => {
+    const s = engine();
+    expect(await s.request('symbols.get', { variant: '', scope: 'all' })).toMatchObject({ ok: false, error: { code: 'not_ready', message: 'symbols.get' } });
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    const all = await s.request('symbols.get', { variant: '', scope: 'all' }) as { ok: boolean; result: { rows: Array<{ ref: string }>; power: number; variants: string[] } };
+    expect(all.ok).toBe(true);
+    expect(all.result.rows.map((x) => x.ref)).toEqual(['R1', 'R2']);
+    expect(all.result.power).toBe(1);
+    expect(all.result.variants).toEqual(['Lite', 'Pro']);
+    const lite = await s.request('symbols.get', { variant: 'Lite', items: [{ uuid: U2, sheetPath: '/' }] }) as { result: { rows: Array<{ dnp: boolean; overrides: string[] }> } };
+    expect(lite.result.rows).toEqual([expect.objectContaining({ dnp: true, overrides: ['dnp'] })]);
+    expect(await s.request('symbols.get', { variant: 'Max', scope: 'all' })).toMatchObject({ ok: false, error: { code: 'no_variant', message: 'Max' } });
+    for (const a of [undefined, {}, { variant: '', scope: 'some' }, { variant: '', items: [] }]) {
+      expect(await s.request('symbols.get', a)).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'symbols.get' } });
+    }
+    const bad = engine({ get: () => JSON.stringify({ rows: [] }) });
+    expect(await bad.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(await bad.request('symbols.get', { variant: '', scope: 'all' })).toMatchObject({ ok: false, error: { code: 'island_error', message: 'the engine answered a table of another shape' } });
+    const pcb = engine({ frame: 'pcb' });
+    expect(await pcb.request('symbols.get', { variant: '', scope: 'all' })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'a schematic edits in a sch frame' } });
+  });
+
+  it('symbols.set runs ONE set in a fresh folder, answers its record, removes the folder and an ev.edited follows', async () => {
+    const s = engine({ applyMs: 30 });
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    await settle(30);
+    const changes = [{ uuid: U1, sheetPath: '/', set: { value: '4k7', inPos: false } }, { uuid: U2, sheetPath: '/', set: { dnp: true } }];
+    const t0 = Date.now();
+    expect(await s.request('symbols.set', { variant: '', changes })).toEqual({ id: expect.any(Number), ok: true, result: { applied: 2, depth: 1 } });
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(25);
+    expect(s.writes()).toEqual([{ fn: 'kicadSymbolsSet', args: { run: 1, dir: '/tmp/cc-symbols/1', variant: '', changes } }]);
+    expect(s.runPaths()).toEqual([]);
+    for (let i = 0; i < 40 && !s.got.some((m) => m.type === 'ev.edited'); i++) await settle(5);
+    expect(s.got.filter((m) => m.type === 'ev.edited')).toEqual([{ type: 'ev.edited', depth: 1 }]);
+    // Under a variant: a clear, a value.
+    expect(await s.request('symbols.set', { variant: 'Lite', changes: [{ uuid: U2, sheetPath: '/', set: { clear: ['dnp'] } }] })).toMatchObject({ ok: true });
+    expect(s.writes()[1].args).toMatchObject({ run: 2, dir: '/tmp/cc-symbols/2', variant: 'Lite' });
+  });
+
+  it('symbols.set refuses before any effect: no_variant, not_found, the variant\'s own refusals; and answers the engine\'s', async () => {
+    const s = engine();
+    expect(await s.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(await s.request('symbols.set', { variant: 'Max', changes: [{ uuid: U1, sheetPath: '/', set: { dnp: true } }] })).toMatchObject({ ok: false, error: { code: 'no_variant', message: 'Max' } });
+    const ghost = 'cccccccc-0000-4000-8000-0000000000ff';
+    expect(await s.request('symbols.set', { variant: '', changes: [{ uuid: ghost, sheetPath: '/', set: { dnp: true } }] })).toMatchObject({ ok: false, error: { code: 'not_found', message: `${ghost} on /` } });
+    // A power symbol counts as held: the engine sets it.
+    expect(await s.request('symbols.set', { variant: '', changes: [{ uuid: U3, sheetPath: '/', set: { inBom: false } }] })).toMatchObject({ ok: true });
+    for (const set of [{ ref: 'R9' }, { addField: { name: 'N', value: '', shown: true } }, { fields: [{ name: 'MPN', shown: true }] }]) {
+      expect(await s.request('symbols.set', { variant: 'Lite', changes: [{ uuid: U1, sheetPath: '/', set }] })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'symbols.set' } });
+    }
+    expect(s.writes()).toHaveLength(1);
+    const refused = engine({ refuse: true });
+    expect(await refused.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(await refused.request('symbols.set', { variant: '', changes: [{ uuid: U1, sheetPath: '/', set: { dnp: true } }] })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'the engine refused the set' } });
+    expect(refused.runPaths()).toEqual([]);
+    const gone = engine({ done: { symbols: { error: 'no_variant', message: 'the design has no such variant' } } });
+    expect(await gone.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(await gone.request('symbols.set', { variant: 'Pro', changes: [{ uuid: U1, sheetPath: '/', set: { value: '1k' } }] })).toMatchObject({ ok: false, error: { code: 'no_variant', message: 'Pro' } });
+    const odd = engine({ report: { symbols: { applied: 'x' } } });
+    expect(await odd.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(await odd.request('symbols.set', { variant: '', changes: [{ uuid: U1, sheetPath: '/', set: { dnp: true } }] })).toMatchObject({ ok: false, error: { code: 'island_error', message: 'the set report was of another shape' } });
+    const stuck = engine({ applyMs: -1 });
+    expect(await stuck.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    const saved = timing.symbolsMs;
+    timing.symbolsMs = 60;
+    try {
+      expect(await stuck.request('symbols.set', { variant: '', changes: [{ uuid: U1, sheetPath: '/', set: { dnp: true } }] })).toMatchObject({ ok: false, error: { code: 'not_applied', message: 'symbols.set' } });
+    } finally { timing.symbolsMs = saved; }
+    expect(stuck.runPaths()).toEqual([]);
+  });
+
+  it('the exchanges and the edits answer their reports, previews and applies, each in its own frame', async () => {
+    const sch = engine();
+    expect(await sch.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    const ex = { mode: 'change', targets: [{ uuid: U1, sheetPath: '/' }], libId: 'Device:R_Small', fields: 'all', options: { resetText: true }, preview: true };
+    expect(await sch.request('symbols.exchange', ex)).toEqual({ id: expect.any(Number), ok: true, result: { preview: true, rows: [{ uuid: U1, sheetPath: '/', ref: 'R1', from: 'Device:R', to: 'Device:R_Small', status: 'changed' }], applied: 1, truncated: false, depth: 0 } });
+    expect(sch.writes()[0]).toEqual({ fn: 'kicadSymbolsExchange', args: { run: 1, dir: '/tmp/cc-exchange/1', ...ex } });
+    const text = { op: 'textGraphics', preview: false, filter: { references: true }, set: { size: 1.5 } };
+    expect(await sch.request('sch.edit', text)).toMatchObject({ ok: true, result: { op: 'textGraphics', preview: false, count: 1, depth: 1, notes: [], rows: [{ kind: 'reference' }] } });
+    expect(sch.writes()[1]).toEqual({ fn: 'kicadSchEdit', args: { run: 2, dir: '/tmp/cc-edit/2', ...text } });
+    expect(await sch.request('board.edit', TRACKS)).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'a board op runs in a pcb frame' } });
+    expect(await sch.request('footprints.exchange', { mode: 'update', match: { all: true }, libId: '', options: {}, preview: true })).toMatchObject({ ok: false, error: { code: 'unsupported' } });
+    expect(sch.runPaths()).toEqual([]);
+    const pcb = engine({ frame: 'pcb' });
+    expect(await pcb.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await pcb.request('board.edit', TRACKS)).toMatchObject({ ok: true, result: { op: 'tracksVias', preview: true, depth: 0 } });
+    expect(await pcb.request('board.edit', { op: 'reannotate', preview: false, filter: {}, set: { order: 2 } })).toMatchObject({ ok: true, result: { rows: [{ symbolPath: `/${U1}`, from: 'R1', to: 'R7' }] } });
+    expect(await pcb.request('footprints.exchange', { mode: 'update', match: { ref: 'R*' }, libId: '', options: { reset3D: true }, preview: false })).toMatchObject({ ok: true, result: { rows: [{ uuid: U1, status: 'same' }], applied: 0 } });
+    expect(await pcb.request('board.edit', { ...TRACKS, set: {} })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'board.edit' } });
+    expect(await pcb.request('sch.edit', text)).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'a schematic edits in a sch frame' } });
+    const dup = engine({ frame: 'pcb', done: { edit: { error: 'duplicate_designator', message: 'two parts would share a designator' } } });
+    expect(await dup.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await dup.request('board.edit', { op: 'reannotate', preview: false, filter: {}, set: {} })).toMatchObject({ ok: false, error: { code: 'duplicate_designator', message: 'two parts would share a designator' } });
+    expect(dup.runPaths()).toEqual([]);
+    const wrong = engine({ frame: 'pcb', report: { edit: { op: 'repair', preview: true, rows: [], count: 0, truncated: false, depth: 0 } } });
+    expect(await wrong.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await wrong.request('board.edit', TRACKS)).toMatchObject({ ok: false, error: { code: 'island_error', message: 'the edit report was of another shape' } });
+  });
+
+  it('board.footprints answers every footprint; settings.get and settings.set by the frame\'s sections', async () => {
+    const pcb = engine({ frame: 'pcb' });
+    expect(await pcb.request('board.footprints')).toMatchObject({ ok: false, error: { code: 'not_ready' } });
+    expect(await pcb.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    expect(await pcb.request('board.footprints', { x: 1 })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'board.footprints' } });
+    expect(await pcb.request('board.footprints')).toMatchObject({ ok: true, result: { footprints: [{ ref: 'R1' }, { ref: 'R2' }], variant: '', truncated: false } });
+    expect(await pcb.request('settings.get', { section: 'netClasses' })).toEqual({ id: expect.any(Number), ok: true, result: { classes: [{ name: 'Default', clearance: 0.2 }] } });
+    expect(await pcb.request('settings.get', { section: 'pinMap' })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'pinMap is a schematic setting' } });
+    expect(await pcb.request('settings.set', { section: 'variants', value: { add: 'Max' } })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'the board takes variants through Update the board' } });
+    const patch = { section: 'constraints', value: { rules: { min_clearance: 0.15 } } };
+    expect(await pcb.request('settings.set', patch)).toEqual({ id: expect.any(Number), ok: true, result: { value: patch.value } });
+    expect(pcb.writes().at(-1)).toEqual({ fn: 'kicadSettingsSet', args: { run: 1, dir: '/tmp/cc-settings/1', ...patch } });
+    // A dry run of the custom rules sends no ev.saved; an apply sends the file, before the answer.
+    const dry = await pcb.request('settings.set', { section: 'customRules', value: { text: '(version 1)' }, dryRun: true });
+    expect(dry).toMatchObject({ ok: true });
+    expect(pcb.got.filter((m) => m.type === 'ev.saved')).toEqual([]);
+    const n = pcb.send('settings.set', { section: 'customRules', value: { text: '(version 1)\n' } });
+    expect(await pcb.answer(n)).toMatchObject({ ok: true });
+    const saved = pcb.got.filter((m) => m.type === 'ev.saved');
+    expect(saved).toHaveLength(1);
+    expect(saved[0].path).toBe('card.kicad_dru');
+    expect(new TextDecoder().decode(saved[0].bytes as Uint8Array)).toBe('(version 1)\n');
+    expect(pcb.got.indexOf(saved[0])).toBeLessThan(pcb.got.findIndex((m) => m.id === n));
+    expect(pcb.runPaths()).toEqual([]);
+    const sch = engine();
+    expect(await sch.request('project.open', OPEN_SCH)).toMatchObject({ ok: true });
+    expect(await sch.request('settings.get', { section: 'customRules' })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'customRules is a board setting' } });
+    expect(await sch.request('settings.set', { section: 'variants', value: { add: 'Max' } })).toMatchObject({ ok: true });
+    for (const a of [undefined, {}, { section: 'netClasses', value: {} }, { section: 'variants', value: { add: 'A', delete: 'B' } }]) {
+      expect(await sch.request('settings.set', a)).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'settings.set' } });
+    }
+    for (const [code, message] of [['rules_invalid', 'Line 4: unknown keyword clearanse'], ['bad_args', 'the section did not take this value'], ['island_error', 'the setting was not applied']]) {
+      const e = engine({ frame: 'pcb', done: { settings: { error: code, message } } });
+      expect(await e.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+      expect(await e.request('settings.set', { section: 'customRules', value: { text: '(rule' } })).toMatchObject({ ok: false, error: { code, message } });
+      expect(e.got.filter((m) => m.type === 'ev.saved')).toEqual([]);
+    }
+  });
+
+  it('while a board check runs, the reads are answered and the writes answer busy', async () => {
+    const s = engine({ frame: 'pcb', applyMs: 150 });
+    const mod = s.eng.Module as Record<string, unknown>;
+    mod.kicadCheckBoard = (json: string) => {
+      const a = JSON.parse(json) as { dir: string };
+      s.queue.until = Date.now() + 150;
+      setTimeout(() => {
+        s.eng.win.FS!.mkdirTree(a.dir);
+        s.eng.win.FS!.writeFile(`${a.dir}/drc.json`, JSON.stringify({ violations: [], unconnected: [], parity: [], parityRun: 'no', filled: false, skipped: [], ignored: [], errors: 0, warnings: 0, excludedCount: 0, depth: 0 }));
+        s.eng.win.FS!.writeFile(`${a.dir}/.cc-drc.json`, JSON.stringify({ code: 0, error: '', message: '', lines: [] }));
+      }, 150);
+      return true;
+    };
+    expect(await s.request('project.open', OPEN_PCB)).toMatchObject({ ok: true });
+    const check = s.send('board.check', { fill: false, parity: false, allTrackErrors: false });
+    await settle(20);
+    expect(await s.request('board.footprints')).toMatchObject({ ok: true });
+    expect(await s.request('settings.get', { section: 'constraints' })).toMatchObject({ ok: true });
+    for (const [op, args] of [['board.edit', TRACKS], ['settings.set', { section: 'constraints', value: { rules: { a: 1 } } }], ['footprints.exchange', { mode: 'update', match: { all: true }, libId: '', options: {}, preview: true }]] as const) {
+      expect(await s.request(op, args)).toMatchObject({ ok: false, error: { code: 'busy', message: op } });
+    }
+    expect(await s.answer(check)).toMatchObject({ id: check });
+    expect(s.writes()).toEqual([]);
+  });
+});

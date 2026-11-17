@@ -63,5 +63,14 @@
   "sim.opOnSheet",
   "sim.release",
   "project.export",
-  "board.rules"
+  "board.rules",
+  "symbols.get",
+  "symbols.set",
+  "symbols.exchange",
+  "sch.edit",
+  "board.footprints",
+  "board.edit",
+  "footprints.exchange",
+  "settings.get",
+  "settings.set"
 ]
