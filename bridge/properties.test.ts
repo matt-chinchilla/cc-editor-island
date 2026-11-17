@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
 import { describe, expect, it, vi } from 'vitest';
-import { installProperties, readPropertiesRequest, type PropertiesWindow } from './properties';
+import { installProperties, installSymEditAsk, readPropertiesRequest, readSymEditAsk, type PropertiesWindow, type SymEditAskWindow } from './properties';
 
 const U = '0b9b3c55-6d0e-4c6c-9e86-2f3f1d6f7a01';
 const S = '1c8a2d44-5e1f-4b7b-8f75-3e2e0c5e6b02';
@@ -81,5 +81,34 @@ describe("the engine's properties request", () => {
     expect(w.kicadProperties?.onRequest?.(req({ type: 'board', uuid: U, kind: 'marker' }))).toBe(true);
     expect(w.kicadProperties?.onRequest?.(req({ type: 'symbol', uuid: U, sheetPath: '/' }))).toBe(false);
     expect(send.mock.calls).toEqual([[{ type: 'board', uuid: U, kind: 'marker' }]]);
+  });
+});
+
+describe('ev.symedit: the symbol editor\'s requests', () => {
+  const U = 'aaaaaaaa-0000-4000-8000-000000000001';
+  const ask = (o: Record<string, unknown>) => JSON.stringify({ ask: 'pin', uuid: U, isNew: true, ...o });
+  it('reads exactly { ask, uuid, isNew }, the symbol\'s uuid empty', () => {
+    expect(readSymEditAsk(ask({}))).toEqual({ ask: 'pin', uuid: U, isNew: true });
+    expect(readSymEditAsk(ask({ ask: 'symbol', uuid: '', isNew: false }))).toEqual({ ask: 'symbol', uuid: '', isNew: false });
+    for (const k of ['field', 'text', 'textbox', 'shape']) expect(readSymEditAsk(ask({ ask: k }))).toMatchObject({ ask: k });
+    for (const bad of [ask({ ask: 'pad' }), ask({ uuid: '' }), ask({ ask: 'symbol' }), ask({ isNew: 1 }), ask({ x: 1 }), '{', 3, 'x'.repeat(2000)]) expect(readSymEditAsk(bad)).toBeNull();
+  });
+  it('takes a request the gate admits and sends it once; anything else is KiCad\'s', () => {
+    const w: SymEditAskWindow = {};
+    const sent: unknown[] = [];
+    const gate = { admit: true };
+    installSymEditAsk(w, { admit: () => gate.admit, send: (a) => sent.push(a) });
+    const on = (j: unknown) => w.kicadHostSymEdit!.onRequest!(j);
+    expect(on(ask({}))).toBe(true);
+    expect(on(ask({ ask: 'pad' }))).toBe(false);
+    gate.admit = false;
+    expect(on(ask({}))).toBe(false);
+    expect(sent).toEqual([{ ask: 'pin', uuid: U, isNew: true }]);
+    const t: SymEditAskWindow = {};
+    installSymEditAsk(t, { admit: () => true, send: () => { throw new Error('gone'); } });
+    expect(t.kicadHostSymEdit!.onRequest!(ask({}))).toBe(false);
+  });
+  it('a symedit frame never reads a schematic or board properties request', () => {
+    expect(readPropertiesRequest(JSON.stringify({ type: 'symbol', uuid: U, sheetPath: '/' }), 'symedit')).toBeNull();
   });
 });

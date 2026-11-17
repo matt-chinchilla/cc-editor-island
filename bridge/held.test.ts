@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
 import { describe, expect, it, vi } from 'vitest';
-import { HELD_ACTIONS, heldTaken, installHeld, readHeldRequest, type HeldWindow } from './held';
+import { HELD_ACTIONS, heldTaken, installHeld, readHeldRequest, SYMEDIT_HELD, type HeldWindow } from './held';
 
-const ALL_CAPS = ['boardUpdate', 'drc', 'check', 'annotate', 'heldKeys'];
+const ALL_CAPS = ['boardUpdate', 'drc', 'check', 'annotate', 'heldKeys', 'symbolEdit', 'symedit'];
+const FRAMES = ['sch', 'pcb', 'symedit'] as const;
 const req = (action: string) => JSON.stringify({ action });
 
 describe('the held actions', () => {
-  it('names the nine actions, each with its frames and the cap it waits on', () => {
+  it('names the nine document actions, the two symbol editor doors and the symbol editor\'s windows, each with its frames and the cap it waits on', () => {
     expect(HELD_ACTIONS).toEqual([
       { action: 'common.Control.updatePcbFromSchematic', frames: ['sch', 'pcb'], cap: 'boardUpdate' },
       { action: 'pcbnew.DRCTool.runDRC', frames: ['pcb'], cap: 'drc' },
@@ -18,14 +19,34 @@ describe('the held actions', () => {
       { action: 'pcbnew.Control.showLayersManager', frames: ['pcb'], cap: 'heldKeys' },
       { action: 'common.Control.showProperties', frames: ['sch', 'pcb'], cap: 'heldKeys' },
       { action: 'common.Control.showDatasheet', frames: ['sch'], cap: 'heldKeys' },
+      { action: 'eeschema.EditorControl.editWithSymbolEditor', frames: ['sch'], cap: 'symbolEdit' },
+      { action: 'common.Control.showSymbolEditor', frames: ['sch'], cap: 'symbolEdit' },
+      ...SYMEDIT_HELD.map((action) => ({ action, frames: ['symedit'], cap: 'symedit' })),
     ]);
+    // The spec's list (2026-11-16, section 6.2), each name once.
+    expect(SYMEDIT_HELD).toHaveLength(21);
+    expect(new Set(SYMEDIT_HELD).size).toBe(21);
+  });
+
+  it('holds the datasheet and the properties pane in a symedit frame under symedit, and in a sch frame under heldKeys as before', () => {
+    for (const action of ['common.Control.showDatasheet', 'common.Control.showProperties']) {
+      expect(heldTaken(action, 'symedit', ['symedit'])).toBe(true);
+      expect(heldTaken(action, 'symedit', ['heldKeys'])).toBe(false);
+      expect(heldTaken(action, 'sch', ['heldKeys'])).toBe(true);
+      expect(heldTaken(action, 'sch', ['symedit'])).toBe(false);
+    }
+    // Ctrl+S and Quit are the symbol editor's only: a schematic's own save still reaches KiCad.
+    expect(heldTaken('common.Control.save', 'sch', ALL_CAPS)).toBe(false);
+    expect(heldTaken('common.Control.quit', 'pcb', ALL_CAPS)).toBe(false);
+    expect(heldTaken('common.Control.save', 'symedit', ALL_CAPS)).toBe(true);
   });
 
   it('takes an action only in its frames and only while the island lists its cap', () => {
     for (const h of HELD_ACTIONS) {
-      for (const frame of ['sch', 'pcb'] as const) {
-        expect(heldTaken(h.action, frame, ALL_CAPS), `${h.action} ${frame}`).toBe(h.frames.includes(frame));
-        expect(heldTaken(h.action, frame, ALL_CAPS.filter((c) => c !== h.cap)), `${h.action} ${frame} without ${h.cap}`).toBe(false);
+      for (const frame of FRAMES) {
+        const rows = HELD_ACTIONS.filter((x) => x.action === h.action && x.frames.includes(frame));
+        expect(heldTaken(h.action, frame, ALL_CAPS), `${h.action} ${frame}`).toBe(rows.length > 0);
+        expect(heldTaken(h.action, frame, ALL_CAPS.filter((c) => !rows.some((r) => r.cap === c))), `${h.action} ${frame} without its cap`).toBe(false);
       }
     }
     expect(heldTaken('pcbnew.InteractiveEdit.FindMove', 'pcb', ALL_CAPS)).toBe(false);

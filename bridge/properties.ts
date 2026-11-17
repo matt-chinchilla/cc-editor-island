@@ -62,6 +62,7 @@ export function readPropertiesRequest(json: unknown, frame: Frame = 'sch'): Prop
   const r = v as Record<string, unknown>;
   if (typeof r.uuid !== 'string' || !UUID_RE.test(r.uuid)) return null;
   if (r.field !== undefined && typeof r.field !== 'string') return null;
+  if (frame === 'symedit') return null;   // the symbol editor asks through kicadHostSymEdit (ev.symedit)
   if (frame === 'pcb') {
     if (r.type !== 'board' || !Object.keys(r).every((k) => ['type', 'uuid', 'kind', 'field'].includes(k))) return null;
     if (typeof r.kind !== 'string' || !(BOARD_PROPERTIES_KINDS as readonly string[]).includes(r.kind)) return null;
@@ -86,6 +87,56 @@ export function installProperties(w: PropertiesWindow, opts: { frame: Frame; adm
         const req = readPropertiesRequest(json, opts.frame);
         if (req == null) return false;
         opts.send(req);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
+/** What KiCad's symbol editor asks the page about (kicad cc/main K3): the item whose dialog it would open. */
+export const SYMEDIT_ASKS = ['pin', 'field', 'text', 'textbox', 'shape', 'symbol'] as const;
+export type SymEditAskKind = typeof SYMEDIT_ASKS[number];
+/** ev.symedit's payload: the item's kind, its uuid ("" for the symbol) and whether a tool just made it. */
+export interface SymEditAsk { ask: SymEditAskKind; uuid: string; isNew: boolean }
+/** The window slot the symbol editor calls (CcAskHostSymEdit). */
+export type SymEditAskWindow = { kicadHostSymEdit?: { onRequest?: (json: unknown) => boolean } };
+/** The symbol editor's request is at most this long. */
+const MAX_SYMEDIT_REQUEST = 1024;
+
+/**
+ * The symbol editor's request read closed: a JSON string of exactly `{ ask,
+ * uuid, isNew }`, `uuid` a lower case uuid for an item and `""` for the
+ * symbol. Null for any other shape, which leaves the request to KiCad's dialog.
+ */
+export function readSymEditAsk(json: unknown): SymEditAsk | null {
+  if (typeof json !== 'string' || json.length > MAX_SYMEDIT_REQUEST) return null;
+  let v: unknown;
+  try { v = JSON.parse(json); } catch { return null; }
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+  const r = v as Record<string, unknown>;
+  if (Object.keys(r).length !== 3 || typeof r.ask !== 'string' || !(SYMEDIT_ASKS as readonly string[]).includes(r.ask) || typeof r.isNew !== 'boolean') return null;
+  const ask = r.ask as SymEditAskKind;
+  if (typeof r.uuid !== 'string' || (ask === 'symbol' ? r.uuid !== '' : !UUID_RE.test(r.uuid))) return null;
+  return { ask, uuid: r.uuid, isNew: r.isNew };
+}
+
+/**
+ * Takes the symbol editor's slot (ev.symedit): each request the gate admits
+ * (after ev.ready, a symbol open) is handed to `send` and answered true, so
+ * KiCad's dialog does not open and the item stays selected (a new pin is
+ * placed as the dialog's OK with its defaults would place it); anything else,
+ * or a throwing `send`, answers false and KiCad's dialog opens as before.
+ */
+export function installSymEditAsk(w: SymEditAskWindow, opts: { admit: () => boolean; send: (a: SymEditAsk) => void }): void {
+  w.kicadHostSymEdit = {
+    onRequest: (json: unknown): boolean => {
+      try {
+        if (!opts.admit()) return false;
+        const a = readSymEditAsk(json);
+        if (a == null) return false;
+        opts.send(a);
         return true;
       } catch {
         return false;

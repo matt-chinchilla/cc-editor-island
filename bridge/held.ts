@@ -15,6 +15,34 @@
 // the marker export kicadHostActions.
 import type { Frame } from '../src/types';
 
+/** The pseudo-caps the symbol editor's held actions wait on (bridge/symedit.ts, bridge/symbolEdit.ts). */
+const SYMEDIT_CAP = 'symedit';
+const SYMBOL_EDIT_CAP = 'symbolEdit';
+/** The symbol editor's actions held in a symedit frame (each name copied from KiCad's sch_actions.cpp and actions.cpp). */
+export const SYMEDIT_HELD: readonly string[] = Object.freeze([
+  'common.Control.save',
+  'common.Control.saveAs',
+  'common.Control.saveAll',
+  'eeschema.SymbolLibraryControl.saveSymbolAs',
+  'eeschema.SymbolLibraryControl.saveSymbolCopyAs',
+  'eeschema.SymbolLibraryControl.saveLibraryAs',
+  'eeschema.SymbolLibraryControl.newSymbol',
+  'common.Interactive.find',
+  'common.Interactive.findAndReplace',
+  'common.Control.showDatasheet',
+  'common.Control.showProperties',
+  'common.Control.showLibraryTree',
+  'eeschema.InteractiveEdit.pinTable',
+  'eeschema.InteractiveEdit.symbolProperties',
+  'eeschema.InspectionTool.checkSymbol',
+  'eeschema.SymbolLibraryControl.importSymbol',
+  'eeschema.SymbolLibraryControl.exportSymbol',
+  'eeschema.SymbolLibraryControl.exportSymbolAsSVG',
+  'eeschema.SymbolLibraryControl.exportSymbolView',
+  'eeschema.SymbolLibraryControl.addSymbolToSchematic',
+  'common.Control.quit',
+]);
+
 /** The marker export of an engine whose editors ask the page before a hotkey's action. */
 export const HELD_EXPORT = 'kicadHostActions';
 /** The pseudo-cap ev.ready lists when the engine has the marker. */
@@ -31,7 +59,8 @@ export interface HeldAction { action: string; frames: readonly Frame[]; cap: str
  * listed the cap the host's replacement needs (engine run A's design, 6.2):
  * Update PCB from Schematic (F8), the design rules and electrical rules
  * checkers and Annotate Schematic (our seeded chords), KiCad's 3D viewer
- * (Alt+3), the hierarchy, appearance and properties panes, and the datasheet.
+ * (Alt+3), the hierarchy, appearance and properties panes, the datasheet, and
+ * the symbol editor's windows (spec 2026-11-16, section 6.2).
  */
 export const HELD_ACTIONS: readonly HeldAction[] = Object.freeze([
   { action: 'common.Control.updatePcbFromSchematic', frames: ['sch', 'pcb'], cap: 'boardUpdate' },
@@ -43,6 +72,14 @@ export const HELD_ACTIONS: readonly HeldAction[] = Object.freeze([
   { action: 'pcbnew.Control.showLayersManager', frames: ['pcb'], cap: HELD_KEYS_CAP },
   { action: 'common.Control.showProperties', frames: ['sch', 'pcb'], cap: HELD_KEYS_CAP },
   { action: 'common.Control.showDatasheet', frames: ['sch'], cap: HELD_KEYS_CAP },
+  // The symbol editor (island v0.2.3-cc23): in a sch frame KiCad's Edit with
+  // Symbol Editor (Ctrl+E) and Symbol Editor, the host's own editor opening
+  // instead; in a symedit frame every window of the symbol editor the host's
+  // page replaces (its saves, new symbol, find, the panes, the pin table and
+  // properties, the checker, import and export, add to schematic, quit).
+  { action: 'eeschema.EditorControl.editWithSymbolEditor', frames: ['sch'], cap: SYMBOL_EDIT_CAP },
+  { action: 'common.Control.showSymbolEditor', frames: ['sch'], cap: SYMBOL_EDIT_CAP },
+  ...SYMEDIT_HELD.map((action) => ({ action, frames: ['symedit'] as Frame[], cap: SYMEDIT_CAP })),
 ].map((h) => Object.freeze({ ...h, frames: Object.freeze([...h.frames]) as readonly Frame[] })));
 
 /** The window slot the engine calls. */
@@ -62,8 +99,9 @@ export function readHeldRequest(json: unknown): string | null {
 
 /** Whether the island holds `action` in this frame with these caps. */
 export function heldTaken(action: string, frame: Frame, caps: readonly string[]): boolean {
-  const h = HELD_ACTIONS.find((x) => x.action === action);
-  return h != null && h.frames.includes(frame) && caps.includes(h.cap);
+  // An action may sit in the table once per frame kind (the datasheet and the
+  // properties pane are held in a sch frame under heldKeys, in a symedit frame under symedit).
+  return HELD_ACTIONS.some((h) => h.action === action && h.frames.includes(frame) && caps.includes(h.cap));
 }
 
 /**
