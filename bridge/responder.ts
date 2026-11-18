@@ -883,6 +883,9 @@ export function startResponder(opts: {
     if (closed) return;
     const { id, op } = data;
     if (!onlyKeys(data as unknown as Record<string, unknown>, ['id', 'op', 'args'])) return reply(id, fail('bad_args', op));
+    // A frame that refuses the library reads (a unit's descriptor) answers so here too, off the queue.
+    const refusal = frameRefusalOf(op);
+    if (refusal != null) return reply(id, refusal);
     const a = op === 'lib.index' ? libIndex(data.args) : op === 'lib.item' ? libItem(data.args) : Promise.resolve(libPrefetch(data.args));
     reply(id, await a.catch((err: unknown) => fail('island_error', describeError(err))));
   }
@@ -896,7 +899,10 @@ export function startResponder(opts: {
   function keysClaim(data: { id: number; op: string; args?: unknown }): void {
     if (closed) return;
     const { id, op } = data;
-    const chords = onlyKeys(data as unknown as Record<string, unknown>, ['id', 'op', 'args']) ? parseKeysClaim(data.args) : null;
+    if (!onlyKeys(data as unknown as Record<string, unknown>, ['id', 'op', 'args'])) return reply(id, fail('bad_args', op));
+    const refusal = frameRefusalOf(op);
+    if (refusal != null) return reply(id, refusal);
+    const chords = parseKeysClaim(data.args);
     if (chords == null) return reply(id, fail('bad_args', op));
     const { claimed, refused } = hostKeys.claim(chords);
     reply(id, ok({ claimed: claimed.length, refused: refused.map((c) => ({ code: c.code, shift: c.shift })) }));
@@ -2538,6 +2544,9 @@ export function startResponder(opts: {
     if (closed) return;
     const { id, op } = data;
     if (!onlyKeys(data as unknown as Record<string, unknown>, ['id', 'op', 'args'])) return reply(id, fail('bad_args', op));
+    // A frame that refuses sim.stop or sim.release (a unit's descriptor) answers so before any widening, as handle does.
+    const refusal = frameRefusalOf(op);
+    if (refusal != null) return reply(id, refusal);
     // A wave unit's widening of sim.stop or sim.release (lo-e2-i) runs here too, still off the queue.
     if (reg.widen.has(op)) {
       void widened(op, async (args) => simNowAnswer(op, args))(data.args)

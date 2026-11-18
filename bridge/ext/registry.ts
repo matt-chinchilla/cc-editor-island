@@ -237,11 +237,15 @@ export function buildRegistry(modules: Readonly<Record<string, unknown>>, pendin
   return { units, ops, widen, events, heldRows, exportJobs, frames, capNames, asks, pending: waiting, pendingFrames: waitingFrames, askReaders, exportHooks, settingsSections, hostTools, eventGuards, problems };
 }
 
+/** The config files the loader seeds for every tool already: a unit's appearanceFiles never names one. */
+const SEEDED_ELSEWHERE: readonly string[] = ['kicad_common.json', 'eeschema.json', 'pcbnew.json'];
+
 /** What is wrong with a frame descriptor, or null. */
 function frameKindProblem(k: FrameKind): string | null {
   if (k == null || typeof k !== 'object') return 'no descriptor';
   if (typeof k.token !== 'string' || !/^[a-z][a-z0-9]{0,15}$/.test(k.token)) return 'token';
   if (typeof k.tool === 'string' ? !['pcbnew', 'eeschema'].includes(k.tool) : (k.tool == null || typeof k.tool.name !== 'string' || !/^[a-z][a-z_]{0,31}$/.test(k.tool.name) || ['pcbnew', 'eeschema'].includes(k.tool.name) || k.tool.bundle !== 'kicad_editor' || typeof k.tool.argv0 !== 'string')) return 'tool';
+  if (typeof k.tool !== 'string' && k.tool.appearanceFiles !== undefined && (!strings(k.tool.appearanceFiles) || !k.tool.needsConfigSeed || !k.tool.appearanceFiles.every((f) => /^[a-z][a-z0-9_]{0,31}\.json$/.test(f) && !SEEDED_ELSEWHERE.includes(f)))) return 'appearanceFiles';
   if (k.document !== null && (typeof k.document !== 'string' || !/^\.[a-z_]+$/.test(k.document))) return 'document';
   if (typeof k.extension !== 'string' || !/^\.[a-z_]+$/.test(k.extension)) return 'extension';
   if (typeof k.unitsPerMm !== 'number' || !(k.unitsPerMm > 0)) return 'unitsPerMm';

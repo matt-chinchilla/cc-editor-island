@@ -28,10 +28,14 @@
 // Modified by Circuit Center on 2026-11-18: a tool's bundle, library kind,
 // config seed and argv[0] are read through constants.ts's lookups, so a tool a
 // wave unit's frame boots (src/frames.ts) finds its row.
+// Modified by Circuit Center on 2026-11-18: a wave unit's tool also gets the
+// appearance seed in its own settings files (toolAppearanceFiles: the drawing
+// sheet editor's pl_editor.json), so its frame draws in the viewer's palette.
 import type { Tool } from "../../../src/types";
 import {
   KICAD_CONFIG_DIR,
   RESOURCE_PATH,
+  toolAppearanceFiles,
   toolArgv0,
   toolBundle,
   toolLibKind,
@@ -641,6 +645,7 @@ async function doBoot(opts: BootOptions): Promise<void> {
     // switched themes in-app (F4 persists into these files) must win.
     writeIfAbsent(`${KICAD_CONFIG_DIR}/eeschema.json`, appearance);
     writeIfAbsent(`${KICAD_CONFIG_DIR}/pcbnew.json`, appearance);
+    for (const file of toolAppearanceFiles(tool)) writeIfAbsent(`${KICAD_CONFIG_DIR}/${file}`, appearance);
     FS.mkdirTree(`${KICAD_CONFIG_DIR}/toolbars`);
     for (const { name, json } of opts.seeds.toolbars) {
       writeIfAbsent(`${KICAD_CONFIG_DIR}/toolbars/${name}`, json);

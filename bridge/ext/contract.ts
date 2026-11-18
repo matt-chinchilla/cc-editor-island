@@ -181,6 +181,13 @@ export interface ToolKind {
   needsConfigSeed: boolean;
   /** The library kind it consumes, null for none. */
   libKind: 'symbol' | 'footprint' | null;
+  /**
+   * KiCad's own settings files of the tool (names under the config dir, such
+   * as pl_editor.json) seeded before main() with the viewer's appearance, the
+   * color theme, the toolbar layouts and the cursor, as eeschema.json and
+   * pcbnew.json are (loader/src/wasm/boot.ts). Only with needsConfigSeed.
+   */
+  appearanceFiles?: readonly string[];
 }
 
 /** A frame a unit's file adds (the footprint editor fpedit, the drawing sheet editor ds). */

@@ -183,6 +183,57 @@ describe('the frame registry', () => {
   });
 });
 
+describe('a unit frame refuses the ops answered off the queue too', () => {
+  const OFF_QUEUE = ['lib.index', 'lib.item', 'lib.prefetch', 'keys.claim', 'sim.stop', 'sim.release'];
+  const offf: ExtUnit = {
+    unit: 'off-i',
+    defineFrames: {
+      offframe: {
+        token: 'offframe', tool: { name: 'tool_off', bundle: 'kicad_editor', argv0: '/usr/bin/tool_off', needsConfigSeed: true, libKind: null },
+        document: null, extension: '.kicad_wks', unitsPerMm: 1e3, pickKind: 'symbol', picker: false,
+        refuses: OFF_QUEUE, refusal: 'an off frame refuses these',
+      },
+    },
+  };
+  it('answers the library reads, keys.claim, sim.stop and sim.release with the frame\'s refusal, before their args are read', async () => {
+    const t = await boot([offf], { frame: 'offframe', exports: { kicadHostActions: () => true } });
+    let id = 1;
+    for (const op of OFF_QUEUE) {
+      expect(await t.ask(id, op, { not: 'its args' }), op).toEqual({ id, ok: false, error: { code: 'unsupported', message: 'an off frame refuses these' } });
+      id += 1;
+    }
+    // The closed key check still comes first.
+    t.port.postMessage({ id: 99, op: 'lib.index', extra: 1 });
+    await settle();
+    expect(t.got.find((m) => m.id === 99)).toEqual({ id: 99, ok: false, error: { code: 'bad_args', message: 'lib.index' } });
+  });
+
+  it('leaves them as they ship in a built in frame', async () => {
+    const t = await boot([offf]);
+    expect(await t.ask(1, 'lib.index', { not: 'its args' })).toMatchObject({ id: 1, ok: false, error: { code: 'bad_args' } });
+    expect(await t.ask(2, 'keys.claim', { chords: [] })).toEqual({ id: 2, ok: true, result: { claimed: 0, refused: [] } });
+  });
+});
+
+describe('a unit tool\'s appearance seed', () => {
+  const kind = (appearanceFiles: unknown, needsConfigSeed = true): ExtUnit => ({
+    unit: 'ap-i',
+    defineFrames: {
+      apframe: {
+        token: 'apframe', tool: { name: 'tool_ap', bundle: 'kicad_editor', argv0: '/usr/bin/tool_ap', needsConfigSeed, libKind: null, appearanceFiles: appearanceFiles as readonly string[] },
+        document: null, extension: '.kicad_wks', unitsPerMm: 1e3, pickKind: 'symbol', picker: false, refuses: [], refusal: 'no',
+      },
+    },
+  });
+  it('takes settings file names of the tool\'s own, and refuses a path, a file seeded already, or a tool that seeds nothing', () => {
+    expect(buildRegistry(mods(kind(['pl_editor.json']))).problems).toEqual([]);
+    for (const bad of [['../x.json'], ['eeschema.json'], ['kicad_common.json'], 'pl_editor.json', ['pl_editor']]) {
+      expect(buildRegistry(mods(kind(bad))).problems, String(bad)).toEqual(["ap-i: frame 'apframe': appearanceFiles"]);
+    }
+    expect(buildRegistry(mods(kind(['pl_editor.json'], false))).problems).toEqual(["ap-i: frame 'apframe': appearanceFiles"]);
+  });
+});
+
 describe('a unit in the responder', () => {
   it('answers a pending op with the seam placeholder, and an op no one names unknown_op', async () => {
     const t = await boot([], { pending: { 'fpedit.open': 'fp-i1' } });

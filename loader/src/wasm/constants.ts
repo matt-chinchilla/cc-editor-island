@@ -7,6 +7,9 @@
 // built in tools; toolArgv0, toolBundle, toolNeedsConfigSeed and toolLibKind
 // answer for every tool, a wave unit's own read from its frame's descriptor
 // (src/frames.ts extTool).
+// Modified by Circuit Center on 2026-11-18: toolAppearanceFiles answers the
+// settings files a wave unit's tool takes the viewer's appearance in
+// (pl_editor.json for the drawing sheet editor), from its frame's descriptor.
 import type { BuiltinTool, Tool } from "../../../src/types";
 import { extTool } from "../../../src/frames";
 
@@ -121,6 +124,16 @@ export function toolBundle(tool: Tool): Bundle {
 /** Whether a tool's KiCad config is seeded before main(). */
 export function toolNeedsConfigSeed(tool: Tool): boolean {
   return (TOOL_NEEDS_CONFIG_SEED as Readonly<Record<string, boolean>>)[tool] ?? extTool(tool)?.needsConfigSeed ?? true;
+}
+
+/**
+ * The settings files, beyond eeschema.json and pcbnew.json (which every
+ * seeding tool gets), that take the viewer's appearance for a tool: a wave
+ * unit's own from its frame's descriptor, none for a built in tool.
+ */
+export function toolAppearanceFiles(tool: Tool): readonly string[] {
+  if ((TOOL_NEEDS_CONFIG_SEED as Readonly<Record<string, boolean>>)[tool] !== undefined) return [];
+  return extTool(tool)?.appearanceFiles ?? [];
 }
 
 /** The library kind a tool consumes. */
