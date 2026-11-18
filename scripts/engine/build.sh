@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (c) 2026 Chirichella Inc.
+# Modified by Circuit Center Inc on 2026-11-18: the name run15, engine run 15's integration
+# branches (run15/main of pcbjam and kicad) built in the cc8 tree into out/run15, so run 14's
+# served engine in out/cc8 stays.
 #
 # Build the engine (kicad_editor) here, with PCBJam's own Docker recipe.
 #
 #   bash scripts/engine/build.sh pristine   the pinned v0.2.3 commits, unchanged (D7 reproduction)
 #   bash scripts/engine/build.sh cc8        our fork branches cc/main (importers + kicadImportSchematic)
 #   bash scripts/engine/build.sh cc8 --build-deps   also rerun the recipe's deps stage
+#   bash scripts/engine/build.sh run15      engine run 15: pcbjam and kicad run15/main, wx cc/main,
+#                                           built in tree-cc8 (its worktrees moved to those commits;
+#                                           the same container paths, so ccache serves it), the
+#                                           outputs in out/run15 (out/cc8 untouched)
 #
 # Assembles /home/matthew/cc-engine/tree-<name>/ in PCBJam's layout from the four
 # local clones (git worktrees; the submodule gitlinks are checked against them),
@@ -41,7 +48,7 @@ FILES=(kicad_editor.js kicad_editor.wasm wx.js wx-dom.js images.tar.gz
        ngspice_service.js ngspice_service.wasm
        occ_service.js occ_service.wasm)
 
-usage() { echo "usage: bash scripts/engine/build.sh <pristine|cc8> [--build-deps]" >&2; exit 2; }
+usage() { echo "usage: bash scripts/engine/build.sh <pristine|cc8|run15> [--build-deps]" >&2; exit 2; }
 die() { echo "build.sh: $*" >&2; exit 1; }
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
@@ -55,13 +62,19 @@ for arg in "$@"; do
   esac
 done
 
+# TREE_NAME: the build tree under ENGINE_ROOT (tree-<TREE_NAME>). run15 builds in the cc8 tree:
+# no third copy of the sources on a full disk, and the same container paths keep ccache warm;
+# its outputs go to out/run15, so run 14's served engine (out/cc8) is never deleted by it.
+TREE_NAME=$NAME
 case "$NAME" in
   pristine) ROOT_REF=$PCBJAM_PIN; KICAD_REF=$KICAD_PIN; WX_REF=$WX_PIN;  BUILD_DEPS=1 ;;
   cc8)      ROOT_REF=cc/main;     KICAD_REF=cc/main;    WX_REF=cc/main; BUILD_DEPS=$FORCE_DEPS ;;
+  run15)    ROOT_REF=run15/main;  KICAD_REF=run15/main; WX_REF=cc/main; BUILD_DEPS=$FORCE_DEPS
+            TREE_NAME=cc8 ;;
   *) usage ;;
 esac
 
-TREE="$ENGINE_ROOT/tree-$NAME"
+TREE="$ENGINE_ROOT/tree-$TREE_NAME"
 OUT="$ENGINE_ROOT/out/$NAME"
 mkdir -p "$OUT"
 
