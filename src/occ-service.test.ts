@@ -5,10 +5,6 @@
 // is the one the engine calls.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { forgetOccService, installOccService, occService } from './occ-service';
-// The provider's own cases live beside it (loader/src/wasm/occ-service.test.ts),
-// outside the test include of vite.config.ts (src, bridge and theme): imported
-// here so they run with the suite.
-import '../loader/src/wasm/occ-service.test';
 
 beforeEach(() => {
   vi.stubGlobal('window', { location: { href: 'https://editor.example/r/x/index.html' } });
