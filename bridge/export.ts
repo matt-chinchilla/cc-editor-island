@@ -8,8 +8,12 @@
 // before it runs; the run writes .cc-export.json LAST in its folder, so the
 // answer waits for the apply queue to empty and for that file, then reads the
 // folder (one level of folders at most: Allegro's devices/, a .pretty).
+// Modified by Circuit Center Inc on 2026-11-18: each job's time bound
+// (exportMsFor, bridge/exportTiming.json) and the render's progress lines
+// (EXPORT_LINES, renderPercent) for the 3D outputs.
 
 import EXPORT_FACES from './exports.builtin.json';
+import EXPORT_TIMING from './exportTiming.json';
 import { runText, type RunLine, readLines } from './annotate';
 
 /** A face: the frame kind a job runs in. */
@@ -25,6 +29,36 @@ export const OUTPUT_JOBS_EXPORT = 'kicadOutputJobs';
 export const EXPORT_ROOT = '/tmp/cc-out';
 /** The run's own record, written last (through a .part file): never answered as a file. */
 export const EXPORT_DONE = '.cc-export.json';
+/**
+ * The lines the run reports while it goes, one per line as reported, beside
+ * its record (engine run 15: the render's "Rendering <n> percent" lines).
+ * Its name starts with the record's, so the folder read never answers it.
+ */
+export const EXPORT_LINES = `${EXPORT_DONE}.lines`;
+/** A named job's bound is at least this and at most this (3D exports spec 8.3). */
+export const MIN_JOB_MS = 60_000;
+export const MAX_JOB_MS = 900_000;
+
+/**
+ * The time one run of `job` may take before it answers not_applied: the job's
+ * own bound in bridge/exportTiming.json (five times its slowest measured run,
+ * held between MIN_JOB_MS and MAX_JOB_MS), else the file's default.
+ */
+export function exportMsFor(job: string, timing: Readonly<Record<string, number>> = EXPORT_TIMING): number {
+  const fallback = timing.default;
+  if (job !== 'default' && Object.prototype.hasOwnProperty.call(timing, job) && Number.isFinite(timing[job])) {
+    return Math.max(MIN_JOB_MS, Math.min(MAX_JOB_MS, timing[job]));
+  }
+  return fallback;
+}
+
+/** The last "Rendering <n> percent" line of a run's lines, as n held to 0 to 100; null when there is none. */
+export function renderPercent(text: string): number | null {
+  let last: number | null = null;
+  for (const m of text.matchAll(/Rendering (\d{1,3}) percent/g)) last = Math.min(100, Number(m[1]));
+  return last;
+}
+
 /** At most this many files in one answer, and this many bytes together (512 MiB). */
 export const MAX_EXPORT_FILES = 1024;
 export const MAX_EXPORT_BYTES = 512 * 1024 * 1024;

@@ -1,0 +1,5 @@
+{
+  "default": 45000,
+  "pcb_export_3d": 900000,
+  "pcb_render": 900000
+}
