@@ -10,13 +10,23 @@
 // Running it twice changes nothing.
 //   node theme/pencil-tools.gen.mjs           write both files, print what it added
 //   node theme/pencil-tools.gen.mjs --check   write nothing; exit 1 when either file would change
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export const TABLE_PATH = 'theme/pencil-tools.json';
 export const HOTKEYS_PATH = 'theme/user.hotkeys';
 export const DEFAULTS_PATH = 'theme/pencil-tools.defaults.json';
 export const LAYOUT_PATHS = { sch: 'theme/toolbars/eeschema-toolbars.json', pcb: 'theme/toolbars/pcbnew-toolbars.json' };
+/**
+ * The wave units' pencil rows, one file per unit (theme/pencil/<unit>.json, its
+ * shape in theme/pencil/README.md), written by the ST-PRESS run only. Each row
+ * is appended after the built in rows of its editor and strip, in unit id order
+ * then file order; a row with no pressable default takes its chord as a built
+ * in row does (the ledger's, else the next free one), except a row pressed by
+ * action name (`press: "run"`, chord ""). No unit file today: the table and the
+ * ledger are byte for byte what they were.
+ */
+export const UNIT_ROWS_DIR = 'theme/pencil';
 
 /** The editors, in table order. */
 const EDITORS = ['sch', 'pcb'];
@@ -81,7 +91,7 @@ function pyDumps(obj) {
  * The table and the hotkeys file from their inputs, all as text.
  * @returns {{ table: string, hotkeys: string, rows: object[], added: string[] }}
  */
-export function generate({ defaultsJson, layouts, ledger }) {
+export function generate({ defaultsJson, layouts, ledger, unitRows = [] }) {
   const defaults = JSON.parse(defaultsJson);
   const { lines, keys } = parseLedger(ledger);
   // One action keeps one chord across both editors; the ledger's chords are taken as they stand.
@@ -120,6 +130,30 @@ export function generate({ defaultsJson, layouts, ledger }) {
       }
     }
   }
+  // The wave units' rows (UNIT_ROWS_DIR), after the built ins, in the order given.
+  const unitKeys = new Set(rows.map((r) => `${r.editor} ${r.action}`));
+  for (const { unit, rows: own } of [...unitRows].sort((a, b) => (a.unit < b.unit ? -1 : a.unit > b.unit ? 1 : 0))) {
+    for (const r of own) {
+      if (typeof r.editor !== 'string' || !/^[a-z]+$/.test(r.editor) || typeof r.strip !== 'string' || typeof r.action !== 'string') throw new Error(`${UNIT_ROWS_DIR}/${unit}.json: a row needs editor, strip and action`);
+      if (unitKeys.has(`${r.editor} ${r.action}`)) throw new Error(`${UNIT_ROWS_DIR}/${unit}.json: ${r.action} is in the ${r.editor} table already`);
+      unitKeys.add(`${r.editor} ${r.action}`);
+      const known = r.action in defaults ? defaults[r.action] : (r.defaultKey ?? null);
+      const defaultKey = pressable(known) ? known : null;
+      let seededKey = null;
+      if (r.press === 'run') seededKey = '';
+      else if (defaultKey == null) {
+        if (!chord.has(r.action)) {
+          const next = free.shift();
+          if (next == null) throw new Error(`the chord pool ran out at ${r.action}`);
+          chord.set(r.action, next);
+          added.push(`${r.action}\t${next}\t`);
+        }
+        seededKey = chord.get(r.action);
+      }
+      const row = { editor: r.editor, strip: r.strip, action: r.action, group: r.group ?? null, section: r.section ?? 0, defaultKey, seededKey, label: r.label ?? '' };
+      rows.push(r.press === 'run' ? { ...row, press: 'run' } : row);
+    }
+  }
   return {
     table: `[\n${rows.map((r) => `  ${pyDumps(r)}`).join(',\n')}\n]\n`,
     hotkeys: [...lines, ...added].map((l) => `${l}\n`).join(''),
@@ -134,7 +168,18 @@ export function readInputs() {
     defaultsJson: readFileSync(DEFAULTS_PATH, 'utf8'),
     layouts: { sch: readFileSync(LAYOUT_PATHS.sch, 'utf8'), pcb: readFileSync(LAYOUT_PATHS.pcb, 'utf8') },
     ledger: readFileSync(HOTKEYS_PATH, 'utf8'),
+    unitRows: readUnitRows(),
   };
+}
+
+/** Every unit's rows file (UNIT_ROWS_DIR/<unit>.json, an array of rows), by unit id. */
+export function readUnitRows(dir = UNIT_ROWS_DIR) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => f.endsWith('.json')).sort().map((f) => {
+    const rows = JSON.parse(readFileSync(`${dir}/${f}`, 'utf8'));
+    if (!Array.isArray(rows)) throw new Error(`${dir}/${f} must be an array of rows`);
+    return { unit: f.slice(0, -'.json'.length), rows };
+  });
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

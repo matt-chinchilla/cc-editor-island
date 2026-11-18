@@ -30,7 +30,8 @@ const FIXTURES = {
 };
 const q = new URLSearchParams(location.search);
 const fixture = q.get('fixture');
-const frame = ['pcb', 'symedit'].includes(q.get('frame')) ? q.get('frame') : 'sch';
+// Any frame name passes through (a wave unit's frame too: fpedit, ds); the island falls back to sch for one it does not know.
+const frame = /^[a-z][a-z0-9]{0,15}$/.test(q.get('frame') ?? '') ? q.get('frame') : 'sch';
 const theme = q.get('theme') === 'night' ? 'night' : 'day';
 const stateEl = document.getElementById('state');
 const note = (line) => { stateEl.textContent += `${line}\n`; };   // island strings only ever reach textContent

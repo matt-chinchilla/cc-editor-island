@@ -227,6 +227,8 @@ export function census() {
     if (newest < since.day) fail(`loader/src/${rel}: newest notice ${newest} is older than its pristine copy (${since.day}, ${since.from})`);
     modified.push({ path: `loader/src/${rel}`, notices, since });
   }
+  // The files new to wave 2: each starts with the notice and names no agent (censusNewFiles).
+  for (const problem of censusNewFiles()) fail(problem);
   return { versions, modified, pristineCount: pristine.size, headers };
 }
 
@@ -464,3 +466,71 @@ function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main();
+
+// ---------------------------------------------------------------- the new files of wave 2
+
+/** The notice every new file of the island starts with (the wave's seat rules), in its comment syntax. */
+export const NEW_NOTICE = ['Copyright (C) 2026 Circuit Center Inc', 'SPDX-License-Identifier: GPL-3.0-or-later'];
+/** A wave unit's PROTOCOL.md part (bridge/ext/<unit>.md) is MIT, as PROTOCOL.md is. */
+const MIT_SPDX = 'SPDX-License-Identifier: MIT';
+const COMMENT = {
+  slash: { exts: ['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs', '.c', '.cpp', '.h', '.hpp', '.inc'], line: (t) => `// ${t}` },
+  hash: { exts: ['.sh', '.py', '.yml', '.yaml', '.toml'], line: (t) => `# ${t}` },
+  html: { exts: ['.md', '.html', '.svg', '.xml'], line: (t) => `<!-- ${t} -->` },
+  css: { exts: ['.css', '.scss'], line: (t) => `/* ${t} */` },
+};
+/** Names a new file may never carry: an agent, an AI tool or model, a session. */
+export const AGENT_RE = /\b(claude|anthropic|opus|sonnet|haiku|chatgpt|openai|copilot|codex|gemini|llm)\b|claude\.ai\/code|co-authored-by|session_[A-Za-z0-9]{8,}/i;
+/** Fixtures carry the source and license their manifest record gives, never ours. */
+const FIXTURE_DIRS = ['tests/fixtures/', 'tests/e2e/fixtures/'];
+
+const extOf = (p) => { const b = p.slice(p.lastIndexOf('/') + 1); const i = b.lastIndexOf('.'); return i <= 0 ? '' : b.slice(i).toLowerCase(); };
+const syntaxOf = (p) => Object.values(COMMENT).find((c) => c.exts.includes(extOf(p))) ?? null;
+const isText = (buf) => !buf.subarray(0, 8192).includes(0);
+
+/**
+ * Every file of the island that is not in notices/base-files.txt (tracked or
+ * not yet, git's ignore rules kept) is new to the wave and must:
+ *   - in a format with comments, start with the notice in that syntax (after a
+ *     shebang line, if any): a unit's PROTOCOL.md part with MIT's identifier;
+ *   - in a format without (a JSON table, a hotkeys file, a picture), have a
+ *     <file>.license beside it whose first two lines are the copyright line and
+ *     an SPDX line; fixtures under tests/fixtures/ and tests/e2e/fixtures/ are
+ *     left to their manifest records;
+ *   - as text, name no agent, AI tool or model, and no session (AGENT_RE).
+ * Answers the problems, one line each; [] outside a git checkout (a release's
+ * source tarball holds the files the census passed already).
+ */
+export function censusNewFiles(root = '.') {
+  let files;
+  try {
+    files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' }).split('\n').filter(Boolean);
+  } catch {
+    return [];
+  }
+  const base = new Set(readFileSync(join(root, 'notices', 'base-files.txt'), 'utf8').split('\n').filter((l) => l !== '' && !l.startsWith('#')));
+  const present = new Set(files.filter((f) => existsSync(join(root, f))));
+  const problems = [];
+  for (const f of [...present].sort()) {
+    if (base.has(f)) continue;
+    const buf = readFileSync(join(root, f));
+    const text = isText(buf) ? buf.toString('utf8') : null;
+    if (text != null && AGENT_RE.test(text)) problems.push(`${f} names an agent, a tool, a model or a session`);
+    if (f.endsWith('.license')) continue;
+    if (FIXTURE_DIRS.some((d) => f.startsWith(d))) continue;
+    const syntax = syntaxOf(f);
+    if (syntax != null && text != null) {
+      const lines = text.split('\n');
+      const head = lines[0]?.startsWith('#!') ? lines.slice(1, 3) : lines.slice(0, 2);
+      const fragment = /^bridge\/ext\/[^/]+\.md$/.test(f) && f !== 'bridge/ext/README.md';
+      const want = [NEW_NOTICE[0], fragment ? MIT_SPDX : NEW_NOTICE[1]].map(syntax.line);
+      if (head.join('\n') !== want.join('\n')) problems.push(`${f} does not start with the notice:\n  ${want.join('\n  ')}`);
+      continue;
+    }
+    const sidecar = `${f}.license`;
+    if (!present.has(sidecar)) { problems.push(`${f} has no notice of its own syntax and no ${sidecar}`); continue; }
+    const [c, spdx] = readFileSync(join(root, sidecar), 'utf8').split('\n');
+    if (c !== NEW_NOTICE[0] || !/^SPDX-License-Identifier: [A-Za-z0-9.+-]+$/.test(spdx ?? '')) problems.push(`${sidecar} must start with "${NEW_NOTICE[0]}" and an SPDX line`);
+  }
+  return problems;
+}

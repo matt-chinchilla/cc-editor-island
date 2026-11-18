@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
 import { bootFrame } from './frames';
+import type { Registry } from '../bridge/ext/registry';
 import type { Frame, Theme } from './types';
 
 export const PRODUCT_NAME = 'Circuit Center Editor';
@@ -20,9 +21,9 @@ export function parentOriginFor(hostname: string, port: string): string | null {
   return PARENTS[hostname] ?? null;
 }
 
-export function parseBoot(search: string): { frame: Frame; theme: Theme } {
+export function parseBoot(search: string, reg?: Registry): { frame: Frame; theme: Theme } {
   const q = new URLSearchParams(search);
   const f = q.get('frame');
   // A frame a wave unit defines is a known name too (src/frames.ts bootFrame).
-  return { frame: bootFrame(f), theme: q.get('theme') === 'night' ? 'night' : 'day' };
+  return { frame: bootFrame(f, reg), theme: q.get('theme') === 'night' ? 'night' : 'day' };
 }

@@ -11,13 +11,15 @@ const raw = (m: Record<string, unknown>): Record<string, string> =>
 // and the stylesheet carries no text of its own (no content: strings).
 const sources: Record<string, string> = {
   ...raw(import.meta.glob(['./*.ts', '!./*.test.ts'], { query: '?raw', import: 'default', eager: true })),
-  ...raw(import.meta.glob(['../bridge/*.ts', '!../bridge/*.test.ts'], { query: '?raw', import: 'default', eager: true })),
+  // Every bridge source, the wave units' files under bridge/ext/ included, and their PROTOCOL.md parts.
+  ...raw(import.meta.glob(['../bridge/**/*.ts', '!../bridge/**/*.test.ts'], { query: '?raw', import: 'default', eager: true })),
+  ...raw(import.meta.glob(['../bridge/ext/*.md'], { query: '?raw', import: 'default', eager: true })),
   ...raw(import.meta.glob(['../index.html', '../PROTOCOL.md'], { query: '?raw', import: 'default', eager: true })),
 };
 
 describe('the island wording', () => {
   it('reads every island source', () => {
-    for (const f of ['./main.ts', './screens.ts', './window-open.ts', '../bridge/responder.ts', '../index.html', '../PROTOCOL.md']) {
+    for (const f of ['./main.ts', './screens.ts', './window-open.ts', '../bridge/responder.ts', '../bridge/ext/registry.ts', '../bridge/ext/README.md', '../index.html', '../PROTOCOL.md']) {
       expect(sources[f]?.length ?? 0).toBeGreaterThan(0);
     }
   });

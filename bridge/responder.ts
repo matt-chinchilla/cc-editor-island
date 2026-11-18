@@ -625,7 +625,7 @@ export function startResponder(opts: {
   let chain: Promise<void> = Promise.resolve();
   const queued: Array<IslandEvent | ExtPost> = [];
   let win: ToolWindow | null = null;
-  const frame: Frame = parseBoot(page.location.search).frame;
+  const frame: Frame = parseBoot(page.location.search, reg).frame;
   /** The frame's descriptor when a wave unit defines it (src/frames.ts), else null. */
   const kind: FrameKind | null = extFrameKind(frame, reg);
   /** The extension of the file this frame opens. */

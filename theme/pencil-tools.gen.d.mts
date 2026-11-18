@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
 // Types for theme/pencil-tools.gen.mjs, so the strict typecheck can read its test.
-export interface GenInputs { defaultsJson: string; layouts: { sch: string; pcb: string }; ledger: string }
+export interface UnitRow { editor: string; strip: string; action: string; group?: string | null; section?: number; defaultKey?: string | null; press?: 'run'; label?: string }
+export interface GenInputs { defaultsJson: string; layouts: { sch: string; pcb: string }; ledger: string; unitRows?: Array<{ unit: string; rows: UnitRow[] }> }
 export interface GenRow { editor: 'sch' | 'pcb'; strip: 'right' | 'top' | 'left'; action: string; group: string | null; section: number; defaultKey: string | null; seededKey: string | null; label: string }
 export interface GenOutput { table: string; hotkeys: string; rows: GenRow[]; added: string[] }
 export const TABLE_PATH: string;
@@ -14,3 +15,5 @@ export const POOL: string[];
 export const BANNED: string[];
 export function generate(inputs: GenInputs): GenOutput;
 export function readInputs(): GenInputs;
+export const UNIT_ROWS_DIR: string;
+export function readUnitRows(dir?: string): Array<{ unit: string; rows: UnitRow[] }>;

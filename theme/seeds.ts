@@ -12,6 +12,16 @@ import symeditHotkeys from './symedit.hotkeys?raw';
 import type { Seeds } from '../loader/src/wasm/boot';
 import type { Theme } from '../src/types';
 
+/**
+ * The wave units' own chords (theme/hotkeys/<unit>.hotkeys, KiCad's hotkeys
+ * format, one file per unit; written by the ST-PRESS run, theme/pencil/README.md),
+ * seeded after the ledger in file name order. None today.
+ */
+const UNIT_HOTKEYS: string = Object.entries(import.meta.glob('./hotkeys/*.hotkeys', { query: '?raw', import: 'default', eager: true }) as Record<string, string>)
+  .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  .map(([, text]) => (text.endsWith('\n') || text === '' ? text : `${text}\n`))
+  .join('');
+
 export function seedsFor(theme: Theme): Seeds {
   return {
     // The one palette the viewer draws with, by day and by night (spec D16); the
@@ -25,7 +35,7 @@ export function seedsFor(theme: Theme): Seeds {
     toolbars: [{ name: 'pcbnew-toolbars.json', json: pcb }, { name: 'eeschema-toolbars.json', json: sch }],
     // The symbol editor's own chords follow the pencil-tools ledger: Ctrl+Alt+Shift
     // and a digit, which neither the ledger's pool nor KiCad's defaults use.
-    hotkeys: hotkeys + symeditHotkeys,
+    hotkeys: hotkeys + symeditHotkeys + UNIT_HOTKEYS,
     common: {
       appearance: { icon_theme: theme === 'night' ? 1 : 0, toolbar_icon_size: 24, use_icons_in_menus: true },
       api: { enable_server: false },

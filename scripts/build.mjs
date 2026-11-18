@@ -10,6 +10,7 @@ import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { inputDrift } from '../theme/icons/inputs.mjs';
 import { servedSources } from './notices.mjs';
+import { collect } from './ext/gen.mjs';
 
 const local = process.argv.includes('--local');
 const pin = JSON.parse(readFileSync('PIN.json', 'utf8'));
@@ -92,17 +93,22 @@ execSync('npx vite build', { stdio: 'inherit' });
 execSync(`node scripts/notices.mjs ${rel}`, { stdio: 'inherit' });
 
 // 3. island.json, twice: inside the release and at the root for the no-cache route.
-// `ops` (island v0.2.3-cc13): the request ops this release answers, sorted, from
-// bridge/ops.json, the list the responder's OPS set is built from; a host reads it
-// to know what the island answers before any engine boots (PROTOCOL.md).
-const ops = JSON.parse(readFileSync(join('bridge', 'ops.json'), 'utf8'));
-if (!Array.isArray(ops) || ops.length === 0 || !ops.every((op) => typeof op === 'string' && /^[a-z]+(\.[a-z]+)*$/i.test(op))) throw new Error('bridge/ops.json must list the request ops as strings');
-// `exportKinds` (island v0.2.3-cc23): the jobs project.export runs, sorted, from
-// bridge/exports.json, the list the responder's EXPORT_JOBS is built from; a host
-// shows an output as held when its job is not listed (PROTOCOL.md).
-const exportFaces = JSON.parse(readFileSync(join('bridge', 'exports.json'), 'utf8'));
+// `ops` (island v0.2.3-cc13): the request ops this release answers, sorted: the
+// built ins (bridge/ops.builtin.json) and every wave unit's (bridge/ext/<unit>.ts),
+// read through the registry as the responder builds its OPS set (scripts/ext/gen.mjs
+// collect; bridge/ops.json is the same list, regenerated at the join); a host reads
+// it to know what the island answers before any engine boots (PROTOCOL.md). An op
+// whose unit has not landed answers the seam's placeholder and is never listed.
+// `exportKinds` (island v0.2.3-cc23): the jobs project.export runs, sorted, the
+// built ins (bridge/exports.builtin.json) and every unit's; a host shows an output
+// as held when its job is not listed (PROTOCOL.md).
+const units = await collect();
+if (units.problems.length > 0) throw new Error(`the wave units break the contract (bridge/ext/README.md):\n${units.problems.join('\n')}`);
+const ops = units.ops;
+if (!Array.isArray(ops) || ops.length === 0 || !ops.every((op) => typeof op === 'string' && /^[a-z]+(\.[a-z]+)*$/i.test(op))) throw new Error('the request ops must be strings');
+const exportFaces = units.exportJobs;
 const exportKinds = Object.keys(exportFaces ?? {});
-if (exportKinds.length === 0 || !exportKinds.every((job) => /^[a-z][a-z0-9_]*$/.test(job) && (exportFaces[job] === 'pcb' || exportFaces[job] === 'sch'))) throw new Error('bridge/exports.json must map each output job to its face, pcb or sch');
+if (exportKinds.length === 0 || !exportKinds.every((job) => /^[a-z][a-z0-9_]*$/.test(job) && (exportFaces[job] === 'pcb' || exportFaces[job] === 'sch'))) throw new Error('every output job must map to its face, pcb or sch');
 const island = { id, tag: pin.pcbjam.tag, kicadCommit: sources.kicad, source: `https://github.com/matt-chinchilla/cc-editor-island/releases/tag/${id}`, ops: [...new Set(ops)].sort(), exportKinds: exportKinds.sort() };
 writeFileSync(join(rel, 'island.json'), JSON.stringify(island));
 writeFileSync(join('dist', 'island.json'), JSON.stringify(island));
