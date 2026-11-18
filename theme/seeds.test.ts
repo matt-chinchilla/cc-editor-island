@@ -27,6 +27,8 @@ describe('the seeds', () => {
     expect(s.common.graphics).toEqual({ antialiasing_mode: 0 });
     // The keys the stage 1c seeds carry are still there beside it.
     expect(s.common.api).toEqual({ enable_server: false });
+    // KiCad's own switcher window never flashes over the canvas on a cycle key.
+    expect(s.common.input).toEqual({ hotkey_feedback: false });
     expect((s.common.appearance as { toolbar_icon_size: number }).toolbar_icon_size).toBe(24);
   });
 

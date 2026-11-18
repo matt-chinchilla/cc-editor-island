@@ -39,6 +39,10 @@ export function seedsFor(theme: Theme): Seeds {
     common: {
       appearance: { icon_theme: theme === 'night' ? 1 : 0, toolbar_icon_size: 24, use_icons_in_menus: true },
       api: { enable_server: false },
+      // No hotkey feedback: KiCad's cycle keys (H's inactive layer modes, the layer
+      // pair, the grid) otherwise flash a switcher window of its own over the canvas
+      // (measured for H on Glasgow, engine run 14, the wave 2 chord e2e).
+      input: { hotkey_feedback: false },
       // No anti-aliasing (0): the default supersampling (2) renders the full-frame canvas
       // at twice its size each way on every repaint, and SMAA (1) has the engine drop its
       // GL canvas for the software renderer (measured 2026-10-01, task F1 report).
