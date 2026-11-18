@@ -61,6 +61,8 @@ export const DEPS = [
 /** The engine files a release may serve: the editor's five, and the simulator service's two. */
 export const ENGINE_FILES = ['kicad_editor.js', 'kicad_editor.wasm', 'wx.js', 'wx-dom.js', 'images.tar.gz'];
 export const SERVICE_FILES = ['ngspice_service.js', 'ngspice_service.wasm'];
+/** The 3D service's two files (engine run 15 on, wave unit 3d-i1). */
+export const OCC_SERVICE_FILES = ['occ_service.js', 'occ_service.wasm'];
 
 /**
  * The simulator service's parts and their licenses, as ngspice 46's own
@@ -84,9 +86,28 @@ export function servesSimulator(pin) {
   const listed = SERVICE_FILES.filter((name) => pin.engine?.files?.[name] != null);
   if (listed.length === 1) fail(`PIN.json records ${listed[0]} alone; the simulator service is both ${SERVICE_FILES.join(' and ')}, or neither`);
   for (const name of Object.keys(pin.engine?.files ?? {})) {
-    if (![...ENGINE_FILES, ...SERVICE_FILES].includes(name)) fail(`PIN.json records the engine file ${name}, which has no entry on the licenses page (ENGINE_FILES or SERVICE_FILES in scripts/notices.mjs)`);
+    if (![...ENGINE_FILES, ...SERVICE_FILES, ...OCC_SERVICE_FILES].includes(name)) fail(`PIN.json records the engine file ${name}, which has no entry on the licenses page (ENGINE_FILES, SERVICE_FILES or OCC_SERVICE_FILES in scripts/notices.mjs)`);
   }
   return listed.length === SERVICE_FILES.length;
+}
+
+/**
+ * Whether PIN.json records the 3D service: both its files, or neither (else the
+ * census fails). A served 3D service needs its entry: OpenCASCADE and RapidJSON
+ * in the dependency table and pinned in versions.sh, or the census refuses.
+ */
+export function servesOcc(pin, versions = null) {
+  const listed = OCC_SERVICE_FILES.filter((name) => pin.engine?.files?.[name] != null);
+  if (listed.length === 1) fail(`PIN.json records ${listed[0]} alone; the 3D service is both ${OCC_SERVICE_FILES.join(' and ')}, or neither`);
+  const serves = listed.length === OCC_SERVICE_FILES.length;
+  if (serves) {
+    for (const key of ['occt', 'rapidjson']) {
+      const dep = DEPS.find((d) => d.key === key);
+      if (dep == null) fail(`PIN.json records the 3D service, and the dependency table has no ${key} entry`);
+      if (versions != null && ![...versions.keys()].some((k) => dep.prefixes.some((p) => k.startsWith(`${p}_`)) && k.endsWith('_VERSION'))) fail(`PIN.json records the 3D service, and notices/versions.sh pins no ${dep.name} version`);
+    }
+  }
+  return serves;
 }
 
 // ---------------------------------------------------------------- inputs
@@ -416,6 +437,20 @@ ${deps.map((d) => `<tr><td data-label="Dependency">${esc(d.name)}</td><td data-l
 ${SERVICE_PARTS.map((p) => `<tr><td data-label="Part">${esc(p.part)}</td><td data-label="License">${esc(p.license)}</td></tr>`).join('\n')}
 </tbody></table>
 <p>ngspice's <code>COPYING</code> is reproduced in full below, with the text of each license it names.</p>`]);
+  }
+
+  if (servesOcc(pin, versions)) {
+    const occt = versionOf(DEPS.find((d) => d.key === 'occt'), versions);
+    const rapid = versionOf(DEPS.find((d) => d.key === 'rapidjson'), versions);
+    own.push(['The 3D service', `
+<p>This release also serves the 3D service, Open CASCADE Technology (${esc(occt.text)}), built for the browser by PCBJam's recipe as a program of its own, <code>occ_service.wasm</code> with its script <code>occ_service.js</code>, run in a worker of the board editor's frame only when a 3D export or a part's STEP body asks for it. KiCad's STEP, GLB and other 3D exports and its reading of STEP bodies run on it. Its sha256 sums are in the table of engine files above. Its complete corresponding source is Open CASCADE Technology's source archive attached to the release${occt.sha ? ` (sha256 <code class="hash">${esc(occt.sha)}</code>)` : ''} and RapidJSON's source archive (${esc(rapid.text)}${rapid.sha ? `, sha256 <code class="hash">${esc(rapid.sha)}</code>` : ''}), with the recipe in the pcbjam mirror at the tag above: <code>scripts/kicad/build-occ_service.sh</code> and <code>wasm/occ-service/</code>.</p>
+<table><thead><tr><th>Part</th><th>License</th></tr></thead><tbody>
+<tr><td data-label="Part">Open CASCADE Technology</td><td data-label="License">LGPL-2.1 with the Open CASCADE exception</td></tr>
+<tr><td data-label="Part">RapidJSON, which its glTF writer requires</td><td data-label="License">MIT</td></tr>
+<tr><td data-label="Part">the Emscripten runtime linked into the service</td><td data-label="License">MIT</td></tr>
+<tr><td data-label="Part">PCBJam's service code (<code>wasm/occ-service/</code>)</td><td data-label="License">as the pcbjam mirror states it, under "Where the source is"</td></tr>
+</tbody></table>
+<p>Under the LGPL you may replace the service with your own build of Open CASCADE Technology: the service is its own program, loaded by the editor's frame from its own two files.</p>`]);
   }
 
   own.push(['Phosphor Icons', `

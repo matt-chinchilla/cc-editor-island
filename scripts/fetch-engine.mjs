@@ -3,8 +3,9 @@
 // Puts the pinned tool's five files in engine/<tool>/<toolTag>/, verifies every
 // file, and records the result in PIN.json. Refuses to write an unverified file:
 // nothing is written until all five verify. Our own build may also carry the
-// simulator service, ngspice_service.js and ngspice_service.wasm (both or
-// neither; engine run 14 on), copied, verified and recorded beside the five.
+// simulator service, ngspice_service.js and ngspice_service.wasm (engine run 14
+// on), and the 3D service, occ_service.js and occ_service.wasm (engine run 15
+// on), each both or neither, copied, verified and recorded beside the five.
 // Two sources, one verify-and-write path:
 //
 //   node scripts/fetch-engine.mjs [--cdn]
@@ -43,8 +44,15 @@ import { join } from 'node:path';
 const pin = JSON.parse(readFileSync('PIN.json', 'utf8'));
 const { tool, toolTag } = pin.engine;
 const FILES = ['kicad_editor.js', 'kicad_editor.wasm', 'wx.js', 'wx-dom.js', 'images.tar.gz'];
-/** The simulator service our build makes beside the engine (scripts/engine/build.sh): both or neither. */
-const SERVICE_FILES = ['ngspice_service.js', 'ngspice_service.wasm'];
+/**
+ * The services our build makes beside the engine (scripts/engine/build.sh), each both
+ * files or neither: the simulator (engine run 14 on) and the 3D service (engine run 15
+ * on, wave unit 3d-i1).
+ */
+const SERVICES = [
+  ['ngspice_service.js', 'ngspice_service.wasm'],
+  ['occ_service.js', 'occ_service.wasm'],
+];
 const SOURCES = ['pcbjam', 'kicad', 'wxwidgets', 'shared'];
 const out = join('engine', tool, toolTag);
 const sha256hex = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -192,9 +200,14 @@ function fromLocal(dir, notesPath) {
   const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
   if (meta.tool !== tool) throw new Error(`${metaPath} describes ${meta.tool}, expected ${tool}`);
   if (meta.files == null || typeof meta.files !== 'object') throw new Error(`${metaPath} has no files map`);
-  const withService = [...FILES, ...SERVICE_FILES];
-  const names = sameNames(Object.keys(meta.files), withService) ? withService : FILES;
-  if (!sameNames(Object.keys(meta.files), names)) throw new Error(`${metaPath} lists ${Object.keys(meta.files).sort().join(', ')}, expected ${[...FILES].sort().join(', ')}, with or without ${SERVICE_FILES.join(' and ')}`);
+  const listed = Object.keys(meta.files);
+  const names = [...FILES];
+  for (const pair of SERVICES) {
+    const held = pair.filter((name) => listed.includes(name));
+    if (held.length === pair.length) names.push(...pair);
+    else if (held.length === 1) throw new Error(`${metaPath} lists ${held[0]} alone; that service is ${pair.join(' and ')}, or neither`);
+  }
+  if (!sameNames(listed, names)) throw new Error(`${metaPath} lists ${[...listed].sort().join(', ')}, expected ${[...FILES].sort().join(', ')}, with or without each of ${SERVICES.map((p) => p.join(' and ')).join('; ')}`);
   const expected = {};
   for (const name of names) {
     const { sha256, bytes } = meta.files[name] ?? {};

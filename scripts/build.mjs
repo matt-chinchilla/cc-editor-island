@@ -21,12 +21,19 @@ const rel = join('dist', 'r', id);
 const { tool, toolTag } = pin.engine;
 const engineSrc = join('engine', tool, toolTag);
 const ENGINE_FILES = ['kicad_editor.js', 'kicad_editor.wasm', 'wx.js', 'wx-dom.js', 'images.tar.gz'];
-// The simulator service (engine run 14 on): served beside the engine when PIN.json records
-// it, both files or neither (src/main.ts installs it from the wasm's recorded size).
-const SERVICE_FILES = ['ngspice_service.js', 'ngspice_service.wasm'];
-const serviceListed = SERVICE_FILES.filter((name) => pin.engine.files?.[name] != null);
-if (serviceListed.length === 1) throw new Error(`PIN.json records ${serviceListed[0]} alone; the simulator service is both ${SERVICE_FILES.join(' and ')}, or neither`);
-const FILES = serviceListed.length === SERVICE_FILES.length ? [...ENGINE_FILES, ...SERVICE_FILES] : ENGINE_FILES;
+// The services served beside the engine when PIN.json records them, each both files or
+// neither (src/main.ts installs each from its wasm's recorded size): the simulator
+// (engine run 14 on) and the 3D service (engine run 15 on, wave unit 3d-i1).
+const SERVICES = [
+  { name: 'the simulator service', files: ['ngspice_service.js', 'ngspice_service.wasm'] },
+  { name: 'the 3D service', files: ['occ_service.js', 'occ_service.wasm'] },
+];
+const FILES = [...ENGINE_FILES];
+for (const service of SERVICES) {
+  const listed = service.files.filter((name) => pin.engine.files?.[name] != null);
+  if (listed.length === 1) throw new Error(`PIN.json records ${listed[0]} alone; ${service.name} is both ${service.files.join(' and ')}, or neither`);
+  if (listed.length === service.files.length) FILES.push(...service.files);
+}
 if (!existsSync(engineSrc)) throw new Error('run npm run fetch-engine first');
 // The commits the engine was built from: PIN.json engine.build for our own build, else
 // PCBJam's pin (servedSources). Whether they are reachable in the mirrors is ship.sh's
@@ -109,7 +116,20 @@ if (!Array.isArray(ops) || ops.length === 0 || !ops.every((op) => typeof op === 
 const exportFaces = units.exportJobs;
 const exportKinds = Object.keys(exportFaces ?? {});
 if (exportKinds.length === 0 || !exportKinds.every((job) => /^[a-z][a-z0-9_]*$/.test(job) && (exportFaces[job] === 'pcb' || exportFaces[job] === 'sch'))) throw new Error('every output job must map to its face, pcb or sch');
-const island = { id, tag: pin.pcbjam.tag, kicadCommit: sources.kicad, source: `https://github.com/matt-chinchilla/cc-editor-island/releases/tag/${id}`, ops: [...new Set(ops)].sort(), exportKinds: exportKinds.sort() };
+// `timing` (island v0.2.3-cc25): `exportMs`, the bound in ms of each project.export
+// job the island waits on, as bridge/exportTiming.json gives it ({ default, <job>: ms }),
+// so a host waits as long as the island does; absent while that file is.
+const timingPath = join('bridge', 'exportTiming.json');
+let timing;
+if (existsSync(timingPath)) {
+  const exportMs = JSON.parse(readFileSync(timingPath, 'utf8'));
+  const valid = exportMs != null && typeof exportMs === 'object' && !Array.isArray(exportMs)
+    && Number.isSafeInteger(exportMs.default) && exportMs.default > 0
+    && Object.entries(exportMs).every(([job, ms]) => (job === 'default' || /^[a-z][a-z0-9_]*$/.test(job)) && Number.isSafeInteger(ms) && ms > 0);
+  if (!valid) throw new Error(`${timingPath} must map default and each job to a whole number of ms above 0`);
+  timing = { exportMs };
+}
+const island = { id, tag: pin.pcbjam.tag, kicadCommit: sources.kicad, source: `https://github.com/matt-chinchilla/cc-editor-island/releases/tag/${id}`, ops: [...new Set(ops)].sort(), exportKinds: exportKinds.sort(), ...(timing ? { timing } : {}) };
 writeFileSync(join(rel, 'island.json'), JSON.stringify(island));
 writeFileSync(join('dist', 'island.json'), JSON.stringify(island));
 
