@@ -103,6 +103,8 @@ export interface Responder {
   engineReady(win: ToolWindow, engine: { tag: string; kicad: string }, help: { attempts(): number }, libs?: PickerLibs | null): void;
   /** A request is in flight (received and not yet answered, an import included): the quiet warm-up waits. */
   busy(): boolean;
+  /** A document is open: a project opened or imported, or in a symedit frame a symbol (the boot's reveal waits for its first frame, src/reveal.ts). */
+  hasDocument(): boolean;
   /** A window.open the wrapper refused; after ev.ready each one is reported as ev.state popup. */
   popupBlocked(attempts: number): void;
   /**
@@ -659,6 +661,8 @@ export function startResponder(opts: {
   let shutdownStarted = false;
   /** Requests received and not yet answered: the chain's queue and the one it runs (ev.edited reads nothing meanwhile). */
   let inFlight = 0;
+  /** In a symedit frame, a symbol is open (set once the engine is ready). */
+  let symbolOpenNow: () => boolean = () => false;
   /**
    * ev.edited's last value: the open document's undo depth as last read, or
    * null until the first read after an open, an import or a forget. That first
@@ -4004,6 +4008,7 @@ export function startResponder(opts: {
       const symedit = frame === 'symedit';
       const symeditOn = symedit && SYMEDIT_EXPORTS.every((name) => typeof mod[name] === 'function');
       const symbolOpen = (): boolean => symeditOn && symState(mod)?.open === true;
+      symbolOpenNow = symbolOpen;
       const feed = new SelectionFeed(w as unknown as SelectionWindow, {
         timing,
         frame,
@@ -4121,6 +4126,10 @@ export function startResponder(opts: {
     },
     busy() {
       return inFlight > 0 || importing || checking;
+    },
+    hasDocument() {
+      if (opened != null) return true;
+      try { return symbolOpenNow(); } catch { return false; }
     },
     popupBlocked(attempts) {
       // Before ev.ready the count travels once, in the booting note above.

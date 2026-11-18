@@ -34,7 +34,7 @@ import { islandLibs, warmUpOnEnumerate, type LibsChoice } from './libs';
 import { quietWarmUp } from './picker';
 import { createProjectLibs, withProjectLibs } from './project-libs';
 import { installSimService } from './sim-service';
-import { hideChromeThenReveal, watchStagePaint } from './reveal';
+import { hideChromeThenReveal, watchStageGl, watchStagePaint } from './reveal';
 
 declare const __ISLAND_TAG__: string;      // define'd by vite.config.ts from PIN.json
 declare const __KICAD_VERSION__: string;   // define'd by vite.config.ts
@@ -50,6 +50,19 @@ function frameForTool(raw: string): Frame | null {
   if (base === 'pcbnew') return 'pcb';
   if (base === 'eeschema') return 'sch';
   return null;
+}
+
+/**
+ * The WebGL canvas the frame shows: wx.js parents KiCad's GL canvases under
+ * #window-container, the drawing's laid over the whole stage once the chrome
+ * is hidden, the others hidden or empty.
+ */
+function isGlStage(canvas: unknown): boolean {
+  if (!(canvas instanceof HTMLCanvasElement) || !canvas.isConnected || canvas.closest('#window-container') == null) return false;
+  const style = getComputedStyle(canvas);
+  if (style.display === 'none' || style.visibility === 'hidden') return false;
+  const r = canvas.getBoundingClientRect();
+  return r.width * r.height >= 0.5 * window.innerWidth * window.innerHeight;
 }
 
 /** The runtime is initialized and a KiCad frame is on screen (the open flow's own readiness test). */
@@ -231,8 +244,20 @@ async function main(): Promise<void> {
       focusCanvas(document);
     },
     watchPaint: (painted) => watchStagePaint(stage instanceof HTMLCanvasElement ? stage.getContext('2d') : null, painted),
-    nextFrame: (cb) => { requestAnimationFrame(() => cb()); },
+    watchGl: (drew) => watchStageGl([globalThis.WebGL2RenderingContext?.prototype, globalThis.WebGLRenderingContext?.prototype], isGlStage, drew),
+    hasDocument: () => responder.hasDocument(),
+    busy: () => responder.busy(),
+    // A held frame (the second engine, laid out at opacity 0) may get its
+    // animation frames late: a timer stands in, and either way the hide is
+    // drawn with the picture it waited for, at the next rendering.
+    nextFrame: (cb) => {
+      let ran = false;
+      const once = (): void => { if (!ran) { ran = true; cb(); } };
+      requestAnimationFrame(once);
+      setTimeout(once, 250);
+    },
     timer: (cb, ms) => { const t = setTimeout(cb, ms); return () => clearTimeout(t); },
+    now: () => performance.now(),
     reveal: () => { if (!gate.isFatal() && !teardown.started()) hideScreens(); },
   }).then((way) => console.debug('[editor]', `stage shown: ${way}`));
   // From now on a real press in the frame gives it the browser's keyboard
