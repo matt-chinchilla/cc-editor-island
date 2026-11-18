@@ -1,0 +1,412 @@
+{
+ "root": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000100",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "schematic"
+ },
+ "R1": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000101",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "symbol"
+ },
+ "R1 pin 1": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000102",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "pin"
+ },
+ "R1 pin 2": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000103",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "pin"
+ },
+ "U1 unit A": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000104",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "symbol"
+ },
+ "U1 unit 1 pin 1": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000105",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "pin"
+ },
+ "U1 unit 1 pin 2": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000106",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "pin"
+ },
+ "U1 unit 1 pin 3": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000107",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "pin"
+ },
+ "U1 unit B": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000108",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "symbol"
+ },
+ "U1 unit 2 pin 4": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000109",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "pin"
+ },
+ "U1 unit 2 pin 5": {
+  "uuid": "cc0ca4d5-0000-4000-8000-00000000010a",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "pin"
+ },
+ "U1 unit 2 pin 6": {
+  "uuid": "cc0ca4d5-0000-4000-8000-00000000010b",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "pin"
+ },
+ "wire R1 up": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000110",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "wire"
+ },
+ "wire left": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000111",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "wire"
+ },
+ "wire right": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000112",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "wire"
+ },
+ "wire D0": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000113",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "wire"
+ },
+ "wire D1": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000114",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "wire"
+ },
+ "bus": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000115",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "bus"
+ },
+ "bus entry D0": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000116",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "bus_entry"
+ },
+ "bus entry D1": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000117",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "bus_entry"
+ },
+ "junction": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000118",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "junction"
+ },
+ "no-connect": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000119",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "no_connect"
+ },
+ "local label IN1": {
+  "uuid": "cc0ca4d5-0000-4000-8000-00000000011a",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "label"
+ },
+ "bus label D[0..3]": {
+  "uuid": "cc0ca4d5-0000-4000-8000-00000000011b",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "label"
+ },
+ "label D0": {
+  "uuid": "cc0ca4d5-0000-4000-8000-00000000011c",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "label"
+ },
+ "label D1": {
+  "uuid": "cc0ca4d5-0000-4000-8000-00000000011d",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "label"
+ },
+ "global label GOUT": {
+  "uuid": "cc0ca4d5-0000-4000-8000-00000000011e",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "global_label"
+ },
+ "hierarchical label HIER": {
+  "uuid": "cc0ca4d5-0000-4000-8000-00000000011f",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "hierarchical_label"
+ },
+ "directive label": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000120",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "netclass_flag"
+ },
+ "text": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000121",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "text"
+ },
+ "text box": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000122",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "text_box"
+ },
+ "table": {
+  "uuid": "cc0ca4d5-0000-4000-8000-00000000012f",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "table"
+ },
+ "table cell r0 c0": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000130",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "table_cell"
+ },
+ "table cell r0 c1": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000131",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "table_cell"
+ },
+ "table cell r0 c2": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000132",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "table_cell"
+ },
+ "table cell r1 c0": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000133",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "table_cell"
+ },
+ "table cell r1 c1": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000134",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "table_cell"
+ },
+ "table cell r1 c2": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000135",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "table_cell"
+ },
+ "table cell r2 c0": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000136",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "table_cell"
+ },
+ "table cell r2 c1": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000137",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "table_cell"
+ },
+ "table cell r2 c2": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000138",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "table_cell"
+ },
+ "rectangle": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000140",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "rectangle"
+ },
+ "circle": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000141",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "circle"
+ },
+ "arc": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000142",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "arc"
+ },
+ "polyline": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000143",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "polyline"
+ },
+ "image": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000144",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "image"
+ },
+ "sheet child": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000150",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "sheet"
+ },
+ "sheet pin B_PIN": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000151",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "sheet_pin"
+ },
+ "sheet pin A_PIN": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000152",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "sheet_pin"
+ },
+ "group R1 and text": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000160",
+  "file": "canvas-kinds.kicad_sch",
+  "kind": "group"
+ },
+ "child root": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000200",
+  "file": "child.kicad_sch",
+  "kind": "schematic"
+ },
+ "child hierarchical label A_PIN": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000201",
+  "file": "child.kicad_sch",
+  "kind": "hierarchical_label"
+ },
+ "child hierarchical label B_PIN": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000202",
+  "file": "child.kicad_sch",
+  "kind": "hierarchical_label"
+ },
+ "fp R1": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000301",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "footprint"
+ },
+ "fp U1": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000302",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "footprint"
+ },
+ "fp R2 locked": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000303",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "footprint"
+ },
+ "track corner a": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000310",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "track"
+ },
+ "track corner b": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000311",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "track"
+ },
+ "track locked": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000312",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "track"
+ },
+ "arc track": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000313",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "arc"
+ },
+ "via": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000314",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "via"
+ },
+ "copper zone": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000320",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "zone"
+ },
+ "silk zone": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000321",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "zone"
+ },
+ "rule area": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000322",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "rulearea"
+ },
+ "polygon one": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000330",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "shape"
+ },
+ "polygon two": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000331",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "shape"
+ },
+ "corner line a": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000332",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "shape"
+ },
+ "corner line b": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000333",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "shape"
+ },
+ "open line a": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000334",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "shape"
+ },
+ "open line b": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000335",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "shape"
+ },
+ "board outline": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000336",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "shape"
+ },
+ "dimension": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000338",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "dimension"
+ },
+ "board text": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000339",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "text"
+ },
+ "board text box": {
+  "uuid": "cc0ca4d5-0000-4000-8000-00000000033a",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "textbox"
+ },
+ "board table": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000340",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "table"
+ },
+ "board table cell r0 c0": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000341",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "tablecell"
+ },
+ "board table cell r0 c1": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000342",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "tablecell"
+ },
+ "board table cell r1 c0": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000343",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "tablecell"
+ },
+ "board table cell r1 c1": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000344",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "tablecell"
+ },
+ "group line a": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000350",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "shape"
+ },
+ "group line b": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000351",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "shape"
+ },
+ "board group": {
+  "uuid": "cc0ca4d5-0000-4000-8000-000000000352",
+  "file": "canvas-kinds.kicad_pcb",
+  "kind": "group"
+ }
+}
