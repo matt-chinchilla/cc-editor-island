@@ -758,3 +758,49 @@ export function splitVector(res: unknown): { real: Float64Array; imag: Float64Ar
   if (real instanceof Float64Array) return { real: real.slice(), imag: null };
   return null;
 }
+
+// ---------------------------------------------------------------- the run guard (lo-e2-i)
+
+/** ev.sim's progress phases: the service loading, the run going. */
+export const SIM_PROGRESS_PHASES: readonly string[] = ['loading', 'running'];
+/** ev.sim's end phases: exactly one of them ends each run. */
+export const SIM_END_PHASES: readonly string[] = ['done', 'stopped', 'failed'];
+
+/**
+ * The run guard of one frame's ev.sim (spec 7.3, SI3): every notice is keyed
+ * by its run number, so nothing of an earlier run reaches the host as the
+ * live run's. A progress notice goes out only for the run live now; an end
+ * goes out only while no other run is live, once per run and never for a run
+ * older than one that has already ended (run numbers only grow). Everything
+ * else is dropped: a stray notice of run N can never end, or move, run N + 1.
+ */
+export class SimRunGuard {
+  /** The newest run whose end went out (0 before any). */
+  private lastEnded = 0;
+
+  /** Whether the notice goes out; `live` is the run live now, or null. An end that passes is counted. */
+  keep(ev: Readonly<Record<string, unknown>>, live: number | null): boolean {
+    if (!isRunNumber(ev.run) || typeof ev.phase !== 'string') return false;
+    if (SIM_PROGRESS_PHASES.includes(ev.phase)) return ev.run === live;
+    if (!SIM_END_PHASES.includes(ev.phase)) return false;
+    if (live != null && live !== ev.run) return false;
+    if (ev.run <= this.lastEnded) return false;
+    this.lastEnded = ev.run;
+    return true;
+  }
+
+  /** The newest run whose end went out. */
+  ended(): number {
+    return this.lastEnded;
+  }
+}
+
+/**
+ * sim.result's run guard: an answer for run `run` must be that run's own
+ * result. A result of another run (a record a stray end left behind) answers
+ * `no_simulation`, as a run the island no longer holds does.
+ */
+export function guardResult(run: number, answer: { ok: boolean; result?: Record<string, unknown> }): 'keep' | 'stale' {
+  if (!answer.ok) return 'keep';
+  return answer.result?.run === run ? 'keep' : 'stale';
+}

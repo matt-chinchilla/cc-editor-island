@@ -1,0 +1,12 @@
+SPDX-License-Identifier: CC0-1.0
+
+Written by hand for this repository on 2026-11-18 (CC0 1.0: no rights
+reserved): the divider of tests/fixtures/sim-divider (V1, DC 12 V on "vin";
+R1, 10 kOhm, from "vin" to "mid"; R2, 4.7 kOhm, from "mid" to ground; the
+directive ".op") with R1's model taken from a file the project does not
+hold: Sim.Library "models/absent.lib", Sim.Name "RABSENT", Sim.Pins
+"1=1 2=2". There is no models folder on purpose. KiCad desktop meets the
+missing file with its "Could not find library file" box; the island answers
+it as a problem of the code file_missing naming R1. For
+tests/e2e/lo/sim-faults.spec.ts. files.json lists the files the e2e harness
+opens. The KiCad files carry no comment, so this file holds their license.

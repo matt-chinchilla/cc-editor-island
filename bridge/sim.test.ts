@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CONSOLE_MAX, commandOf, fftLines, isModelPath, isSpiceNumber, MAX_OVERRIDES, MAX_VECTOR_NAMES, namesOf, parseAnalysis, parseCatalogArgs,
   parseFileArgs, parseModelGetArgs, parseModelSetArgs, parseNetlistArgs, parseOpOnSheetArgs, parseOptions, parseResultArgs, parseRunArgs,
-  parseVectorsArgs, qualifiedVector, readAccepted, readCatalog, readCatalogEntry, readModelSheet, readNetlist, readProblems, readSimDone,
+  guardResult, parseVectorsArgs, qualifiedVector, SimRunGuard, readAccepted, readCatalog, readCatalogEntry, readModelSheet, readNetlist, readProblems, readSimDone,
   readSimFile, readSimResult, runJson, showsModelSet, spiceValue, splitVector, statPercent, vectorBytes, vectorsOf, type SimAnalysis, type SimResult,
 } from './sim';
 
@@ -301,5 +301,45 @@ describe('vectors', () => {
     expect(splitVector({ found: false })).toBeNull();
     expect(splitVector({ error: 'gone' })).toBeNull();
     expect(splitVector({ found: true, comp: new Float64Array([1, 2, 3]) })).toBeNull();
+  });
+});
+
+describe('the run guard (lo-e2-i)', () => {
+  it('lets a progress notice out only for the run live now', () => {
+    const g = new SimRunGuard();
+    expect(g.keep({ type: 'ev.sim', run: 2, phase: 'running', percent: 5 }, 2)).toBe(true);
+    expect(g.keep({ type: 'ev.sim', run: 2, phase: 'loading' }, 2)).toBe(true);
+    expect(g.keep({ type: 'ev.sim', run: 1, phase: 'running', percent: 40 }, 2)).toBe(false);
+    expect(g.keep({ type: 'ev.sim', run: 1, phase: 'running' }, null)).toBe(false);
+  });
+  it('lets one end out per run, never for a run older than one that ended', () => {
+    const g = new SimRunGuard();
+    expect(g.keep({ type: 'ev.sim', run: 1, phase: 'done' }, null)).toBe(true);
+    expect(g.keep({ type: 'ev.sim', run: 1, phase: 'stopped' }, null)).toBe(false);
+    expect(g.keep({ type: 'ev.sim', run: 2, phase: 'stopped' }, null)).toBe(true);
+    expect(g.keep({ type: 'ev.sim', run: 1, phase: 'failed', code: 'sim_failed' }, null)).toBe(false);
+    expect(g.ended()).toBe(2);
+    // A run numbered past one that never ended (refused at the engine) still ends.
+    expect(g.keep({ type: 'ev.sim', run: 4, phase: 'failed', code: 'circuit' }, null)).toBe(true);
+  });
+  it('drops a stray end of run N while run N + 1 is live, and keeps run N + 1 going to its own end', () => {
+    const g = new SimRunGuard();
+    expect(g.keep({ type: 'ev.sim', run: 3, phase: 'done' }, 4)).toBe(false);
+    expect(g.keep({ type: 'ev.sim', run: 4, phase: 'running', percent: 50 }, 4)).toBe(true);
+    expect(g.keep({ type: 'ev.sim', run: 4, phase: 'done' }, null)).toBe(true);
+    expect(g.keep({ type: 'ev.sim', run: 3, phase: 'done' }, null)).toBe(false);
+  });
+  it('drops a notice with no run number or an unknown phase', () => {
+    const g = new SimRunGuard();
+    for (const ev of [{ type: 'ev.sim', phase: 'done' }, { type: 'ev.sim', run: 0, phase: 'done' }, { type: 'ev.sim', run: 1.5, phase: 'done' }, { type: 'ev.sim', run: 1, phase: 'paused' }, { type: 'ev.sim', run: 1 }]) {
+      expect(g.keep(ev, 1), JSON.stringify(ev)).toBe(false);
+    }
+    expect(g.ended()).toBe(0);
+  });
+  it('sim.result answers only the asked run\'s own result', () => {
+    expect(guardResult(2, { ok: true, result: { run: 2 } })).toBe('keep');
+    expect(guardResult(2, { ok: true, result: { run: 1 } })).toBe('stale');
+    expect(guardResult(2, { ok: true, result: {} })).toBe('stale');
+    expect(guardResult(2, { ok: false })).toBe('keep');
   });
 });

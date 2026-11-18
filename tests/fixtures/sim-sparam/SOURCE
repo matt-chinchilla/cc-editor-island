@@ -1,0 +1,13 @@
+SPDX-License-Identifier: CC0-1.0
+
+Written by hand for this repository on 2026-11-18 (CC0 1.0: no rights
+reserved): a two-port LC low-pass for ngspice's S-parameter analysis (.sp).
+V1, port 1 (Sim.Params "dc=0 ac=1 portnum=1 z0=50"), on the net "p1"; L1,
+100 nH, from "p1" to "p2"; C1, 40 pF, from "p2" to ground (the label "0");
+V2, port 2 ("dc=0 ac=0 portnum=2 z0=50"), on "p2". KiCad writes each port
+source's "portnum" and "z0" into the netlist, as its simulator does. The
+sheet's directive is ".sp dec 10 1meg 1g". The source symbol is ours, the
+inductor's and capacitor's definitions follow KiCad's Device:L and Device:C;
+every connection is a label on a pin's end. For
+tests/e2e/lo/sim-faults.spec.ts. files.json lists the files the e2e harness
+opens. The KiCad files carry no comment, so this file holds their license.
