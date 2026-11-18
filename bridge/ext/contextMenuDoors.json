@@ -1,0 +1,524 @@
+{
+  "kicad": "1b214bab4c341d3a0af7ce2ec4a46288df9cc443",
+  "generator": "scripts/context-menu-doors.mjs",
+  "rows": [
+    {
+      "action": "common.Checker.excludeMarker",
+      "door": "run",
+      "opens": "DIALOG_ERC",
+      "menus": [
+        "eeschema/tools/sch_inspection_tool.cpp"
+      ],
+      "why": "updates KiCad's ERC window only while it is shown, and runERC is held (check)"
+    },
+    {
+      "action": "common.Control.editGridOrigin",
+      "door": "prompt:entry",
+      "opens": "WX_PT_ENTRY_DIALOG",
+      "menus": [
+        "common/tool/grid_menu.cpp"
+      ],
+      "why": "addendum 4.2: WX_PT_ENTRY_DIALOG; in a pcb frame st-origins-i holds it (settings:origins), the union read first"
+    },
+    {
+      "action": "common.Interactive.copy",
+      "door": "run",
+      "opens": "wxMessageBox",
+      "menus": [
+        "eeschema/tools/sch_edit_tool.cpp",
+        "eeschema/tools/symbol_editor_edit_tool.cpp",
+        "pagelayout_editor/tools/pl_edit_tool.cpp",
+        "pcbnew/tools/edit_tool.cpp",
+        "pcbnew/tools/pcb_viewer_tools.cpp"
+      ],
+      "why": "a message box only when writing the clipboard fails (pl_edit_tool.cpp)"
+    },
+    {
+      "action": "common.Interactive.paste",
+      "door": "prompt:message",
+      "opens": "IsOK",
+      "menus": [
+        "eeschema/tools/sch_edit_tool.cpp",
+        "eeschema/tools/symbol_editor_edit_tool.cpp",
+        "pagelayout_editor/tools/pl_edit_tool.cpp",
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "IsOK (confirm.cpp), the message ask"
+    },
+    {
+      "action": "common.Interactive.pasteSpecial",
+      "door": "held",
+      "opens": "IsOK",
+      "menus": [
+        "eeschema/tools/sch_edit_tool.cpp",
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "st-paste-i holds it (pasteSpecial)"
+    },
+    {
+      "action": "common.TableEditor.exportTableCSV",
+      "door": "held",
+      "opens": "wxFileDialog",
+      "menus": [
+        "include/tool/edit_table_tool_base.h"
+      ],
+      "why": "addendum 8: held by m12-i under tableCsv, table.csv"
+    },
+    {
+      "action": "eeschema.EditorControl.editPageNumber",
+      "door": "prompt:entry",
+      "opens": "ShowModal",
+      "menus": [
+        "eeschema/tools/sch_selection_tool.cpp"
+      ],
+      "why": "WX_TEXT_ENTRY_DIALOG, the entry ask"
+    },
+    {
+      "action": "eeschema.InteractiveDrawing.placeJunction",
+      "door": "run",
+      "opens": "DIALOG_WIRE_BUS_PROPERTIES",
+      "menus": [
+        "eeschema/tools/sch_line_wire_bus_tool.cpp",
+        "eeschema/tools/sch_selection_tool.cpp"
+      ],
+      "why": "TwoClickPlace's windows are a label's and a sheet's, never a junction's"
+    },
+    {
+      "action": "eeschema.InteractiveEdit.assignNetclass",
+      "door": "prompt:assignNetclass",
+      "opens": "DIALOG_ASSIGN_NETCLASS",
+      "menus": [
+        "eeschema/tools/sch_selection_tool.cpp"
+      ],
+      "why": "addendum 4.2: DIALOG_ASSIGN_NETCLASS"
+    },
+    {
+      "action": "eeschema.InteractiveEdit.changeSymbol",
+      "door": "held",
+      "opens": "DIALOG_CHANGE_SYMBOLS",
+      "menus": [
+        "eeschema/tools/sch_edit_tool.cpp"
+      ],
+      "why": "RULINGS 6: lo-bulk-i, Edit in bulk"
+    },
+    {
+      "action": "eeschema.InteractiveEdit.changeSymbols",
+      "door": "held",
+      "opens": "DIALOG_CHANGE_SYMBOLS",
+      "menus": [
+        "eeschema/tools/sch_edit_tool.cpp"
+      ],
+      "why": "RULINGS 6: lo-bulk-i, Edit in bulk"
+    },
+    {
+      "action": "eeschema.InteractiveEdit.cleanupSheetPins",
+      "door": "prompt:message",
+      "opens": "IsOK",
+      "menus": [
+        "eeschema/tools/sch_edit_tool.cpp"
+      ],
+      "why": "IsOK (confirm.cpp), the message ask"
+    },
+    {
+      "action": "eeschema.InteractiveEdit.pinTable",
+      "door": "held",
+      "opens": "DIALOG_LIB_EDIT_PIN_TABLE",
+      "menus": [
+        "eeschema/tools/sch_selection_tool.cpp"
+      ],
+      "why": "held in a symedit frame by the built in rows (symedit)"
+    },
+    {
+      "action": "eeschema.InteractiveEdit.properties",
+      "door": "form:schItem",
+      "opens": "DIALOG_LINE_PROPERTIES",
+      "menus": [
+        "eeschema/tools/sch_edit_tool.cpp",
+        "eeschema/tools/symbol_editor_edit_tool.cpp"
+      ],
+      "why": "the engine hands every item's properties to the host (ev.properties for a symbol, ev.schItem for the other kinds, m5-i)"
+    },
+    {
+      "action": "eeschema.InteractiveEdit.updateSymbol",
+      "door": "held",
+      "opens": "DIALOG_CHANGE_SYMBOLS",
+      "menus": [
+        "eeschema/tools/sch_edit_tool.cpp"
+      ],
+      "why": "RULINGS 6: lo-bulk-i, Edit in bulk"
+    },
+    {
+      "action": "eeschema.InteractiveEdit.updateSymbols",
+      "door": "held",
+      "opens": "DIALOG_CHANGE_SYMBOLS",
+      "menus": [
+        "eeschema/tools/sch_edit_tool.cpp"
+      ],
+      "why": "RULINGS 6: lo-bulk-i, Edit in bulk"
+    },
+    {
+      "action": "pcbnew.Array.createArray",
+      "door": "prompt:array",
+      "opens": "DIALOG_CREATE_ARRAY",
+      "menus": [
+        "pcbnew/tools/convert_tool.cpp"
+      ],
+      "why": "addendum 7: DIALOG_CREATE_ARRAY (modeless)"
+    },
+    {
+      "action": "pcbnew.Control.zonesManager",
+      "door": "held",
+      "opens": "DIALOG_ZONE_MANAGER",
+      "menus": [
+        "pcbnew/tools/board_editor_control.cpp"
+      ],
+      "why": "RULINGS 6: lo-bulk-i, Edit in bulk"
+    },
+    {
+      "action": "pcbnew.Convert.convertToKeepout",
+      "door": "prompt:convert",
+      "opens": "ShowModal",
+      "menus": [
+        "pcbnew/tools/convert_tool.cpp"
+      ],
+      "why": "addendum 6: DIALOG_CONVERT_SETTINGS, then the rule area settings"
+    },
+    {
+      "action": "pcbnew.Convert.convertToLines",
+      "door": "prompt:convert",
+      "opens": "SelectOneLayer",
+      "menus": [
+        "pcbnew/tools/convert_tool.cpp"
+      ],
+      "why": "addendum 6: DIALOG_CONVERT_SETTINGS"
+    },
+    {
+      "action": "pcbnew.Convert.convertToPoly",
+      "door": "prompt:convert",
+      "opens": "ShowModal",
+      "menus": [
+        "pcbnew/tools/convert_tool.cpp"
+      ],
+      "why": "addendum 6: DIALOG_CONVERT_SETTINGS"
+    },
+    {
+      "action": "pcbnew.Convert.convertToTracks",
+      "door": "prompt:layer",
+      "opens": "SelectOneLayer",
+      "menus": [
+        "pcbnew/tools/convert_tool.cpp"
+      ],
+      "why": "addendum 6: SelectOneLayer, only from a non copper layer"
+    },
+    {
+      "action": "pcbnew.Convert.convertToZone",
+      "door": "prompt:convert",
+      "opens": "ShowModal",
+      "menus": [
+        "pcbnew/tools/convert_tool.cpp"
+      ],
+      "why": "addendum 6: DIALOG_CONVERT_SETTINGS, then the zone settings"
+    },
+    {
+      "action": "pcbnew.Convert.outsetItems",
+      "door": "prompt:outset",
+      "opens": "DIALOG_OUTSET_ITEMS",
+      "menus": [
+        "pcbnew/tools/convert_tool.cpp"
+      ],
+      "why": "addendum 6: DIALOG_OUTSET_ITEMS"
+    },
+    {
+      "action": "pcbnew.EditorControl.assignNetclass",
+      "door": "prompt:assignNetclass",
+      "opens": "DIALOG_ASSIGN_NETCLASS",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "addendum 4.2: DIALOG_ASSIGN_NETCLASS"
+    },
+    {
+      "action": "pcbnew.EditorControl.zoneDuplicate",
+      "door": "prompt:zoneSettings",
+      "opens": "",
+      "menus": [
+        "pcbnew/tools/board_editor_control.cpp"
+      ],
+      "why": "addendum 6: the zone settings, purpose duplicate"
+    },
+    {
+      "action": "pcbnew.GlobalEdit.changeFootprint",
+      "door": "held",
+      "opens": "DIALOG_EXCHANGE_FOOTPRINTS",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "RULINGS 6: lo-bulk-i, Edit in bulk"
+    },
+    {
+      "action": "pcbnew.GlobalEdit.changeFootprints",
+      "door": "held",
+      "opens": "DIALOG_EXCHANGE_FOOTPRINTS",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "RULINGS 6: lo-bulk-i, Edit in bulk"
+    },
+    {
+      "action": "pcbnew.GlobalEdit.updateFootprint",
+      "door": "held",
+      "opens": "DIALOG_EXCHANGE_FOOTPRINTS",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "RULINGS 6: lo-bulk-i, Edit in bulk"
+    },
+    {
+      "action": "pcbnew.GlobalEdit.updateFootprints",
+      "door": "held",
+      "opens": "DIALOG_EXCHANGE_FOOTPRINTS",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "RULINGS 6: lo-bulk-i, Edit in bulk"
+    },
+    {
+      "action": "pcbnew.InteractiveDrawing.applyDesignBlockLayout",
+      "door": "form:blockLayouts",
+      "opens": "ShowModal",
+      "menus": [
+        "pcbnew/tools/pcb_selection_tool.cpp"
+      ],
+      "why": "i-block-layout: the layout of a design block applied through the host (board.preview, board.update)"
+    },
+    {
+      "action": "pcbnew.InteractiveEdit.FindMove",
+      "door": "prompt:findFootprint",
+      "opens": "",
+      "menus": [
+        "pcbnew/tools/board_editor_control.cpp"
+      ],
+      "why": "addendum 7: Get and Move Footprint"
+    },
+    {
+      "action": "pcbnew.InteractiveEdit.chamferLines",
+      "door": "prompt:entry",
+      "opens": "",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "addendum 4.2: WX_UNIT_ENTRY_DIALOG"
+    },
+    {
+      "action": "pcbnew.InteractiveEdit.dogboneCorners",
+      "door": "prompt:entry",
+      "opens": "",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "addendum 4.2: WX_MULTI_ENTRY_DIALOG"
+    },
+    {
+      "action": "pcbnew.InteractiveEdit.editVertices",
+      "door": "held",
+      "opens": "",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "addendum 6: held by m3-i under vertices, the board form's Corners block"
+    },
+    {
+      "action": "pcbnew.InteractiveEdit.filletLines",
+      "door": "prompt:entry",
+      "opens": "",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "addendum 4.2: WX_UNIT_ENTRY_DIALOG"
+    },
+    {
+      "action": "pcbnew.InteractiveEdit.filletTracks",
+      "door": "prompt:entry",
+      "opens": "WX_UNIT_ENTRY_DIALOG",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "addendum 4.2: WX_UNIT_ENTRY_DIALOG"
+    },
+    {
+      "action": "pcbnew.InteractiveEdit.healShapes",
+      "door": "prompt:entry",
+      "opens": "WX_UNIT_ENTRY_DIALOG",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "addendum 4.2: WX_UNIT_ENTRY_DIALOG"
+    },
+    {
+      "action": "pcbnew.InteractiveEdit.moveCorner",
+      "door": "prompt:entry",
+      "opens": "WX_PT_ENTRY_DIALOG",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "addendum 4.2: WX_PT_ENTRY_DIALOG"
+    },
+    {
+      "action": "pcbnew.InteractiveEdit.moveExact",
+      "door": "prompt:moveExact",
+      "opens": "DIALOG_MOVE_EXACT",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "addendum 7: DIALOG_MOVE_EXACT"
+    },
+    {
+      "action": "pcbnew.InteractiveEdit.moveMidpoint",
+      "door": "prompt:entry",
+      "opens": "WX_PT_ENTRY_DIALOG",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "addendum 4.2: WX_PT_ENTRY_DIALOG"
+    },
+    {
+      "action": "pcbnew.InteractiveEdit.properties",
+      "door": "form:boardItemKinds",
+      "opens": "DIALOG_TRACK_VIA_PROPERTIES",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp",
+        "pcbnew/tools/pad_tool.cpp"
+      ],
+      "why": "the engine hands every item's properties to the host (the board form, ev.boardItem, m4-i)"
+    },
+    {
+      "action": "pcbnew.InteractiveEdit.simplifyPolygons",
+      "door": "prompt:entry",
+      "opens": "WX_UNIT_ENTRY_DIALOG",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "addendum 4.2: WX_UNIT_ENTRY_DIALOG"
+    },
+    {
+      "action": "pcbnew.InteractiveRouter.BreakTrack",
+      "door": "prompt:message",
+      "opens": "KIDIALOG",
+      "menus": [
+        "pcbnew/router/router_tool.cpp",
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "addendum 6: the locked-item confirmation only"
+    },
+    {
+      "action": "pcbnew.InteractiveRouter.Drag45Degree",
+      "door": "prompt:message",
+      "opens": "",
+      "menus": [
+        "pcbnew/router/router_tool.cpp",
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "addendum 6: the locked-item confirmation only"
+    },
+    {
+      "action": "pcbnew.InteractiveRouter.DragFreeAngle",
+      "door": "prompt:message",
+      "opens": "",
+      "menus": [
+        "pcbnew/router/router_tool.cpp",
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "addendum 6: the locked-item confirmation only"
+    },
+    {
+      "action": "pcbnew.InteractiveRouter.SelLayerAndPlaceBlindVia",
+      "door": "prompt:layer",
+      "opens": "",
+      "menus": [
+        "pcbnew/router/router_tool.cpp"
+      ],
+      "why": "addendum 4.2: PCB_ONE_LAYER_SELECTOR"
+    },
+    {
+      "action": "pcbnew.InteractiveRouter.SelLayerAndPlaceMicroVia",
+      "door": "prompt:layer",
+      "opens": "",
+      "menus": [
+        "pcbnew/router/router_tool.cpp"
+      ],
+      "why": "addendum 4.2: PCB_ONE_LAYER_SELECTOR"
+    },
+    {
+      "action": "pcbnew.InteractiveRouter.SelLayerAndPlaceVia",
+      "door": "prompt:layer",
+      "opens": "",
+      "menus": [
+        "pcbnew/router/router_tool.cpp"
+      ],
+      "why": "addendum 4.2: PCB_ONE_LAYER_SELECTOR"
+    },
+    {
+      "action": "pcbnew.InteractiveRouter.SettingsDialog",
+      "door": "held",
+      "opens": "DIALOG_PNS_SETTINGS",
+      "menus": [
+        "pcbnew/router/router_tool.cpp"
+      ],
+      "why": "st-routing-i holds it (settings:router)"
+    },
+    {
+      "action": "pcbnew.InteractiveSelection.FilterSelection",
+      "door": "prompt:filterSelection",
+      "opens": "DIALOG_FILTER_SELECTION",
+      "menus": [
+        "pcbnew/tools/pcb_selection_tool.cpp"
+      ],
+      "why": "addendum 7: DIALOG_FILTER_SELECTION"
+    },
+    {
+      "action": "pcbnew.ModuleEditor.padTable",
+      "door": "held",
+      "opens": "DIALOG_FP_EDIT_PAD_TABLE",
+      "menus": [
+        "pcbnew/tools/pad_tool.cpp"
+      ],
+      "why": "fp-i6 holds it in a fpedit frame (fpedit)"
+    },
+    {
+      "action": "pcbnew.PadTool.PushPadSettings",
+      "door": "held",
+      "opens": "DIALOG_PUSH_PAD_PROPERTIES",
+      "menus": [
+        "pcbnew/tools/pad_tool.cpp"
+      ],
+      "why": "fp-i6 holds it in a fpedit frame (fpedit)"
+    },
+    {
+      "action": "pcbnew.PositionRelative.interactiveOffsetTool",
+      "door": "prompt:offset",
+      "opens": "DIALOG_OFFSET_ITEM",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "addendum 7: the offset entry after the two clicks"
+    },
+    {
+      "action": "pcbnew.PositionRelative.positionRelative",
+      "door": "prompt:positionRelative",
+      "opens": "DIALOG_POSITION_RELATIVE",
+      "menus": [
+        "pcbnew/tools/edit_tool.cpp"
+      ],
+      "why": "addendum 7: DIALOG_POSITION_RELATIVE (modeless)"
+    },
+    {
+      "action": "pcbnew.TableEditor.editTable",
+      "door": "prompt:table",
+      "opens": "DIALOG_TABLE_PROPERTIES",
+      "menus": [
+        "include/tool/edit_table_tool_base.h"
+      ],
+      "why": "addendum 8: DIALOG_TABLE_PROPERTIES"
+    }
+  ]
+}
