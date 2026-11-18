@@ -5,6 +5,7 @@ import { seedsFor } from './seeds';
 import ledger from './user.hotkeys?raw';
 import symedit from './symedit.hotkeys?raw';
 import defaultsJson from './pencil-tools.defaults.json?raw';
+import { poolsOf } from './pencil-tools.gen.mjs';
 
 describe('the seeds', () => {
   it.each(['day', 'night'] as const)('select the one viewer palette by %s', (theme) => {
@@ -29,12 +30,17 @@ describe('the seeds', () => {
     expect((s.common.appearance as { toolbar_icon_size: number }).toolbar_icon_size).toBe(24);
   });
 
-  it('carry the symbol editor\'s chords after the ledger, each on a chord nothing else takes', () => {
+  it('carry the symbol editor\'s chords after the ledger, each on a chord nothing else of the schematic\'s pool takes', () => {
     const lines = (t: string) => t.split('\n').filter((l) => l !== '').map((l) => l.split('\t'));
     expect(seedsFor('day').hotkeys).toBe(ledger + symedit);
     const own = lines(symedit);
     expect(own).toHaveLength(10);
-    const taken = new Set([...lines(ledger).map(([, k]) => k), ...Object.values(JSON.parse(defaultsJson) as Record<string, string | null>).filter((k): k is string => k != null)]);
+    // The pool is per editor (pencil-tools.gen.mjs poolsOf): a board or drawing sheet action may hold the same chord.
+    const sch = (action: string): boolean => poolsOf(action).includes('sch');
+    const taken = new Set([
+      ...lines(ledger).filter(([a]) => sch(a!)).flatMap(([, k, k2]) => [k, k2]).filter((k) => k),
+      ...Object.entries(JSON.parse(defaultsJson) as Record<string, string | null>).filter(([a, k]) => k != null && sch(a)).map(([, k]) => k!),
+    ]);
     const actions = new Set(lines(ledger).map(([a]) => a));
     for (const [action, key, secondary] of own) {
       expect(key, action).toMatch(/^Ctrl\+Alt\+Shift\+[0-9]$/);

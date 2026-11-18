@@ -58,3 +58,38 @@ pcbnew.Control.zoneDisplayDisable	Ctrl+Alt+Shift+U
 pcbnew.Control.padDisplayMode	Ctrl+Alt+Shift+V	
 pcbnew.Control.viaDisplayMode	Ctrl+Alt+Shift+X	
 pcbnew.Control.showLayersManager	Ctrl+Alt+Shift+Y	
+eeschema.EditorControl.showHiddenFields	Ctrl+Alt+3	
+eeschema.EditorControl.showDirectiveLabels	Ctrl+Alt+4	
+eeschema.EditorControl.showERCErrors	Ctrl+Alt+5	
+eeschema.EditorControl.showERCWarnings	Ctrl+Alt+6	
+eeschema.EditorControl.showERCExclusions	Ctrl+Alt+E	
+eeschema.EditorControl.togglePinAltIcons	Ctrl+Alt+J	
+eeschema.EditorControl.markSimExclusions	Ctrl+Alt+K	
+pcbnew.MicrowaveTool.createLine	Ctrl+Alt+0	
+pcbnew.MicrowaveTool.createGap	Ctrl+Alt+7	
+pcbnew.MicrowaveTool.createStub	Ctrl+Alt+A	
+pcbnew.MicrowaveTool.createStubArc	Ctrl+Alt+B	
+pcbnew.MicrowaveTool.createFunctionShape	Ctrl+Alt+C	
+pcbnew.InteractiveDrawing.placeCharacteristics	Ctrl+Alt+H	
+pcbnew.InteractiveDrawing.placeStackup	Ctrl+Alt+I	
+pcbnew.Autoplacer.autoplaceOffboard	Ctrl+Alt+L	
+pcbnew.Autoplacer.autoplaceSelected	Ctrl+Alt+P	
+pcbnew.Generator.regenerateAllTuning	Ctrl+Alt+R	
+pcbnew.Control.flipBoard	Ctrl+Alt+T	
+pcbnew.Control.graphicOutlines	Ctrl+Alt+U	
+pcbnew.Control.textOutlines	Ctrl+Alt+X	
+pcbnew.Control.layerAlphaDec	Ctrl+Alt+Y	{
+pcbnew.Control.layerAlphaInc	Ctrl+Alt+Shift+D	}
+common.Interactive.group	Ctrl+Alt+Shift+Z	
+common.Interactive.ungroup	Ctrl+Alt+F1	
+pcbnew.InteractiveEdit.mirrorHoriontally	Ctrl+Alt+Shift+E	
+pcbnew.InteractiveEdit.mirrorVertically	Ctrl+Alt+Shift+G	
+pcbnew.InteractiveEdit.rotateCw	Ctrl+Alt+Shift+H	Shift+R
+pcbnew.PadTool.placePad	Ctrl+Alt+Shift+I	
+pcbnew.PointEditor.arcKeepCenter	Ctrl+Alt+Shift+0	
+pcbnew.PointEditor.arcKeepEndpoint	Ctrl+Alt+Shift+1	
+pcbnew.PointEditor.arcKeepRadius	Ctrl+Alt+Shift+2	
+plEditor.InteractiveDrawing.drawLine	Ctrl+Alt+0	
+plEditor.InteractiveDrawing.drawRectangle	Ctrl+Alt+3	
+plEditor.InteractiveDrawing.placeText	Ctrl+Alt+4	
+plEditor.InteractiveDrawing.placeImage	Ctrl+Alt+5	

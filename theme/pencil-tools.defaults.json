@@ -776,5 +776,15 @@
 "pcbnew.FpWizard.resetWizardPrms": null,
 "pcbnew.FpWizard.selectPreviousWizardPage": null,
 "pcbnew.FpWizard.selectNextWizardPage": null,
-"pcbnew.FpWizard.exportFpToEditor": null
+"pcbnew.FpWizard.exportFpToEditor": null,
+"plEditor.InteractiveDrawing.drawLine": null,
+"plEditor.InteractiveDrawing.drawRectangle": null,
+"plEditor.InteractiveDrawing.placeText": null,
+"plEditor.InteractiveDrawing.placeImage": null,
+"plEditor.InteractiveMove.move": "M",
+"plEditor.InteractiveEdit.appendWorksheet": null,
+"plEditor.EditorControl.ShowInspector": null,
+"plEditor.EditorControl.PreviewSettings": null,
+"plEditor.EditorControl.LayoutNormalMode": null,
+"plEditor.EditorControl.LayoutEditMode": null
 }
