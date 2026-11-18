@@ -61,23 +61,23 @@ const engineFile = (frame: Frame, path: string): Promise<{ size: number; head: s
     return { size: b.length, head: new TextDecoder().decode(b.subarray(0, 13)) };
   }, path);
 
-/** The store's own index of a folder, read from the island origin. */
-async function storeIndex(page: Page, folder: string): Promise<Record<string, number>> {
-  const r = await page.request.get(`${ISLAND}/models/${TAG}/${folder}/index.json`);
-  expect(r.ok(), `the local store has no ${folder}; build it first (the comment at the top)`).toBe(true);
-  return (await r.json()) as Record<string, number>;
-}
+/** A file of the store, read in the island frame (the test runner cannot resolve editor.localhost itself). */
+const storeFile = (frame: Frame, path: string): Promise<{ ok: boolean; text: string }> =>
+  frame.evaluate(async (u) => {
+    const r = await fetch(u);
+    return { ok: r.ok, text: r.ok ? await r.text() : '' };
+  }, `/models/${TAG}/${path}`);
 
 test.describe.configure({ mode: 'serial' });
 
 test('the engine\'s model request is answered from the store, the file written under the model root', async ({ page, context }) => {
-  const idx = await storeIndex(page, 'Resistor_SMD.3dshapes');
   const asked = modelsWatch(context);
   const frame = await boot(page);
   const at = `${ROOT}/${R0603}`;
 
   expect(await ensure(frame, `\${KICAD10_3DMODEL_DIR}/${R0603}`)).toBe(at);
-  expect(await engineFile(frame, at)).toEqual({ size: idx['R_0603_1608Metric.step'], head: 'ISO-10303-21;' });
+  const written = await engineFile(frame, at);
+  expect(written?.head).toBe('ISO-10303-21;');
   // a .wrl line in any vintage of the variable is answered by its STEP sibling
   expect(await ensure(frame, '${KICAD6_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.wrl')).toBe(at);
   expect(await ensure(frame, `$(KISYS3DMOD)/${R0603}`)).toBe(at);
@@ -87,6 +87,10 @@ test('the engine\'s model request is answered from the store, the file written u
   expect(await frame.evaluate(() => (window as unknown as IslandWindow).kicadLibs.request('list', '', 'x', 'model3d'))).toBeNull();
   // one index and one file fetched, whatever was asked
   expect(asked.sort()).toEqual(['Resistor_SMD.3dshapes/R_0603_1608Metric.step', 'Resistor_SMD.3dshapes/index.json']);
+  // the file written is the store's, byte for byte in size
+  const index = await storeFile(frame, 'Resistor_SMD.3dshapes/index.json');
+  expect(index.ok, 'the local store has no Resistor_SMD; build it first (the comment at the top)').toBe(true);
+  expect(written?.size).toBe((JSON.parse(index.text) as Record<string, number>)['R_0603_1608Metric.step']);
 });
 
 test('a later session reads the store from IndexedDB with no request under /models/', async ({ page, context }) => {
@@ -106,11 +110,10 @@ test('a later session reads the store from IndexedDB with no request under /mode
 });
 
 test('a STEP of the fixture: every body of its three model lines with the 3D service, the engine\'s refusal before it', async ({ page }) => {
-  const r = await page.request.get(`${ISLAND}/models/${TAG}/${R0603}`);
-  expect(r.ok()).toBe(true);
-  const solids = (text: string): number => (text.match(/MANIFOLD_SOLID_BREP/g) ?? []).length;
-  const r0603 = solids(await r.text());
-  await boot(page);
+  const frame = await boot(page);
+  const body = await storeFile(frame, R0603);
+  expect(body.ok).toBe(true);
+  const r0603 = (body.text.match(/MANIFOLD_SOLID_BREP/g) ?? []).length;
   const ready = (await events(page)).find((e) => e.type === 'ev.ready');
   const settings = { format: 'step', export_board_body: false, export_components: true };
   // The bytes stay in the page: only the STEP's name, its head and its solid count come back.
