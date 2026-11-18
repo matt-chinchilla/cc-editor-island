@@ -34,6 +34,7 @@ import { islandLibs, warmUpOnEnumerate, type LibsChoice } from './libs';
 import { quietWarmUp } from './picker';
 import { createProjectLibs, withProjectLibs } from './project-libs';
 import { installSimService } from './sim-service';
+import { hideChromeThenReveal, watchStagePaint } from './reveal';
 
 declare const __ISLAND_TAG__: string;      // define'd by vite.config.ts from PIN.json
 declare const __KICAD_VERSION__: string;   // define'd by vite.config.ts
@@ -213,18 +214,32 @@ async function main(): Promise<void> {
   }
   if (gate.isFatal() || teardown.started()) return;
   // The editor wears the viewer (spec D16): KiCad's menu bar, toolbars, panes
-  // and status bar never show; the page owns the chrome. kicadSetChrome is
-  // synchronous and resizes the GL canvas before it returns (spike 2026-10-01).
-  // Then one synthetic click on the canvas, as a reader's first click would be,
-  // so wx keyboard focus sits on the drawing and the first hotkey is not lost.
-  try { (window as ToolWindow).Module?.kicadSetChrome?.(false); } catch { /* chrome stays; the page can still send chrome.show */ }
-  focusCanvas(document);
+  // and status bar never show; the page owns the chrome. kicadSetChrome lays
+  // the frame out again before it returns, but the engine paints that layout
+  // on a later turn of its loop, so the loading screen stays until it has
+  // (src/reveal.ts): hidden in this task, it showed KiCad's chrome as last
+  // painted for as long as the open or a second engine's boot held the loop.
+  // With the hide, one synthetic click on the canvas, as a reader's first click
+  // would be, so wx keyboard focus sits on the drawing and the first hotkey is
+  // not lost.
+  const tool = window as ToolWindow;
+  const stage = document.getElementById('canvas');
+  void hideChromeThenReveal({
+    chromeShown: () => (typeof tool.Module?.kicadChromeShown === 'function' ? tool.Module.kicadChromeShown() === true : null),
+    hideChrome: () => {
+      try { tool.Module?.kicadSetChrome?.(false); } catch { /* chrome stays; the page can still send chrome.show */ }
+      focusCanvas(document);
+    },
+    watchPaint: (painted) => watchStagePaint(stage instanceof HTMLCanvasElement ? stage.getContext('2d') : null, painted),
+    nextFrame: (cb) => { requestAnimationFrame(() => cb()); },
+    timer: (cb, ms) => { const t = setTimeout(cb, ms); return () => clearTimeout(t); },
+    reveal: () => { if (!gate.isFatal() && !teardown.started()) hideScreens(); },
+  }).then((way) => console.debug('[editor]', `stage shown: ${way}`));
   // From now on a real press in the frame gives it the browser's keyboard
   // focus, so the hotkeys reach KiCad and not the page (after the synthetic
   // click above, which must not take focus from the page).
   focusFrameOnPress(window);
-  hideScreens();
-  responder.engineReady(window as ToolWindow, { tag: __ISLAND_TAG__, kicad: __KICAD_VERSION__ }, popups, choice);
+  responder.engineReady(tool, { tag: __ISLAND_TAG__, kicad: __KICAD_VERSION__ }, popups, choice);
   // The quiet warm-up (PICKER.md): once the frame has been idle for a moment,
   // the frame's search index and the common libraries of its kind, at low
   // priority, nothing shown and nothing sent. KiCad's own chooser keeps its
