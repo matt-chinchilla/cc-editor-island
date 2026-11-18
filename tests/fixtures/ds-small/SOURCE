@@ -1,0 +1,19 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (C) 2026 Circuit Center Inc
+
+Written by hand for this repository on 2026-11-18 (CC0 1.0: no rights
+reserved), no third-party content, for the drawing sheet editor (wave 2 plan,
+the drawing sheet addendum, section 6.3):
+- every-item.kicad_wks: a kicad_wks sheet (version 20231118) holding one item
+  of every kind KiCad reads: a rect, a line at each of the four corners
+  (rbcorner, rtcorner, lbcorner, ltcorner; one page1only, one notonpage1, one
+  with its own line width), a polygon (rotated, its own line width), a 16 by
+  16 bitmap (a PNG of our own, base64 as KiCad 8 and later write it), and a
+  text repeated 3 times with incrx 10 and incrlabel 1, a font (KiCad's own
+  face, a line width and a size), bold, italic, a color, justify center top,
+  maxlen and maxheight, and a ${TITLE} text;
+- legacy.kicad_wks: the legacy page_layout form, no version, with the old
+  %T, %S and %N codes (KiCad reads them as ${TITLE}, ${#} and ${##});
+- broken.kicad_wks: a sheet KiCad cannot read: the text on line 7 is never
+  closed, so KiCad's parser stops at the line after it;
+- logo.png: a 64 by 64 PNG of our own (the same mark), for Add a logo.

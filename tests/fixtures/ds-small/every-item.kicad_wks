@@ -1,0 +1,21 @@
+(kicad_wks (version 20231118) (generator "pl_editor") (generator_version "10.0")
+  (setup (textsize 1.5 1.5) (linewidth 0.15) (textlinewidth 0.15)
+    (left_margin 10) (right_margin 10) (top_margin 10) (bottom_margin 10))
+  (rect (name "title frame") (start 110 34) (end 2 2) (comment "around the title block"))
+  (line (name "corner rb") (start 20 40) (end 40 40) (linewidth 0.3))
+  (line (name "corner rt") (start 20 20 rtcorner) (end 40 20 rtcorner))
+  (line (name "corner lb") (start 20 20 lbcorner) (end 40 20 lbcorner) (option notonpage1))
+  (line (name "corner lt") (start 20 20 ltcorner) (end 40 20 ltcorner) (option page1only))
+  (polygon (name "arrow") (pos 60 20) (rotate 15) (linewidth 0.1)
+    (pts (xy 0 0) (xy 4 2) (xy 0 4)))
+  (bitmap (name "mark") (pos 90 20) (scale 1)
+    (data
+      "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAASklEQVR42mNgGNSAy0vvv8te4f9k"
+      "a4YZQLIhyBqRDSLLZpJcgk8jQZcQspmgS4jVCONjdQWxBuANB7JsJtYlJKUFsmzG5ZLBneEA/g6W"
+      "SXpamhcAAAAASUVORK5CYII="))
+  (tbtext "R1" (name "label") (pos 30 10 ltcorner)
+    (font (face "KiCad Font") (linewidth 0.2) (size 2 2) bold italic (color 10 74 46 1))
+    (justify center top) (maxlen 40) (maxheight 5)
+    (repeat 3) (incrx 10) (incrlabel 1) (comment "three labels, ten millimeters apart"))
+  (tbtext "${TITLE}" (name "title") (pos 60 20) (font (size 2 2) bold))
+)

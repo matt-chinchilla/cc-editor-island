@@ -1,0 +1,17 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+Copyright (C) 2026 Circuit Center Inc (this note); the four design files are
+KiCad's own, copyright the KiCad developers, GPL-3.0-or-later.
+
+The four design files are copied unchanged from KiCad's own source tree,
+qa/data/cli/basic_test/, at the engine's KiCad tag (KiCad 10.0.4, our mirror
+kicad-source-mirror cc/main 1b214bab, engine run 14):
+- basic_test.kicad_pro (it names custom_ds.kicad_wks as the drawing sheet of
+  both the schematic and the board: page_layout_descr_file),
+- basic_test.kicad_sch,
+- basic_test.kicad_pcb,
+- custom_ds.kicad_wks (a kicad_wks sheet, version 20220228, of rectangles,
+  lines and repeated texts at every corner).
+KiCad's sources are GPL-3.0-or-later, the island's own license.
+files.json lists the files the e2e harness opens as a project
+(tests/harness/parent.html?fixture=ds-basic); a ds frame reads
+custom_ds.kicad_wks as text through dsedit.open.
