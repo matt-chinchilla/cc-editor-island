@@ -1,7 +1,10 @@
 // Modified by Circuit Center on 2026-09-30: removed the 3D model request path.
 // Modified by Circuit Center on 2026-09-30: async-map is imported by a relative
 // path (the island has no "@/" alias).
+// Modified by Circuit Center on 2026-11-18: the 3D model request path again,
+// kind model3d answered by the island's model store (model-store.ts).
 import { asyncMap } from "../../lib/async-map";
+import { handleModel3dRequest } from "./model-store";
 import { libIdFromUri, libUri } from "./uri";
 
 /**
@@ -388,6 +391,13 @@ export function installLibsProvider(
   let fatResetTimer: ReturnType<typeof setTimeout> | undefined;
 
   const request: KicadLibsRequest = async (op, lib, arg, kind = "symbol") => {
+    // 3D models are addressed by their reference, not by a lib table URI (the
+    // engine's ensure passes an empty lib): answered by the model store before
+    // the lib id parse would refuse them (LIBRARY.md "The model store").
+    if (kind === "model3d") {
+      log(`[libs] request op=${op} kind=model3d arg=${arg}`);
+      return handleModel3dRequest(op, arg, log);
+    }
     // The footprint index is source-global (not per-lib) — dispatch before the
     // lib-id parse, which would reject the bare mount URI the C++ side passes.
     if (op === "index") {

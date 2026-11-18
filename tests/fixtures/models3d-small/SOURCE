@@ -1,0 +1,24 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (C) 2026 Circuit Center Inc
+
+Written by hand for this repository on 2026-11-18 (CC0 1.0: no rights
+reserved) for the model store (LIBRARY.md "The model store") and the 3D
+exports (the 3D spec on the site, docs/superpowers/specs/
+2026-11-16-3d-exports-design.md, section 8.4). A two layer board, 20 by 15 mm
+(an Edge.Cuts rectangle), with two footprints and three model lines:
+- R1, Resistor_SMD:R_0603_1608Metric, one library model line,
+  ${KICAD10_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.step: its
+  body is fetched from the model store, never committed here (kicad-packages3D,
+  CC BY-SA 4.0 with KiCad's libraries exception);
+- U1, a footprint of the board's own (models3d-small:Blocks), two lines:
+  ${KIPRJMOD}/cube.step and ${KIPRJMOD}/block.wrl, the second answered by its
+  same stem STEP sibling block.step (no block.wrl exists, on purpose).
+cube.step (1.6 by 1.6 by 1.6 mm) and block.step (2.4 by 1.2 by 1.6 mm) are
+boards alone, written by kicad-cli 10.0.4 in the kicad/kicad:10.0.4 image from
+the hand boards in make/ (an Edge.Cuts rectangle each, 1.6 mm thick):
+  kicad-cli pcb export step --board-only --force -o cube.step make/cube.kicad_pcb
+  kicad-cli pcb export step --board-only --force -o block.step make/block.kicad_pcb
+A STEP export of the board with its components holds three bodies beside the
+board's. files.json lists what the e2e harness opens. The KiCad files carry
+no comment (their formats have none), so this file holds their license.
+For tests/e2e/models3d.spec.ts.

@@ -286,3 +286,61 @@ mirror; the probe is the engine's `kicadLibsTestLoadFootprint(nickname, name)`):
 | KiCad's reload over the project's own tables, written after the open | no: the probe answered nothing | 407 ms | KiCad reads a project's tables only when it loads the project (`LIBRARY_MANAGER::LoadProjectTables`, which no engine export reaches) |
 | the tables and the library among `project.open`'s files | yes, natively | probe 8 ms after the open | a footprint written later was found too (31 ms with a reload); this is the state after a reboot |
 | a project source, its row added at run time (taken) | yes | add and load 40 ms (board), 16 ms (schematic, symbols); probe 4 ms; a later footprint after a reload 13 ms | the engine asked the island for the library's bodies once per load; a mirror nickname cannot be shadowed |
+
+## The model store (arriving with island v0.2.3-cc25)
+
+KiCad's 3D model STEP files, kicad-packages3D at the same tag as the mirror (`PIN.json`
+`libs.tag`, the engine's KiCad version), for the engine's 3D work: STEP and mesh exports, the
+raytraced render, and models kept inside the board. CC BY-SA 4.0 with KiCad's libraries exception;
+the repository's `LICENSE.md` ships beside them.
+
+```
+/models/<tag>/<Lib>.3dshapes/<Name>.step          one file per model, as kicad-packages3D holds it
+/models/<tag>/<Lib>.3dshapes/<Name>.step.gz       its gzip twin (level 9, mtime 0)
+/models/<tag>/<Lib>.3dshapes/index.json.gz        { "<Name>.step": <bytes>, ... }, names in code point order
+/models/<tag>/LICENSE.md (and .gz), store.json, SHA256SUMS
+```
+
+Unlike the mirror, models are one file each: the engine asks for one model at a time, only the ones
+a board names, and the set is far too large to bundle. A folder's `index.json` is served from its
+`.gz` alone (`gzip_static always`); every other file has both forms (`gzip_static on`).
+`store.json` is `{ schema: 1, tag, commit, full, files, bytes, gzBytes }` (`commit` the
+kicad-packages3D commit of the tag, `full` false for an `--only` build). Served immutable, logs off.
+
+- **Build.** `npm run build:models <tag> [-- --dry-run] [--only <p,...>]`
+  (`scripts/build-models.mjs`): the tree listing of kicad-packages3D at the tag from GitLab, STEP
+  files only (`*.3dshapes/*.step|stp`), each fetched at the tag's commit and checked against its git
+  blob id, written with its gzip twin under `dist/models/<tag>/` (which the local pair serves at
+  `/models/`), then the indexes, `store.json` and `SHA256SUMS`, and the result read back
+  (`--verify <dir>/<tag>` runs that check alone). Resumable: every fetched file is remembered by
+  path, tag and blob id in `dist/models/.cache/<tag>/`, so a stopped run picks up where it stopped.
+  `--only` takes store paths, model lines as a board writes them, or a `.kicad_pcb` file (its
+  library model lines). A dry run writes only that cache and prints the set's count and its raw
+  and gzipped bytes, and Glasgow's (`tests/fixtures/glasgow`), the reference board. A set over
+  1.5 GB gzipped is said: hosting it is the owner's call.
+- **Ship.** `npm run ship:models <tag> -- --dry-run`, then without it (`scripts/ship-models.sh`,
+  the owner's): the whole set only (`full`), verified, to `/opt/circuits-com/editor/models/<tag>/`
+  through `.incoming-<tag>` and one rename. A tag is never rewritten.
+- **The client** (`loader/src/wasm/libs/model-store.ts`). The engine asks through
+  `kicadLibs.request("ensure", "", <ref>, "model3d")` (PCBJam's `PCBJAM_3D::EnsureModelFile`, in
+  the engine since run 13, after KiCad's own resolver found nothing); the provider
+  (`source.ts`) hands every `model3d` request to the store before its lib id parse. The reference
+  is normalized as the engine's `NormalizeModelRef` does (`${KICAD*_3DMODEL_DIR}` in any vintage,
+  brace or paren, and `${KISYS3DMOD}`; a project's own line, an absolute path or a URI is not the
+  store's), a `.wrl` or `.wrz` line is answered by its STEP sibling, the file is written under
+  `/pcbjam/3dmodels/<Lib>.3dshapes/` in the engine's file system, and its absolute path is the
+  answer. A model the store does not hold answers null, and KiCad's own warning follows.
+  `ensureModel(ref)` answers the bytes alone (the export staging, the board's embedded models).
+- **Store.** IndexedDB first: database `cc-models`, store `files`, key `<tag>/<path>`, a folder's
+  index under `<tag>/<Lib>.3dshapes/index.json`. A later session reads every model it has seen, and
+  every folder index, with no network; an unknown name in a known folder costs no request either.
+  The first open deletes every key of another tag. A file is checked against its folder's index
+  (its size) before it is kept or given; a failed index read is not kept. With no IndexedDB the
+  store reads the network each time (immutable files: the browser's cache answers). Nothing
+  rejects: a failure is a miss, logged once per reference.
+- **Measured** (2026-11-18, `npm run build:models 10.0.4 -- --dry-run`, kicad-packages3D
+  `0bc64e922178`): 7,241 STEP files in 105 folders, 3,366,988,948 bytes raw, 618,065,205 bytes
+  gzipped (under the 1.5 GB bound). Glasgow names 23 library model lines (`${KICAD6_3DMODEL_DIR}`),
+  21 of them in the set at 10.0.4, 3,899,248 bytes raw and 734,965 gzipped; the two the set no
+  longer holds are `Package_DFN_QFN.3dshapes/QFN-56-1EP_8x8mm_P0.5mm_EP6.22x6.22mm_ThermalVias.step`
+  and `Package_SO.3dshapes/VSSOP-10_3x3mm_P0.5mm.step`.
