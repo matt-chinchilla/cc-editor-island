@@ -9,7 +9,7 @@
 // keys are pressed through key.press, held the same way a reader's are.
 import { expect, test, type Frame, type Page } from '@playwright/test';
 
-const ISLAND = 'http://editor.localhost:4174';
+import { ISLAND } from './ports';
 interface Ev { type: string; phase?: string; open?: boolean; caps?: string[]; action?: string; uuid?: string; kind?: string; uuids?: string[]; sheetPath?: string; field?: string; at: number }
 interface Harness { __events: Ev[]; __bridge: { request(op: string, args?: unknown): Promise<Record<string, unknown>> } }
 interface Key { key: string; code: string; ctrl?: boolean; shift?: boolean; alt?: boolean }

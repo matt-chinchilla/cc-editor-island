@@ -9,7 +9,7 @@
 // unnumbered sheet (three resistors in a row) with one label added here.
 import { expect, test, type Frame, type Page } from '@playwright/test';
 
-const ISLAND = 'http://editor.localhost:4174';
+import { ISLAND } from './ports';
 interface Ev { type: string; open?: boolean; caps?: string[]; uuids?: string[]; sheetPath?: string; at: number }
 interface Harness { __events: Ev[]; __bridge: { request(op: string, args?: unknown): Promise<Record<string, unknown>> } }
 interface Viewport { cx: number; cy: number; scale: number; w: number; h: number }

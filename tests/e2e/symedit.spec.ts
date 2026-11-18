@@ -9,7 +9,7 @@
 // (ev.symedit, ev.held). The fixture is tests/fixtures/symedit-small.
 import { expect, test, type Frame, type Page } from '@playwright/test';
 
-const ISLAND = 'http://editor.localhost:4174';
+import { ISLAND, ISLAND_ADDR } from './ports';
 interface Ev { type: string; phase?: string; open?: boolean; shown?: boolean; depth?: number; caps?: string[]; action?: string; ask?: string; uuid?: string; isNew?: boolean; uuids?: string[]; at: number }
 interface Harness { __events: Ev[]; __bridge: { request(op: string, args?: unknown): Promise<Record<string, unknown>> } }
 interface Engine { Module: { HEAP8: { length: number } } }
@@ -270,7 +270,7 @@ test('KiCad\'s dialogs and windows are held: P places a pin with ev.symedit, E o
 
 test('the held actions\' names are in the engine\'s own strings', async ({ request }) => {
   // The engine the island serves (its action names are ASCII, so a text read keeps them whole).
-  const res = await request.get('http://127.0.0.1:4174/current/wasm/kicad_editor/v0.2.3/kicad_editor.wasm');   // the island server, by address (Node does not resolve *.localhost)
+  const res = await request.get(`${ISLAND_ADDR}/current/wasm/kicad_editor/v0.2.3/kicad_editor.wasm`);   // the island server, by address (Node does not resolve *.localhost)
   expect(res.ok()).toBe(true);
   const wasm = await res.text();
   const names = ['common.Control.save', 'common.Control.saveAs', 'common.Control.saveAll', 'eeschema.SymbolLibraryControl.saveSymbolAs',

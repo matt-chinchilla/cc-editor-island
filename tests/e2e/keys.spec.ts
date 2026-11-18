@@ -8,7 +8,7 @@
 // as late as any of the engine's (which register at boot, after the island's).
 import { expect, test, type Frame, type Page } from '@playwright/test';
 
-const ISLAND = 'http://editor.localhost:4174';
+import { ISLAND } from './ports';
 interface Ev { type: string; phase?: string; code?: string; shift?: boolean; caps?: string[]; at: number }
 interface Harness { __events: Ev[]; __bridge: { request(op: string, args?: unknown): Promise<Record<string, unknown>> } }
 type Probe = Window & { __probe: string[] };

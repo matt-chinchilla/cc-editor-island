@@ -9,7 +9,7 @@
 // select. Nothing in the board changes, and the plot's folder is gone after.
 import { expect, test, type Frame, type Page } from '@playwright/test';
 
-const ISLAND = 'http://editor.localhost:4174';
+import { ISLAND } from './ports';
 interface Ev { type: string; phase?: string; depth?: number; caps?: string[]; at: number }
 interface Harness { __events: Ev[]; __bridge: { request(op: string, args?: unknown): Promise<Record<string, unknown>> } }
 interface Engine { Module: { kicadCollabTestUndoDepth(): number }; FS: { readdir(p: string): string[]; analyzePath(p: string): { exists: boolean } } }

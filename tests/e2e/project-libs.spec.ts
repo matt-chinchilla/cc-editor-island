@@ -9,7 +9,7 @@
 // island booted on its example library still answers place.
 import { expect, test, type Frame, type Page } from '@playwright/test';
 
-const ISLAND = 'http://editor.localhost:4174';
+import { ISLAND } from './ports';
 interface Ev { type: string; phase?: string; depth?: number; caps?: string[]; at: number }
 interface Harness { __events: Ev[]; __saved: Record<string, Uint8Array>; __bridge: { request(op: string, args?: unknown): Promise<Record<string, unknown>> } }
 interface Engine { Module: { kicadLibsTestLoadFootprint(lib: string, name: string): Promise<string> | string } }

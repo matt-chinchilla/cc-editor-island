@@ -13,7 +13,8 @@
 <div id="state"></div>
 <script>
 'use strict';
-const ISLAND = 'http://editor.localhost:4174';
+// The island is on the next port (tests/e2e/ports.ts, CC_E2E_PORT).
+const ISLAND = `http://editor.localhost:${Number(location.port) + 1}`;
 const FIXTURES = {
   glasgow: { files: ['glasgow.kicad_pro', 'glasgow.kicad_pcb', 'glasgow.kicad_sch', 'io_banks.kicad_sch', 'io_buffer.kicad_sch'] },
   'http-lib': { files: ['httplib.kicad_pro', 'httplib.kicad_sch', 'sym-lib-table', 'remote.kicad_httplib'] },

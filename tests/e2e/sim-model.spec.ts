@@ -8,7 +8,7 @@
 // file, and a set the engine refuses (model_invalid).
 import { expect, test, type Frame, type Page } from '@playwright/test';
 
-const ISLAND = 'http://editor.localhost:4174';
+import { ISLAND } from './ports';
 interface Ev { type: string; depth?: number; caps?: string[]; phase?: string; run?: number; code?: string; at: number }
 interface Harness { __events: Ev[]; __bridge: { request(op: string, args?: unknown): Promise<Record<string, unknown>> } }
 interface Engine { Module: { kicadCollabTestUndoDepth(): number } }

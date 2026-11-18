@@ -8,8 +8,7 @@
 import { expect, test, type BrowserContext, type Frame, type Page } from '@playwright/test';
 import palette from '../../theme/colors/circuitcenter.json' with { type: 'json' };
 
-const PAGE = 'http://localhost:4173';
-const ISLAND = 'http://editor.localhost:4174';
+import { ISLAND, PAGE } from './ports';
 const PAIR = new Set([PAGE, ISLAND]);
 
 interface Ev { type: string; phase?: string; detail?: string; path?: string; bytes?: number; text?: string; topic?: string; caps?: string[]; open?: boolean; depth?: number; action?: string; at: number }
