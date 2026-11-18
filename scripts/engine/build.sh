@@ -10,8 +10,9 @@
 #
 # Assembles /home/matthew/cc-engine/tree-<name>/ in PCBJam's layout from the four
 # local clones (git worktrees; the submodule gitlinks are checked against them),
-# runs ./docker/build.sh there, and collects the served files (engine and simulator service) plus meta.json
-# in /home/matthew/cc-engine/out/<name>/. Hours long: run it detached. README.md
+# runs ./docker/build.sh there, and collects the served files plus meta.json
+# in /home/matthew/cc-engine/out/<name>/ (the engine, the simulator service and the
+# OpenCASCADE service). Hours long: run it detached. README.md
 # beside this file has the rulings and how to watch a build.
 set -euo pipefail
 
@@ -33,9 +34,12 @@ JOBS=6
 # The engine's files, then the simulator service's (ngspice_service, PCBJam's own
 # recipe unchanged: plain ngspice and its embind shim, no KiCad code, so after its
 # dependency is cached it builds in seconds). The service is fetched on a reader's
-# first simulation run only (spec 2026-11-16 simulator, section 5).
+# first simulation run only (spec 2026-11-16 simulator, section 5). Then the
+# OpenCASCADE service's (occ_service, PCBJam's own recipe unchanged: the 3D exports,
+# STEP and the other formats, engine run 15), fetched on a reader's first 3D export only.
 FILES=(kicad_editor.js kicad_editor.wasm wx.js wx-dom.js images.tar.gz
-       ngspice_service.js ngspice_service.wasm)
+       ngspice_service.js ngspice_service.wasm
+       occ_service.js occ_service.wasm)
 
 usage() { echo "usage: bash scripts/engine/build.sh <pristine|cc8> [--build-deps]" >&2; exit 2; }
 die() { echo "build.sh: $*" >&2; exit 1; }
@@ -155,9 +159,9 @@ echo "wxwidgets nested submodules present"
 export COMPOSE_PROJECT_NAME=$DOCKER_PROJECT KICAD_DOCKER_CPUS=$DOCKER_CPUS \
   KICAD_DOCKER_MEM=$DOCKER_MEM KICAD_NO_MONITOR=1
 unset KICAD_WASM_OPT BUILD_3D_VIEWER KICAD_KEEP_CONTAINER KICAD_LOG_NESTED KICAD_LOG_FILE
-# Both apps in one recipe run (its comma list): the engine first, then the service,
-# which copies to output/ beside the engine's files.
-RECIPE_ARGS=(kicad_editor,ngspice_service)
+# Every app in one recipe run (its comma list): the engine first, then the two
+# services, each copied to output/ beside the engine's files.
+RECIPE_ARGS=(kicad_editor,ngspice_service,occ_service)
 if [ "$BUILD_DEPS" = 1 ]; then RECIPE_ARGS+=(--build-deps); fi
 RECIPE_ARGS+=(-j "$JOBS")
 
