@@ -1,0 +1,56 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (C) 2026 Circuit Center Inc
+
+Written by hand for this repository on 2026-11-18 (CC0 1.0: no rights
+reserved, the full text in LICENSE), no third-party content: every symbol and
+footprint is drawn here, under KiCad's library names (Device:R, Device:C,
+Connector_Generic:Conn_01x02, Regulator_Linear:AMS1117-3.3, power:+5V,
+power:+3V3, power:GND, power:PWR_FLAG; Resistor_SMD:R_0805_2012Metric,
+Capacitor_SMD:C_0805_2012Metric, Package_TO_SOT_SMD:SOT-223-3_TabPin2,
+Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical) so an Update
+the board finds KiCad's own footprints. For the design blocks units (wave 2
+plan, projects and content, I-FIX-BLOCKS; ledger rows DB1 to DB3).
+
+The project, two sheets:
+- blocks-small.kicad_sch (Root): J1, a two pin header, giving +5V and GND,
+  each with a PWR_FLAG, and the sheet Load (load.kicad_sch);
+- load.kicad_sch (Load): R1, 1k, from +5V to GND;
+- blocks-small.kicad_pcb: J1 and R1 routed on F.Cu inside a 15 by 10 mm
+  Edge.Cuts rectangle;
+- design-block-lib-table: one row, blocks-small_blocks, type KiCad, uri
+  ${KIPRJMOD}/blocks-small_blocks.kicad_blocks;
+- the project file turns off the library comparisons (lib_symbol_issues,
+  lib_symbol_mismatch, lib_footprint_issues, lib_footprint_mismatch), as the
+  symbols and footprints are our own drawings.
+
+The design block library blocks-small_blocks.kicad_blocks, one folder per
+block holding <name>.kicad_sch, <name>.json (description, keywords, fields)
+and, for a block with a layout, <name>.kicad_pcb:
+- LDO: U1 AMS1117-3.3 (SOT-223), C1 10u on its input (+5V), C2 22u on its
+  output (+3V3), GND; schematic and layout, the layout placed and routed
+  (0.5 mm tracks on F.Cu), no board outline (a block's layout carries none);
+- LDO_PARTIAL: the same schematic (U1, C1, C2), its layout without C2 and
+  C2's two tracks: the layout lacks one footprint the schematic names, for
+  the failure row of Apply block layouts;
+- RC: R1 10k from the hierarchical label IN to OUT, C1 100n from OUT to GND;
+  schematic only.
+
+What kicad-cli 10.0.4 (the kicad/kicad:10.0.4 image) reports, measured
+2026-11-18; no file has a parse error:
+- sch erc blocks-small.kicad_sch: 0 violations (both sheets);
+- pcb drc --schematic-parity blocks-small.kicad_pcb: 0 violations, 0
+  unconnected items, 0 schematic parity issues;
+- pcb drc LDO.kicad_pcb: 4 violations, 0 unconnected items: invalid_outline
+  (no Edge.Cuts, by design) and lib_footprint_mismatch for U1, C1 and C2 (no
+  project file beside a block, so KiCad's defaults compare our drawings with
+  its library);
+- pcb drc LDO_PARTIAL.kicad_pcb: 3 violations, 0 unconnected items:
+  invalid_outline and lib_footprint_mismatch for U1 and C1;
+- sch erc on a block alone (not asked by the recipe): LDO and LDO_PARTIAL 10
+  each (power_pin_not_driven on +5V and GND, no PWR_FLAG in a block, and 8
+  lib_symbol_mismatch), RC 6 (IN and OUT have no parent sheet, IN meets one
+  pin, power_pin_not_driven on GND, 2 lib_symbol_mismatch).
+
+files.json lists the files the e2e harness opens (the project and every
+block file). The KiCad files carry no comment (their formats have none), so
+this file holds their license.

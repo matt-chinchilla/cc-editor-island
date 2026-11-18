@@ -1,0 +1,30 @@
+{
+  "board": {
+    "design_settings": {
+      "rule_severities": {
+        "lib_footprint_issues": "ignore",
+        "lib_footprint_mismatch": "ignore"
+      }
+    }
+  },
+  "erc": {
+    "rule_severities": {
+      "lib_symbol_issues": "ignore",
+      "lib_symbol_mismatch": "ignore"
+    }
+  },
+  "meta": {
+    "filename": "blocks-small.kicad_pro",
+    "version": 3
+  },
+  "sheets": [
+    [
+      "cc0b10c5-0000-4000-8000-000000000001",
+      "Root"
+    ],
+    [
+      "cc0b10c5-0000-4000-8000-000000000002",
+      "Load"
+    ]
+  ]
+}

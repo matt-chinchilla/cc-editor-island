@@ -1,0 +1,5 @@
+{
+  "description": "First order RC low pass filter, 10 k and 100 nF, about 160 Hz, schematic only",
+  "keywords": "rc filter low pass",
+  "fields": {}
+}

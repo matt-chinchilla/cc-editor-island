@@ -1,0 +1,5 @@
+{
+  "description": "The LDO block whose layout lacks C2, the output capacitor its schematic names",
+  "keywords": "ldo regulator 3v3 power partial",
+  "fields": {}
+}
