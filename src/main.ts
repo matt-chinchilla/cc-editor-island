@@ -23,7 +23,8 @@ import { parentOriginFor, parseBoot } from './cc-config';
 import { createFatalGate } from './fatal';
 import { cleanDetail, hideScreens, showScreen } from './screens';
 import { statusFatal } from './status';
-import { FRAME_TOKEN, frameToTool, type Frame } from './types';
+import type { Frame } from './types';
+import { framePicks, frameForToolName, frameToken, frameTool } from './frames';
 import { installQuitHandler } from './quit';
 import { installEngineTeardown, isShutdownError, teardownOnPagehide } from './teardown';
 import { bootHeartbeat } from './boot-heartbeat';
@@ -44,12 +45,9 @@ declare const __SIM_WASM_BYTES__: number;   // define'd by vite.config.ts from P
 /** How long the engine may take, after its scripts ran, to show its editor frame. */
 const ENGINE_UP_TIMEOUT_MS = 180_000;
 
-/** kicadWebOpenTool receives a tool name, sometimes a path, sometimes with .exe. */
+/** kicadWebOpenTool receives a tool name, sometimes a path, sometimes with .exe; a wave unit's frame adds its own names (src/frames.ts). */
 function frameForTool(raw: string): Frame | null {
-  const base = (raw.replace(/\\/g, '/').split('/').pop() ?? raw).replace(/\.exe$/i, '');
-  if (base === 'pcbnew') return 'pcb';
-  if (base === 'eeschema') return 'sch';
-  return null;
+  return frameForToolName(raw);
 }
 
 /**
@@ -197,10 +195,10 @@ async function main(): Promise<void> {
     const libsSource = withProjectLibs(chosen.source, projectLibs);
     choice = { source: libsSource, mirror };
     await bootKicadTool({
-      tool: frameToTool(frame),
+      tool: frameTool(frame),
       base: engineBase(),
       container,
-      frame: FRAME_TOKEN[frame],
+      frame: frameToken(frame),
       dark: theme === 'night',
       seeds: seedsFor(theme),
       libsSource,
@@ -269,8 +267,9 @@ async function main(): Promise<void> {
   // the frame's search index and the common libraries of its kind, at low
   // priority, nothing shown and nothing sent. KiCad's own chooser keeps its
   // first-enumerate warm-up above.
-  // A symedit frame places nothing, so it warms nothing (spec 2026-11-16, section 6.1).
-  if (frame !== 'symedit' && choice?.mirror != null) void quietWarmUp({ frame, mirror: choice.mirror, signal: libsWarmUp.signal, busy: () => responder.busy(), log: libsLog });
+  // A symedit frame places nothing, so it warms nothing (spec 2026-11-16, section 6.1);
+  // nor does a frame a wave unit adds unless its descriptor says it picks.
+  if (framePicks(frame) && choice?.mirror != null) void quietWarmUp({ frame, mirror: choice.mirror, signal: libsWarmUp.signal, busy: () => responder.busy(), log: libsLog });
 }
 
 void main();

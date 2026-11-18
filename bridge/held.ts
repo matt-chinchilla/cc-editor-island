@@ -57,7 +57,7 @@ export const HELD_KEYS_CAP = 'heldKeys';
 /** The engine's request is at most this long. */
 const MAX_REQUEST = 1024;
 /** A KiCad action name: dotted words ("pcbnew.DRCTool.runDRC"), at most 128 characters. */
-const ACTION_RE = /^(?=.{1,128}$)[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/;
+export const ACTION_RE = /^(?=.{1,128}$)[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/;
 
 export interface HeldAction { action: string; frames: readonly Frame[]; cap: string }
 
@@ -109,10 +109,12 @@ export function readHeldRequest(json: unknown): string | null {
 }
 
 /** Whether the island holds `action` in this frame with these caps. */
-export function heldTaken(action: string, frame: Frame, caps: readonly string[]): boolean {
+export function heldTaken(action: string, frame: Frame, caps: readonly string[], rows: readonly HeldAction[] = HELD_ACTIONS): boolean {
   // An action may sit in the table once per frame kind (the datasheet and the
   // properties pane are held in a sch frame under heldKeys, in a symedit frame under symedit).
-  return HELD_ACTIONS.some((h) => h.action === action && h.frames.includes(frame) && caps.includes(h.cap));
+  // `rows` is the table read: the built ins, or with every wave unit's rows
+  // (bridge/ext/registry.ts heldActions, which the responder passes).
+  return rows.some((h) => h.action === action && h.frames.includes(frame) && caps.includes(h.cap));
 }
 
 /**
@@ -121,14 +123,15 @@ export function heldTaken(action: string, frame: Frame, caps: readonly string[])
  * taken too, so KiCad never opens the window, but sends nothing); every other
  * request false, so KiCad runs it. A throwing `send` answers false.
  */
-export function installHeld(w: HeldWindow, opts: { frame: Frame; caps: readonly string[]; admit: () => boolean; repeating: () => boolean; send: (action: string) => void }): void {
+export function installHeld(w: HeldWindow, opts: { frame: Frame; caps: readonly string[]; admit: () => boolean; repeating: () => boolean; send: (action: string) => void; rows?: readonly HeldAction[] }): void {
   const caps = [...opts.caps];
+  const rows = opts.rows ?? HELD_ACTIONS;
   w.kicadHostAction = {
     onRequest: (json: unknown): boolean => {
       try {
         if (!opts.admit()) return false;
         const action = readHeldRequest(json);
-        if (action == null || !heldTaken(action, opts.frame, caps)) return false;
+        if (action == null || !heldTaken(action, opts.frame, caps, rows)) return false;
         if (!opts.repeating()) opts.send(action);
         return true;
       } catch {

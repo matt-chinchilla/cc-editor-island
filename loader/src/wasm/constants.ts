@@ -3,7 +3,12 @@
 // Modified by Circuit Center on 2026-09-30: the per-tool tables keep only the
 // island's two tools (pcbnew, eeschema); the OCC and ngspice service bundles
 // and the 3D model root and env vars are removed.
-import type { Tool } from "../../../src/types";
+// Modified by Circuit Center on 2026-11-18: the per-tool tables hold the two
+// built in tools; toolArgv0, toolBundle, toolNeedsConfigSeed and toolLibKind
+// answer for every tool, a wave unit's own read from its frame's descriptor
+// (src/frames.ts extTool).
+import type { BuiltinTool, Tool } from "../../../src/types";
+import { extTool } from "../../../src/frames";
 
 /**
  * KiCad config/version dir baked into the WASM build. The File→Open dialog
@@ -29,7 +34,7 @@ export const RESOURCE_PATH =
  * proven harness HTMLs set as `Module.thisProgram` (tests/apps/kicad/<tool>.html)
  * — notably the calculator binary is `pcb_calculator`, not `calculator`.
  */
-export const TOOL_ARGV0: Record<Tool, string> = {
+export const TOOL_ARGV0: Record<BuiltinTool, string> = {
   pcbnew: "/usr/bin/pcbnew",
   eeschema: "/usr/bin/eeschema",
 };
@@ -54,7 +59,7 @@ export type Bundle =
  * tools are genuinely separate engines and back their own bundles. Used to resolve
  * the CDN asset folder and the `<bundle>.{wasm,js}` filenames.
  */
-export const TOOL_BUNDLE: Record<Tool, Bundle> = {
+export const TOOL_BUNDLE: Record<BuiltinTool, Bundle> = {
   pcbnew: "kicad_editor",
   eeschema: "kicad_editor",
 };
@@ -69,7 +74,7 @@ export const TOOL_BUNDLE: Record<Tool, Bundle> = {
  * passes its token explicitly (pcbnew included — cheap insurance over relying on
  * the default).
  */
-export const TOOL_FRAME: Record<Tool, string | undefined> = {
+export const TOOL_FRAME: Record<BuiltinTool, string | undefined> = {
   pcbnew: "pcb",
   eeschema: "sch",
 };
@@ -84,7 +89,7 @@ export const TOOL_FRAME: Record<Tool, string | undefined> = {
  * KiCad config before main() (kicad_common.json privacy flags + the lib-tables
  * the providers check) so NeedsUserInput() is false and the wizard is skipped.
  */
-export const TOOL_NEEDS_CONFIG_SEED: Record<Tool, boolean> = {
+export const TOOL_NEEDS_CONFIG_SEED: Record<BuiltinTool, boolean> = {
   pcbnew: true,
   eeschema: true,
 };
@@ -98,10 +103,31 @@ export const TOOL_NEEDS_CONFIG_SEED: Record<Tool, boolean> = {
  * a kind-agnostic container, so the same lib id can land in both tables.
  * `null` = the tool uses no libraries.
  */
-export const TOOL_LIB_KIND: Record<Tool, "symbol" | "footprint" | null> = {
+export const TOOL_LIB_KIND: Record<BuiltinTool, "symbol" | "footprint" | null> = {
   pcbnew: "footprint",
   eeschema: "symbol",
 };
+
+/** A tool's argv[0]: a built in tool's row, else its frame descriptor's. */
+export function toolArgv0(tool: Tool): string {
+  return (TOOL_ARGV0 as Readonly<Record<string, string>>)[tool] ?? extTool(tool)?.argv0 ?? `/usr/bin/${tool}`;
+}
+
+/** The bundle that backs a tool. */
+export function toolBundle(tool: Tool): Bundle {
+  return (TOOL_BUNDLE as Readonly<Record<string, Bundle>>)[tool] ?? extTool(tool)?.bundle ?? "kicad_editor";
+}
+
+/** Whether a tool's KiCad config is seeded before main(). */
+export function toolNeedsConfigSeed(tool: Tool): boolean {
+  return (TOOL_NEEDS_CONFIG_SEED as Readonly<Record<string, boolean>>)[tool] ?? extTool(tool)?.needsConfigSeed ?? true;
+}
+
+/** The library kind a tool consumes. */
+export function toolLibKind(tool: Tool): "symbol" | "footprint" | null {
+  const own = (TOOL_LIB_KIND as Readonly<Record<string, "symbol" | "footprint" | null>>)[tool];
+  return own !== undefined ? own : (extTool(tool)?.libKind ?? null);
+}
 
 /** KiCad user settings dir for this build (PATHS::GetUserSettingsPath()). */
 export const KICAD_CONFIG_DIR = `/home/kicad/.config/kicad/kicad/${KICAD_VERSION_DIR}`;

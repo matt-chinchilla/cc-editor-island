@@ -25,14 +25,17 @@
 // browser's compiled-code cache is used (a Response built in script around a
 // counting stream carries no cache handle). fetchWasmWithProgress is exported
 // for its unit test (src/wasm-fetch.test.ts).
+// Modified by Circuit Center on 2026-11-18: a tool's bundle, library kind,
+// config seed and argv[0] are read through constants.ts's lookups, so a tool a
+// wave unit's frame boots (src/frames.ts) finds its row.
 import type { Tool } from "../../../src/types";
 import {
   KICAD_CONFIG_DIR,
   RESOURCE_PATH,
-  TOOL_ARGV0,
-  TOOL_BUNDLE,
-  TOOL_LIB_KIND,
-  TOOL_NEEDS_CONFIG_SEED,
+  toolArgv0,
+  toolBundle,
+  toolLibKind,
+  toolNeedsConfigSeed,
   type Bundle,
 } from "./constants";
 import {
@@ -427,7 +430,7 @@ async function doBoot(opts: BootOptions): Promise<void> {
   // The deployed bundle backing this tool. footprint_editor/symbol_editor share
   // the pcbnew/eeschema engine, so their `.wasm`/`.js`/pthread-worker files are the
   // parent's; `tool` still drives identity (thisProgram), config-seed and lib-kind.
-  const bundle = TOOL_BUNDLE[tool];
+  const bundle = toolBundle(tool);
   const w = window as ToolWindow;
 
   // The wasm reads the top-level frame geometry from a GLOBAL `mainWindow`
@@ -465,7 +468,7 @@ async function doBoot(opts: BootOptions): Promise<void> {
   // regardless of frame. Library loading is lazy (enumerate is a no-op; bodies
   // load on demand), so the extra table costs nothing until a feature reads it.
   // Single-engine tools keep their one kind (TOOL_LIB_KIND).
-  const libKind = TOOL_LIB_KIND[tool];
+  const libKind = toolLibKind(tool);
   const libKinds: ReadonlyArray<"symbol" | "footprint"> =
     bundle === "kicad_editor" ? ["symbol", "footprint"] : libKind ? [libKind] : [];
 
@@ -646,10 +649,10 @@ async function doBoot(opts: BootOptions): Promise<void> {
   };
 
   const preRun = [createCanvas, writeResources];
-  if (TOOL_NEEDS_CONFIG_SEED[tool]) preRun.push(seedKicadConfig);
+  if (toolNeedsConfigSeed(tool)) preRun.push(seedKicadConfig);
 
   w.Module = {
-    thisProgram: TOOL_ARGV0[tool], // argv[0] for KiCad's DEBUG check
+    thisProgram: toolArgv0(tool), // argv[0] for KiCad's DEBUG check
     // PCBJAM_DARK_CHROME is a getenv fallback for the wx chrome appearance
     // (wxwidgets src/wasm/settings.cpp) — the authoritative seed is the
     // kicadSetDarkChrome call in onRuntimeInitialized below, which runs on

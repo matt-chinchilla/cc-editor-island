@@ -13,11 +13,11 @@
 // through the engine's viewport (kicadCollabGetViewport: the view's center in
 // the engine's units and its scale in CSS px per unit; measured to agree with
 // the engine's report within a pixel), at most once a frame.
-import type { Frame } from '../src/types';
+import type { BuiltinFrame, Frame } from '../src/types';
 import { drawingSurface, readViewport, type Viewport, type ViewWindow } from './view';
 
 /** The engine's units in a millimeter: a schematic's (and a symbol's) 100 nm steps, a board's nanometers. */
-export const UNITS_PER_MM: Readonly<Record<Frame, number>> = Object.freeze({ sch: 1e4, pcb: 1e6, symedit: 1e4 });
+export const UNITS_PER_MM: Readonly<Record<BuiltinFrame, number>> = Object.freeze({ sch: 1e4, pcb: 1e6, symedit: 1e4 });
 /** What the chip prints before the pointer has been on the drawing (the viewing drawing's own first text). */
 export const COORDS_START = '0.00, 0.00 mm';
 /** The chip's class (src/theme.css). */
@@ -37,8 +37,9 @@ function fixed(mm: number): string {
 }
 
 /** A place in the engine's units as the chip prints it: `77.50, 97.36 mm`. */
-export function coordsText(x: number, y: number, frame: Frame): string {
-  const per = UNITS_PER_MM[frame];
+export function coordsText(x: number, y: number, frame: Frame, unitsPerMm?: number): string {
+  // A frame a wave unit adds names its units in its descriptor (src/frames.ts unitsPerMm).
+  const per = unitsPerMm ?? (UNITS_PER_MM as Readonly<Record<string, number>>)[frame] ?? 1e6;
   return `${fixed(x / per)}, ${fixed(y / per)} mm`;
 }
 
@@ -72,7 +73,7 @@ export class CoordsChip {
   private chrome = false;
   private text = COORDS_START;
 
-  constructor(private readonly w: CoordsWindow, private readonly opts: { frame: Frame; live: () => boolean }) {}
+  constructor(private readonly w: CoordsWindow, private readonly opts: { frame: Frame; live: () => boolean; unitsPerMm?: number }) {}
 
   /** Adds the chip to the page and listens for the pointer. False without the engine's viewport export or a page to draw on. */
   start(): boolean {
@@ -161,7 +162,7 @@ export class CoordsChip {
     if (v == null) return;
     // The viewport's size is the drawing's in the engine's own px: the pointer is scaled to it.
     const world = worldAt(v, px * (v.w / rect.width), py * (v.h / rect.height));
-    const text = coordsText(world.x, world.y, this.opts.frame);
+    const text = coordsText(world.x, world.y, this.opts.frame, this.opts.unitsPerMm);
     if (text === this.text) return;
     this.text = text;
     el.textContent = text;

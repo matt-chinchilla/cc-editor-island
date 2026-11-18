@@ -15,7 +15,7 @@ import { fileConflict, normalizePath, openStaged, PROJECT_ROOT, stageLocalSettin
 import type { Frame } from '../src/types';
 import { isProjectNick, MAX_PROJECT_LIBS, type ProjectLibrary, type ProjectLibs } from '../src/project-libs';
 import { quietClear, quietFor, quietForever } from '../src/unload-quiet';
-import { ALTIUM_PROJECT, ALTIUM_SHEET, closeDialog, dialogTitle, DOCUMENT_EXTENSION as EXT, driveImport, emptySheet, hasExtension, importable, importCall, importTarget } from './import';
+import { ALTIUM_PROJECT, ALTIUM_SHEET, closeDialog, dialogTitle, driveImport, emptySheet, hasExtension, importable, importCall, importTarget } from './import';
 import { dialogUp, dismissPopups, isProgressDialog, keysBlocked, visibleDialogs, watchMenus } from './modal';
 import { BOARD_CHECK_DONE, BOARD_CHECK_EXPORTS, BOARD_CHECK_REPORT, BOARD_CHECK_ROOT, boardCheckJson, EXPLAIN_EXPORTS, parseBoardCheckArgs, parseExplainArgs, readBoardCheckDone, readDrcReport, readExplain, type BoardCheckArgs, type BoardCheckDone } from './boardCheck';
 import { BOARD_ITEM_EXPORTS, boardItemSetJson, parseBoardItemGetArgs, parseBoardItemSetArgs, readBoardItems, setMisfit, showsBoardSet, type BoardItemSheet } from './boardItem';
@@ -25,7 +25,10 @@ import { HELD_EXPORT, HELD_KEYS_CAP, installHeld, type HeldWindow } from './held
 import { ANNOTATE_DONE, ANNOTATE_EXPORTS, ANNOTATE_ROOT, annotateJson, MAX_CHANGES, parseAnnotateArgs, readAnnotateDone, runNotes, runText, type AnnotateDone } from './annotate';
 import { CHECK_DONE, CHECK_EXPORTS, CHECK_REPORT, CHECK_ROOT, readCheckDone, readCheckReport, type CheckDone } from './check';
 import { MODEL_EXPORTS, modelsJson, parseModelsArgs, readModels, sameModels } from './models';
-import REQUEST_OPS from './ops.json';
+import { BUILTIN_EVENTS, BUILTIN_OPS } from './ext/builtins';
+import { exportJobs as extExportJobs, heldActions, REGISTRY, type Registry } from './ext/registry';
+import { SEAM_PLACEHOLDER, type Answer, type FrameKind, type ResponderCtx } from './ext/contract';
+import { documentExtension, framePicks, frameKind as extFrameKind, frameRefusal as extFrameRefusal, ownDocument, unitsPerMm } from '../src/frames';
 import { parsePlotArgs, plotFailure, plotJson, plotNotes, PLOT_DONE, PLOT_EXPORTS, PLOT_ROOT, readPlotDone, readPlotFolder, type PlotDone } from './plot';
 import { placeBlob, PlacementWatch } from './place';
 import { BOARD_PROPERTIES_CAP, BOARD_PROPERTIES_EXPORT, installProperties, PROPERTIES_CAP, PROPERTIES_EXPORT, type BoardPropertiesKind, type PropertiesWindow } from './properties';
@@ -115,8 +118,11 @@ export interface Responder {
   close(): void;
 }
 
-/** An answer; `transfer` lists the buffers of fresh copies the result carries (project.plot's files). */
-type Answer = { ok: true; result: Record<string, unknown>; transfer?: ArrayBuffer[] } | { ok: false; code: string; message: string };
+// An answer (bridge/ext/contract.ts Answer); `transfer` lists the buffers of fresh copies the result carries (project.plot's files).
+
+/** A wave unit's event on its way out (ctx.emitExt): the message as sent, and the buffers it transfers. */
+const EXT_POST = 'cc.extPost';
+type ExtPost = { type: typeof EXT_POST; out: Record<string, unknown>; transfer: ArrayBuffer[] };
 
 /**
  * The engine window with the callback slots the fork calls: the save one
@@ -325,12 +331,11 @@ const STEER_EVENTS = ['wheel', 'pointerdown', 'keydown'] as const;
 const SAVE_KEY: KeyPress = { key: 's', code: 'KeyS', ctrl: true, shift: false, alt: false };
 /** KiCad's window chrome as the element registry names it (measured with chrome.show on, 2026-10-01). */
 const CHROME_RE = /^wx(MenuBar|AuiToolBar|ToolBar|StatusBar)$|InfoBar/i;
-/**
- * The request ops this island answers, from bridge/ops.json: the one list, which
- * scripts/build.mjs also writes into island.json as `ops` (sorted), so a host
- * learns what a release answers before any engine boots.
- */
-const OPS: ReadonlySet<string> = new Set(REQUEST_OPS);
+// The request ops this island answers are the built ins (bridge/ops.builtin.json)
+// and every wave unit's (bridge/ext/registry.ts), built per responder as OPS;
+// scripts/ext/gen.mjs writes the same list into bridge/ops.json, which
+// scripts/build.mjs writes into island.json as `ops` (sorted), so a host
+// learns what a release answers before any engine boots.
 /**
  * The picker's library reads: answered as they arrive, off the request queue
  * (they never touch the engine), so a read waiting on a bundle never holds up
@@ -487,7 +492,7 @@ const FRAME_TYPE_RE = /Frame/;
  * file of it (open_document), compared in any case. A sch frame holds the
  * whole sheet hierarchy, so every sheet; a pcb frame its board.
  */
-const OWN_DOCUMENT: Readonly<Record<Frame, string | null>> = { sch: '.kicad_sch', pcb: '.kicad_pcb', symedit: null };
+// (A frame's document kind: src/frames.ts ownDocument, which knows the frames wave units add.)
 /** A sheet path as the engine reports it: "/" then one UUID and a slash per level. */
 const SHEET_PATH_RE = /^\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/)*$/;
 
@@ -568,13 +573,13 @@ function readBytes(FS: EmscriptenFS, abs: string): Uint8Array | null {
 }
 
 /** The file KiCad should open when the host names none: the project's root sheet or board. */
-function defaultOpen(written: string[], frame: Frame): string | undefined {
+function defaultOpen(written: string[], ext: string): string | undefined {
   const pro = written.find((p) => p.endsWith('.kicad_pro'));
   if (pro != null) {
-    const twin = `${pro.slice(0, -'.kicad_pro'.length)}${EXT[frame]}`;
+    const twin = `${pro.slice(0, -'.kicad_pro'.length)}${ext}`;
     if (written.includes(twin)) return twin;
   }
-  return written.find((p) => p.endsWith(EXT[frame]));
+  return written.find((p) => p.endsWith(ext));
 }
 
 export function startResponder(opts: {
@@ -602,16 +607,29 @@ export function startResponder(opts: {
    * its worker. Without it the runs are unsupported.
    */
   sim?: SimService | null;
+  /** The wave units (bridge/ext/registry.ts); the tests pass units of their own. */
+  ext?: Registry;
 }): Responder {
   const { parentOrigin, page, onShutdown, onEngineStopped, projectLibs } = opts;
+  const reg = opts.ext ?? REGISTRY;
+  /** Every request op this island answers: the built ins and every unit's. */
+  const OPS: ReadonlySet<string> = new Set([...BUILTIN_OPS, ...reg.ops.keys()]);
+  /** The held actions read at run time: the built ins and every unit's rows. */
+  const heldRows = heldActions(reg);
+  /** The jobs project.export runs: the built ins and every unit's. */
+  const jobs = extExportJobs(reg);
   const simService = opts.sim ?? null;
   const nonce = randomNonce();
   const root = PROJECT_FOLDER;
   let port: MessagePort | null = null;
   let chain: Promise<void> = Promise.resolve();
-  const queued: IslandEvent[] = [];
+  const queued: Array<IslandEvent | ExtPost> = [];
   let win: ToolWindow | null = null;
   const frame: Frame = parseBoot(page.location.search).frame;
+  /** The frame's descriptor when a wave unit defines it (src/frames.ts), else null. */
+  const kind: FrameKind | null = extFrameKind(frame, reg);
+  /** The extension of the file this frame opens. */
+  const EXT_OF_FRAME = documentExtension(frame, reg);
   let staged: StagedProject | null = null;
   let opened: string | null = null;
   /**
@@ -770,6 +788,17 @@ export function startResponder(opts: {
     }
   };
 
+  /** A wave unit's event, rebuilt with exactly its declared keys (ctx.emitExt). */
+  const postExt = (ev: ExtPost): void => {
+    if (closed) return;
+    if (port == null) {
+      if (queued.length >= MAX_QUEUED) queued.shift();
+      queued.push(ev);
+      return;
+    }
+    port.postMessage(ev.out, ev.transfer);
+  };
+
   const reply = (id: number, a: Answer): void => {
     if (closed) return;
     if (a.ok && a.transfer != null) port?.postMessage({ id, ok: true, result: a.result }, a.transfer);
@@ -801,6 +830,11 @@ export function startResponder(opts: {
         try { simNow(m.data); } catch (err) { answerIslandError(m.data, err); }
         return;
       }
+      // And a wave unit's op answered as it arrives (ExtOp.now: an engine parked in a menu or a prompt).
+      if (isExtNow(m.data)) {
+        void extNow(m.data).catch((err: unknown) => answerIslandError(m.data, err));
+        return;
+      }
       // A handler that rejects answers island_error for its own request; the
       // chain itself never rejects, so every later request is still answered.
       // A request is in flight from its arrival to its answer (ev.edited waits).
@@ -810,7 +844,7 @@ export function startResponder(opts: {
         .finally(() => { inFlight -= 1; });
       chain = chain.then(next, next);
     };
-    for (const ev of queued.splice(0)) emit(ev);
+    for (const ev of queued.splice(0)) { if (ev.type === EXT_POST) postExt(ev); else emit(ev); }
   };
   page.addEventListener('message', onConnect);
   page.parent.postMessage({ type: 'cc.hello', proto: 1, nonce, island: __ISLAND_ID__ }, parentOrigin);
@@ -870,26 +904,92 @@ export function startResponder(opts: {
     if (closed) return;
     if (!isObj(data) || typeof data.id !== 'number' || !Number.isSafeInteger(data.id) || typeof data.op !== 'string') return;
     const { id, op } = data;
-    if (!OPS.has(op)) return reply(id, fail('unknown_op', op));
+    if (!OPS.has(op)) {
+      // An op the wave manifest names whose unit has not landed: the seam answers it (never in island.json).
+      const unit = reg.pending.get(op);
+      return reply(id, unit != null ? fail('unsupported', `${SEAM_PLACEHOLDER}: ${op} waits for unit ${unit}`) : fail('unknown_op', op));
+    }
     if (!onlyKeys(data, ['id', 'op', 'args'])) return reply(id, fail('bad_args', op));
     // An import runs off the request chain (it may take a minute): what arrives
     // meanwhile is answered at once, busy, except a shutdown, which ends it.
     if (importing && op !== 'shutdown') return reply(id, fail('busy', op));
     // A check runs off the request chain as well (it holds the editor for seconds).
-    if (checking && !CHECK_PASSES.has(op)) return reply(id, fail('busy', op));
+    if (checking && !CHECK_PASSES.has(op) && reg.ops.get(op)?.op.passesCheck !== true) return reply(id, fail('busy', op));
     // A stopped engine is never entered again: the host reloads the frame.
     if (stopped != null && op !== 'shutdown') return reply(id, fail('not_ready', 'the engine stopped'));
     if (frame === 'symedit' && SYMEDIT_REFUSES.has(op)) return reply(id, fail('unsupported', SYMEDIT_REFUSAL));
-    if (op === 'project.import') return startImport(id, data.args);
-    if (op === 'sheet.check') return startCheck(id, data.args);
-    if (op === 'board.check') return startBoardCheck(id, data.args);
+    const refusal = frameRefusalOf(op);
+    if (refusal != null) return reply(id, refusal);
+    // The three runs that answer off the request chain, each through its widening hooks when a unit has any.
+    const offChain = op === 'project.import' ? startImport : op === 'sheet.check' ? startCheck : op === 'board.check' ? startBoardCheck : null;
+    if (offChain != null) {
+      if (!reg.widen.has(op)) return offChain(data.args, (a) => reply(id, a));
+      void widened(op, (a) => new Promise<Answer>((resolve) => offChain(a, resolve)))(data.args)
+        .catch((err: unknown) => fail('island_error', describeError(err)))
+        .then((a) => reply(id, a));
+      return;
+    }
     try {
-      reply(id, await run(op, data.args));
+      reply(id, await (reg.widen.has(op) ? widened(op, (a) => run(op, a))(data.args) : run(op, data.args)));
     } catch (err) {
       reply(id, fail('island_error', describeError(err)));
     }
     // The shutdown answer is the last message on the port, whatever the teardown answered.
     if (shutdownStarted) close();
+  }
+
+  /** A well-formed request for a wave unit's op answered as it arrives (ExtOp.now). */
+  function isExtNow(data: unknown): data is { id: number; op: string; args?: unknown } {
+    return isObj(data) && typeof data.id === 'number' && Number.isSafeInteger(data.id) && typeof data.op === 'string' && reg.ops.get(data.op)?.op.now === true;
+  }
+
+  /**
+   * A wave unit's op off the request queue: the same closed checks as any
+   * request and its frame's refusals, then its answer, whatever runs on the
+   * queue (an engine parked in a menu or a prompt still hears it).
+   */
+  async function extNow(data: { id: number; op: string; args?: unknown }): Promise<void> {
+    if (closed) return;
+    const { id, op } = data;
+    if (!onlyKeys(data as unknown as Record<string, unknown>, ['id', 'op', 'args'])) return reply(id, fail('bad_args', op));
+    if (stopped != null) return reply(id, fail('not_ready', 'the engine stopped'));
+    const refusal = frameRefusalOf(op);
+    if (refusal != null) return reply(id, refusal);
+    const answer = reg.widen.has(op) ? await widened(op, (a) => runExt(op, a))(data.args) : await runExt(op, data.args);
+    reply(id, answer);
+  }
+
+  /** A wave unit's op run: its handler, a throw answered island_error. */
+  async function runExt(op: string, args: unknown): Promise<Answer> {
+    const ext = reg.ops.get(op);
+    if (ext == null) return fail('unknown_op', op);
+    try { return await ext.op.run(args, ctx); } catch (err) { return fail('island_error', describeError(err)); }
+  }
+
+  /**
+   * An op through the units' widening hooks (ExtUnit.opsWidened), in unit id
+   * order: the first wraps the op itself, each later one the one before.
+   */
+  function widened(op: string, base: (args: unknown) => Promise<Answer>): (args: unknown) => Promise<Answer> {
+    let f = base;
+    for (const { fn } of reg.widen.get(op) ?? []) {
+      const inner = f;
+      f = (a) => fn(a, ctx, inner);
+    }
+    return f;
+  }
+
+  /**
+   * The unsupported answer this frame gives `op` before anything else, or
+   * null: a frame a unit defines refuses the built in ops its descriptor
+   * lists, and a unit's op answers only in the frames the unit names.
+   */
+  function frameRefusalOf(op: string): Answer | null {
+    const said = extFrameRefusal(frame, op, reg);
+    if (said != null) return fail('unsupported', said);
+    const ext = reg.ops.get(op);
+    if (ext?.frames != null && !ext.frames.includes(frame)) return fail('unsupported', ext.frameRefusal);
+    return null;
   }
 
   /** The host's picker opens: ev.pick, while the bridge is live. */
@@ -912,6 +1012,7 @@ export function startResponder(opts: {
 
   /** The document and the save hook are dropped and the engine's leave prompt is stopped for good. */
   function stopBridge(): void {
+    for (const stop of extStops.splice(0)) { try { stop(); } catch (err) { console.debug('[ext]', 'stop', describeError(err)); } }
     placeWatch?.stop();
     selectionFeed?.stop();
     selectionFeed = null;
@@ -1110,6 +1211,9 @@ export function startResponder(opts: {
       case 'sim.vectors': return simVectors(args);
       case 'sim.opOnSheet': return simOpOnSheet(args);
     }
+    // A wave unit's op (bridge/ext/<unit>.ts).
+    const ext = reg.ops.get(op);
+    if (ext != null) return ext.op.run(args, ctx);
     return fail('unknown_op', op);
   }
 
@@ -1119,7 +1223,7 @@ export function startResponder(opts: {
     if (typeof a.name !== 'string' || a.name.length > MAX_NAME || !Array.isArray(a.files) || a.files.length > MAX_FILES) return fail('bad_args', op);
     // The explicit target must be this frame's own kind: a .kicad_sch opened in
     // the pcb frame would have project.save write a board into it.
-    if (a.open !== undefined && (typeof a.open !== 'string' || !a.open.endsWith(EXT[frame]))) return fail('bad_args', op);
+    if (a.open !== undefined && (typeof a.open !== 'string' || !a.open.endsWith(EXT_OF_FRAME))) return fail('bad_args', op);
     const files: Array<{ path: string; bytes: Uint8Array }> = [];
     for (const f of a.files as unknown[]) {
       if (!isObj(f) || !onlyKeys(f, ['path', 'bytes']) || typeof f.path !== 'string' || !(f.bytes instanceof Uint8Array)) return fail('bad_args', op);
@@ -1138,8 +1242,8 @@ export function startResponder(opts: {
     stopSaveHook();
     removeTree(win.FS, root);   // every open starts from an empty project folder
     staged = stageProject(win, SLUG, files);
-    const target = typeof a.open === 'string' ? a.open : defaultOpen(staged.written, frame);
-    if (target == null) return fail('nothing_to_open', `no ${EXT[frame]} file`);
+    const target = typeof a.open === 'string' ? a.open : defaultOpen(staged.written, EXT_OF_FRAME);
+    if (target == null) return fail('nothing_to_open', `no ${EXT_OF_FRAME} file`);
     // Before the load, which reads them: KiCad draws the board as the viewer does.
     displaySettings = stageLocalSettings(win, staged, target);
     emit({ type: 'ev.state', phase: 'opening' });
@@ -1204,7 +1308,7 @@ export function startResponder(opts: {
       return { path: r.path, bytes: encoded };
     });
     if (bytes > MAX_WRITE_BYTES) return fail('bad_args', op);
-    const own = OWN_DOCUMENT[frame];
+    const own = ownDocument(frame, reg);
     // A symedit frame holds no document (its symbol lives in the engine): every file is taken.
     const held = own == null ? undefined : files.find((f) => f.path.toLowerCase().endsWith(own));
     if (held != null) return fail('open_document', held.path);
@@ -1254,17 +1358,17 @@ export function startResponder(opts: {
     return { w, FS: w.FS, open: a.open, files, altium };
   }
 
-  /** Starts a checked import off the request chain; its answer is sent when it ends. */
-  function startImport(id: number, args: unknown): void {
+  /** Starts a checked import off the request chain; its answer goes to `done` when it ends. */
+  function startImport(args: unknown, done: (a: Answer) => void): void {
     const checked = importCheck(args);
-    if ('ok' in checked) return reply(id, checked);
+    if ('ok' in checked) return done(checked);
     watchOfImport = false;   // a watch left from an open keeps out of this import
     importing = true;
     void projectImport(checked)
       .catch((err: unknown) => fail('island_error', describeError(err)))
       .then((a) => {
         importing = false;
-        reply(id, a);
+        done(a);
         // The answer first, then the frame's fatal screen (no event; the host closes or reboots the frame).
         if (stopped != null && !stopSignaled) {
           stopSignaled = true;
@@ -2838,16 +2942,16 @@ export function startResponder(opts: {
     return ok({ changes: run.done.changes, notes: runNotes(run.done.lines, dir) });
   }
 
-  /** Starts a checked sheet.check off the request chain; its answer is sent when it ends. */
-  function startCheck(id: number, args: unknown): void {
+  /** Starts a checked sheet.check off the request chain; its answer goes to `done` when it ends. */
+  function startCheck(args: unknown, done: (a: Answer) => void): void {
     const op = 'sheet.check';
-    if (!noArgs(args)) return reply(id, fail('bad_args', op));
+    if (!noArgs(args)) return done(fail('bad_args', op));
     const gate = schematicGate(op, CHECK_EXPORTS);
-    if ('ok' in gate) return reply(id, gate);
+    if ('ok' in gate) return done(gate);
     checking = true;
     void sheetCheck(gate.w, gate.mod)
       .catch((err: unknown) => fail('island_error', describeError(err)))
-      .then((a) => { checking = false; reply(id, a); });
+      .then((a) => { checking = false; done(a); });
   }
 
   /**
@@ -2958,17 +3062,17 @@ export function startResponder(opts: {
     try { focusCanvasQuietly(w.document); } catch { /* the reader's next press in the drawing focuses it */ }
   }
 
-  /** Starts a checked board.check off the request chain; its answer is sent when it ends. */
-  function startBoardCheck(id: number, args: unknown): void {
+  /** Starts a checked board.check off the request chain; its answer goes to `done` when it ends. */
+  function startBoardCheck(args: unknown, done: (a: Answer) => void): void {
     const op = 'board.check';
     const a = parseBoardCheckArgs(args);
-    if (a == null) return reply(id, fail('bad_args', op));
+    if (a == null) return done(fail('bad_args', op));
     const gate = boardGate(op, BOARD_CHECK_EXPORTS);
-    if ('ok' in gate) return reply(id, gate);
+    if ('ok' in gate) return done(gate);
     checking = true;
     void boardCheck(gate.w, gate.mod, a)
       .catch((err: unknown) => fail('island_error', describeError(err)))
-      .then((answer) => { checking = false; reply(id, answer); });
+      .then((answer) => { checking = false; done(answer); });
   }
 
   /**
@@ -3929,6 +4033,102 @@ export function startResponder(opts: {
   let ready = false;
   /** ev.ready went out: only then does a properties request reach the host. */
   let readySent = false;
+  /** ev.ready's caps as sent (ResponderCtx.caps). */
+  let readyCaps: readonly string[] = [];
+  /** The wave units' installs' stops, run when the bridge stops. */
+  const extStops: Array<() => void> = [];
+
+  /** A frame a unit defines: its own document is open (its descriptor's documentOpen). */
+  function frameOpen(): boolean {
+    const w = win;
+    if (kind?.documentOpen == null || w == null) return false;
+    try { return kind.documentOpen((w.Module ?? {}) as Record<string, unknown>) === true; } catch { return false; }
+  }
+
+  /** Whether a request of KiCad's (a properties dialog, a held key) reaches the host now: after ev.ready, while a document is open. */
+  function admitNow(): boolean {
+    return readySent && !closed && !importing && (frame === 'symedit' ? symbolOpenSeen : kind != null ? frameOpen() : staged != null && opened != null);
+  }
+
+  /** The one object a wave unit's handlers receive (bridge/ext/contract.ts ResponderCtx). */
+  const ctx: ResponderCtx = {
+    frame,
+    root,
+    timing,
+    win: () => win,
+    mod: () => (win?.Module ?? null) as Record<string, unknown> | null,
+    fs: () => win?.FS ?? null,
+    has: (names) => {
+      const mod = win?.Module as Record<string, unknown> | undefined;
+      return mod != null && names.every((name) => typeof mod[name] === 'function');
+    },
+    ready: () => readySent,
+    closed: () => closed,
+    caps: () => readyCaps,
+    opened: () => opened,
+    staged: () => staged,
+    hasDocument: () => opened != null || (() => { try { return symbolOpenNow(); } catch { return false; } })(),
+    admit: admitNow,
+    engineBusy: () => engineBusy(),
+    keysBlocked: () => win != null && keysBlocked(win),
+    placeHanging: () => placeWatch?.hanging() === true,
+    importing: () => importing,
+    checking: () => checking,
+    inFlight: () => inFlight,
+    boardGate: (op, exports) => boardGate(op, exports),
+    schematicGate: (op, exports) => schematicGate(op, exports),
+    documentGate: (op, exports, section) => documentGate(op, exports, section),
+    pressKey: (k) => { if (win != null) pressKey(win, k); },
+    emit: (ev) => {
+      if (!BUILTIN_EVENTS.includes(ev.type)) throw new Error(`${ev.type} is no built in event (a unit's own goes through emitExt)`);
+      emit(ev as unknown as IslandEvent);
+    },
+    emitExt: (type, payload, transfer = []) => {
+      const def = reg.events.get(type);
+      if (def == null) throw new Error(`${type} is no event a unit declared`);
+      const out: Record<string, unknown> = { type };
+      for (const k of def.keys) if (payload[k] !== undefined) out[k] = payload[k];
+      postExt({ type: EXT_POST, out, transfer });
+    },
+    withTimeout: (value, ms) => withTimeout(value, ms),
+    applyIdle: async (ms) => (win != null ? applyIdle(win, ms) : false),
+    freshRunFolder: (rootDir) => {
+      const FS = win?.FS;
+      if (FS == null) throw new Error('the engine has no file system');
+      return freshRunFolder(FS, rootDir);
+    },
+    dropRunFolder: (dir) => { if (win?.FS != null) dropRunFolder(win.FS, dir); },
+    queuedRun: async (op, dir, ms, call, record) => {
+      const w = win;
+      if (w?.FS == null) return fail('not_ready', op);
+      return queuedRun(op, w, w.FS, dir, ms, call, record);
+    },
+    watchedRun: async (op, dir, ms, call, record) => {
+      const w = win;
+      if (w?.FS == null) return fail('not_ready', op);
+      return watchedRun(op, w, w.FS, dir, ms, call, record);
+    },
+    closeRunDialogs: () => (win != null ? closeRunDialogs(win) : null),
+    readBytes: (abs) => (win?.FS != null ? readBytes(win.FS, abs) : null),
+    refocus: () => { if (win != null) refocus(win); },
+    log: (...parts) => console.debug('[ext]', ...parts),
+  };
+
+  /**
+   * ev.edited in a frame a unit defines: its descriptor's undo depth, read on
+   * the same gates as pollSymEdits; the first read after an open is the baseline.
+   */
+  function pollFrameEdits(mod: Record<string, unknown>): void {
+    if (closed || importing || inFlight > 0 || win == null || kind?.undoDepth == null) return;
+    if (engineBusy() || dialogUp(win, true)) return;
+    let depth: number | null = null;
+    try { depth = kind.undoDepth(mod, ctx); } catch { depth = null; }
+    if (depth == null || !Number.isSafeInteger(depth) || depth < 0) { editDepth = null; return; }
+    if (editDepth == null) { editDepth = depth; return; }
+    if (depth === editDepth) return;
+    editDepth = depth;
+    emit({ type: 'ev.edited', depth });
+  }
   return {
     emit,
     engineReady(w, engine, help, source) {
@@ -3961,7 +4161,7 @@ export function startResponder(opts: {
       // Popup menus and dialogs over the canvas: the host hides what it draws there.
       // The pointer's place over the drawing, where the host's viewing drawing prints
       // it; it reads the viewport only while no import or save runs, as the fit watch does.
-      const chip = new CoordsChip(w as unknown as CoordsWindow, { frame, live: () => !closed && !importing && collecting == null });
+      const chip = new CoordsChip(w as unknown as CoordsWindow, { frame, live: () => !closed && !importing && collecting == null, unitsPerMm: unitsPerMm(frame, reg) });
       if (chip.start()) coords = chip;
       stopMenus = watchMenus(w, (open) => { coords?.cover(open); emit({ type: 'ev.menu', open }); });
       // KiCad's own chrome as the engine says it is (our engine from run 9:
@@ -3998,7 +4198,7 @@ export function startResponder(opts: {
       // engine's place and selection exports; ev.ready says so with the pseudo-cap `picker`, and
       // with `fields` that its place writes the placed item's Value and Footprint.
       // A symedit frame places nothing (place is unsupported there): its keys stay KiCad's.
-      pickerOn = frame !== 'symedit' && libs?.mirror != null && typeof mod.kicadPlaceImportedItem === 'function' && typeof mod.kicadCollabGetSelection === 'function';
+      pickerOn = framePicks(frame, reg) && libs?.mirror != null && typeof mod.kicadPlaceImportedItem === 'function' && typeof mod.kicadCollabGetSelection === 'function';
       if (pickerOn) { caps.push(PICKER_CAP, FIELDS_CAP, IDENTITY_CAP); caps.sort(); }
       // ev.selected from the engine's own selection hook: its slot taken here, the hook
       // armed here in a pcb frame and by the first document in a sch frame (SelectionFeed.arm);
@@ -4008,14 +4208,16 @@ export function startResponder(opts: {
       const symedit = frame === 'symedit';
       const symeditOn = symedit && SYMEDIT_EXPORTS.every((name) => typeof mod[name] === 'function');
       const symbolOpen = (): boolean => symeditOn && symState(mod)?.open === true;
-      symbolOpenNow = symbolOpen;
+      symbolOpenNow = kind != null ? frameOpen : symbolOpen;
       const feed = new SelectionFeed(w as unknown as SelectionWindow, {
         timing,
         frame,
-        live: () => !closed && !importing && (symedit ? symbolOpen() : staged != null && opened != null),
+        live: () => !closed && !importing && (symedit ? symbolOpen() : kind?.selection != null ? kind.selection.live(ctx) : staged != null && opened != null),
         send: (s) => emit({ type: 'ev.selected', uuids: s.uuids, fpPaths: s.fpPaths }),
         log: (m, err) => console.debug('[select]', m, err),
         ...(symedit ? { read: () => (symeditOn ? (mod.kicadSymEditSelection as () => unknown)() : '') } : {}),
+        // A frame a unit defines reads its own selection (its descriptor's selection).
+        ...(kind?.selection != null ? { read: () => kind.selection?.read(mod) } : {}),
       });
       if ((!symedit || symeditOn) && feed.start()) {
         selectionFeed = feed;
@@ -4047,9 +4249,10 @@ export function startResponder(opts: {
       if (frame === 'sch' && hasAll(LIB_UPDATE_EXPORTS)) caps.push(LIB_UPDATE_CAP);
       // Whether a request of KiCad's (a properties dialog, a held key) reaches the host
       // now: after ev.ready, while a document is open (a symbol in a symedit frame).
-      const admit = (): boolean => readySent && !closed && !importing && (symedit ? symbolOpenSeen : staged != null && opened != null);
-      // A symedit frame lists none of the document frames' pseudo-caps (spec 3.3).
-      if (!symedit) {
+      const admit = admitNow;
+      // A symedit frame lists none of the document frames' pseudo-caps (spec 3.3),
+      // nor does a frame a wave unit defines.
+      if (frame === 'sch' || frame === 'pcb') {
         if (MODEL_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(MODELS_CAP);
         // project.plot: our engine's kicadPlotBoard.
         if (PLOT_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(PLOT_CAP);
@@ -4095,11 +4298,22 @@ export function startResponder(opts: {
           });
         }
       }
+      // The wave units' caps (bridge/ext/<unit>.ts caps), each feature detected on
+      // the engine's exports by its unit, only names the unit declared.
+      for (const u of reg.units) {
+        if (typeof u.caps !== 'function') continue;
+        try {
+          for (const c of u.caps(mod, frame)) if (reg.capNames.get(c) === u.unit && !caps.includes(c)) caps.push(c);
+        } catch (err) { console.debug('[ext]', u.unit, 'caps', describeError(err)); }
+      }
+      // A frame a unit defines lists only the pseudo-caps its descriptor allows (the engine's export names always).
+      const capAllowed = (c: string): boolean => kind?.caps == null || /^kicad[A-Za-z0-9]*$/.test(c) || kind.caps.includes(c);
+      if (kind?.caps != null) for (let i = caps.length - 1; i >= 0; i--) if (!capAllowed(caps[i])) caps.splice(i, 1);
       caps.sort();
       // ev.held: our engine (run 12) asks the page before a hotkey's action;
       // the frame holds the actions whose windows the host replaces, each only
       // under the cap its replacement needs (bridge/held.ts).
-      if (typeof mod[HELD_EXPORT] === 'function') {
+      if (typeof mod[HELD_EXPORT] === 'function' && capAllowed(HELD_KEYS_CAP)) {
         caps.push(HELD_KEYS_CAP);
         caps.sort();
         installHeld(w as unknown as HeldWindow, {
@@ -4108,17 +4322,31 @@ export function startResponder(opts: {
           admit,
           repeating: () => keyRepeat,
           send: (action) => emit({ type: 'ev.held', action }),
+          rows: heldRows,
         });
       }
       // ev.edited: polled only when the engine has the undo depth export at
       // boot; an older build is never polled and nothing is said about it.
       // In a symedit frame the depth is the symbol editor's own (kicadSymEditState), read while a symbol is open.
-      if (symedit ? symeditOn : typeof mod.kicadCollabTestUndoDepth === 'function') {
+      if (kind?.undoDepth != null) {
+        const edits = setInterval(() => pollFrameEdits(mod), timing.editPollMs);
+        stopEdits = () => clearInterval(edits);
+      } else if (symedit ? symeditOn : typeof mod.kicadCollabTestUndoDepth === 'function') {
         const edits = setInterval(() => (symedit ? pollSymEdits(mod) : pollEdits(w)), timing.editPollMs);
         stopEdits = () => clearInterval(edits);
       }
       const n = help.attempts();
       if (n > 0) emit({ type: 'ev.state', phase: 'booting', detail: popupNote(n) });
+      // The wave units' installs (window slot listeners, a service), before ev.ready;
+      // ctx.caps() already answers the caps ev.ready is about to send.
+      readyCaps = Object.freeze([...caps]);
+      for (const u of reg.units) {
+        if (typeof u.install !== 'function') continue;
+        try {
+          const stop = u.install(ctx);
+          if (typeof stop === 'function') extStops.push(stop);
+        } catch (err) { console.debug('[ext]', u.unit, 'install', describeError(err)); }
+      }
       emit({ type: 'ev.ready', caps, engine });
       readySent = true;
       // The boot hid the chrome before the listener was there: its state now.

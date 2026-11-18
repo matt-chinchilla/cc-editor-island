@@ -39,7 +39,7 @@
 // cc/main 0e0b3f54, measured 2026-10-16); the builds before trapped in KIID's
 // string constructor during the component parse, right after the layer mapping.
 import { normalizePath } from '../src/stage';
-import type { Frame } from '../src/types';
+import type { BuiltinFrame, Frame } from '../src/types';
 import { isProgressDialog, plainLabel, visibleDialogs, type DialogView, type ModalWindow, type WxElement } from './modal';
 
 /**
@@ -73,7 +73,7 @@ export const ALTIUM_PROJECT = '.prjpcb';
  * responder answers its project.open and project.import unsupported before
  * either reads this, so its entry is only the kind of file it edits.
  */
-export const DOCUMENT_EXTENSION: Readonly<Record<Frame, string>> = Object.freeze({ pcb: '.kicad_pcb', sch: '.kicad_sch', symedit: '.kicad_sym' });
+export const DOCUMENT_EXTENSION: Readonly<Record<BuiltinFrame, string>> = Object.freeze({ pcb: '.kicad_pcb', sch: '.kicad_sch', symedit: '.kicad_sym' });
 /** The answer's warnings: at most this many lines, each at most WARNING_CHARS characters. */
 export const MAX_WARNINGS = 40;
 export const WARNING_CHARS = 200;
@@ -130,7 +130,10 @@ export function importTarget(source: string, frame: Frame): string | null {
   const path = normalizePath(source);
   if (path == null) return null;
   if (!importable(path, frame) && !(frame === 'sch' && hasExtension(path, ALTIUM_PROJECT))) return null;
-  return normalizePath(`${path.slice(0, path.lastIndexOf('.'))}${DOCUMENT_EXTENSION[frame]}`);
+  // A frame a wave unit adds imports nothing here (its descriptor refuses project.import).
+  const ext = (DOCUMENT_EXTENSION as Readonly<Record<string, string | undefined>>)[frame];
+  if (ext === undefined) return null;
+  return normalizePath(`${path.slice(0, path.lastIndexOf('.'))}${ext}`);
 }
 
 /** Compares two paths by code point, as a wxString compares (UTF-16 order differs past U+FFFF). */

@@ -9,7 +9,7 @@
 // answer waits for the apply queue to empty and for that file, then reads the
 // folder (one level of folders at most: Allegro's devices/, a .pretty).
 
-import EXPORT_FACES from './exports.json';
+import EXPORT_FACES from './exports.builtin.json';
 import { runText, type RunLine, readLines } from './annotate';
 
 /** A face: the frame kind a job runs in. */
@@ -72,12 +72,12 @@ function isSetting(v: unknown): v is SettingValue {
  * finite number, a string of at most 1,024 characters or a list of at most 256
  * such strings; `pages` at most 1,024 page numbers of 1 to 32 bytes.
  */
-export function parseExportArgs(args: unknown): ExportArgs | null {
+export function parseExportArgs(args: unknown, jobs: Readonly<Record<string, ExportFace>> = EXPORT_JOBS): ExportArgs | null {
   if (!isObj(args)) return null;
   const keys = Object.keys(args);
   if (!keys.every((k) => k === 'job' || k === 'settings' || k === 'pages') || !own(args, 'job') || !own(args, 'settings')) return null;
   const { job, settings, pages } = args;
-  if (typeof job !== 'string' || !own(EXPORT_JOBS, job)) return null;
+  if (typeof job !== 'string' || !own(jobs, job)) return null;
   if (!isPlain(settings)) return null;
   const names = Object.keys(settings);
   if (names.length > MAX_SETTINGS || !names.every((k) => isSetting(settings[k]))) return null;
@@ -91,7 +91,7 @@ export function parseExportArgs(args: unknown): ExportArgs | null {
 }
 
 /** The face a job runs in. */
-export const exportFace = (job: string): ExportFace => EXPORT_JOBS[job];
+export const exportFace = (job: string, jobs: Readonly<Record<string, ExportFace>> = EXPORT_JOBS): ExportFace => jobs[job];
 
 /** The args as the engine's export reads them: `{ run, dir, job, settings }`, and `pages` when sent. */
 export const exportJson = (run: number, dir: string, a: ExportArgs): string =>
