@@ -1,0 +1,12 @@
+(footprint "R_MyLib"
+	(version 20241229)
+	(generator "pcbnew")
+	(layer "F.Cu")
+	(property "Reference" "REF**" (at 0 -1.2 0) (layer "F.SilkS") (effects (font (size 0.8 0.8) (thickness 0.12))))
+	(property "Value" "R_MyLib" (at 0 1.2 0) (layer "F.Fab") (effects (font (size 0.8 0.8) (thickness 0.12))))
+	(attr smd)
+	(fp_rect (start -0.9 -0.5) (end 0.9 0.5) (stroke (width 0.05) (type solid)) (fill no) (layer "F.CrtYd"))
+	(pad "1" smd roundrect (at -0.48 0) (size 0.56 0.62) (layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.25))
+	(pad "2" smd roundrect (at 0.48 0) (size 0.56 0.62) (layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.25))
+	(model "${MYLIB}/x.step" (offset (xyz 0 0 0)) (scale (xyz 1 1 1)) (rotate (xyz 0 0 0)))
+)

@@ -1,0 +1,22 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (C) 2026 Circuit Center Inc
+
+Written by hand for this repository on 2026-11-18 (CC0 1.0: no rights
+reserved), but for mylib/x.step (below): a design whose own symbols and
+footprints sit under a path variable of its own, MYLIB, for libs.remove,
+paths.set and project.libs's vars (tests/e2e/lib-rows.spec.ts). An empty
+one sheet schematic and an empty two layer board with a 40 by 30 mm outline
+(the board is tests/fixtures/blank's); sym-lib-table and fp-lib-table each
+hold ONE row, MyLib, of uri ${MYLIB}/x.kicad_sym and ${MYLIB}/x.pretty, so
+nothing of them loads until MYLIB names the folder mylib. mylib/x.kicad_sym
+holds one symbol, R_MyLib (two pins), whose footprint is MyLib:R_MyLib;
+mylib/x.pretty/R_MyLib.kicad_mod is a two pad footprint whose model line
+names ${MYLIB}/x.step.
+
+mylib/x.step is R_0402_1005Metric.step copied unchanged from
+kicad-packages3D at KiCad's tag 10.0.4 (Resistor_SMD.3dshapes, one resistor
+body), renamed: CC BY-SA 4.0 with KiCad's libraries exception, whose license
+mylib/LICENSE.md is kept beside it as kicad-packages3D ships it.
+
+files.json lists what the e2e harness opens. The KiCad files carry no
+comment (their formats have none), so this file holds their license.

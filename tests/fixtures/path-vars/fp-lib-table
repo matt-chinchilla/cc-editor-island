@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "MyLib")(type "KiCad")(uri "${MYLIB}/x.pretty")(options "")(descr "The design's own footprints, under a path variable"))
+)

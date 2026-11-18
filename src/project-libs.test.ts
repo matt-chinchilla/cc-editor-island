@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
 import { describe, expect, it, vi } from 'vitest';
-import { createProjectLibs, isProjectNick, parseLibTable, projectId, projectPath, withProjectLibs, type ProjectFs } from './project-libs';
+import { createProjectLibs, isBuiltinPathVar, isProjectNick, parseLibTable, projectId, projectLibsAt, projectPath, readPathVars, rowPath, withProjectLibs, type ProjectFs } from './project-libs';
 import { readSexpr, valueOf } from './sexpr';
 import type { LibsSource } from '../loader/src/wasm/libs/source';
 
@@ -212,5 +212,98 @@ describe('the source boot is given', () => {
     expect(b.presync).toHaveBeenCalledWith({ kind: 'symbol' });
     expect(src.createLib).toBeUndefined();
     expect(b.calls).toEqual(['get sym.Device R', 'listItems sym.Device', 'get sym.Device R']);
+  });
+});
+
+describe('path variables and design block rows (i-librows)', () => {
+  const row = (uri: string, type = 'KiCad') => ({ name: 'n', type, uri });
+
+  it('reads a request\'s variables closed: names in KiCad\'s form and none of KiCad\'s own, folders of the project in the normal form', () => {
+    expect(readPathVars({ MYLIB: 'mylib', A_2: 'a/b' })).toEqual({ MYLIB: 'mylib', A_2: 'a/b' });
+    for (const v of [null, [], {}, 'x', { mylib: 'a' }, { '_A': 'a' }, { A: '' }, { A: '/a' }, { A: 'a/../b' }, { A: 'a/' }, { A: 1 }, { ['A'.repeat(65)]: 'a' }, Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`V${i}`, 'a']))]) {
+      expect(readPathVars(v)).toBeNull();
+    }
+    for (const name of ['KIPRJMOD', 'KICAD10_SYMBOL_DIR', 'KICAD6_FOOTPRINT_DIR', 'KICAD9_3DMODEL_DIR', 'KICAD8_TEMPLATE_DIR', 'KICAD10_3RD_PARTY', 'KICAD10_DESIGN_BLOCK_DIR', 'KICAD_USER_TEMPLATE_DIR', 'KICAD_PTEMPLATES']) {
+      expect(isBuiltinPathVar(name)).toBe(true);
+      expect(readPathVars({ [name]: 'a' })).toBeNull();
+    }
+    expect(isBuiltinPathVar('KICAD_SYMBOL_DIR')).toBe(false);
+    expect(isBuiltinPathVar('MYLIB')).toBe(false);
+  });
+
+  it('resolves a ${KIPRJMOD} row from the project file\'s folder and a variable\'s row from the folder set, nothing else', () => {
+    const vars = { MYLIB: 'libs/mine' };
+    expect(rowPath(row('${KIPRJMOD}/a.kicad_sym'), 'symbol', '', vars)).toBe('a.kicad_sym');
+    expect(rowPath(row('${KIPRJMOD}/a.kicad_sym'), 'symbol', 'Hw', vars)).toBe('Hw/a.kicad_sym');
+    expect(rowPath(row('${MYLIB}/x.pretty'), 'footprint', 'Hw', vars)).toBe('libs/mine/x.pretty');
+    expect(rowPath(row('${KIPRJMOD}/b.kicad_blocks'), 'block', '', vars)).toBe('b.kicad_blocks');
+    for (const [uri, kind] of [
+      ['${OTHER}/x.kicad_sym', 'symbol'],
+      ['$(MYLIB)/x.kicad_sym', 'symbol'],
+      ['${MYLIB}/../x.kicad_sym', 'symbol'],
+      ['${MYLIB}/x.kicad_sym', 'footprint'],
+      ['${MYLIB}/.kicad_blocks', 'block'],
+      ['${KICAD10_SYMBOL_DIR}/Device.kicad_sym', 'symbol'],
+      ['/abs/x.kicad_sym', 'symbol'],
+    ] as const) expect(rowPath(row(uri), kind, '', vars)).toBeNull();
+    expect(rowPath(row('${MYLIB}/x.kicad_sym', 'Legacy'), 'symbol', '', vars)).toBeNull();
+    // projectPath stays the ${KIPRJMOD} rows alone.
+    expect(projectPath(row('${MYLIB}/x.kicad_sym'), 'symbol')).toBeNull();
+  });
+
+  it('finds a library under a variable once it is set, and puts the variables back', () => {
+    const fs = fakeFs({
+      [`${ROOT}/sym-lib-table`]: '(sym_lib_table (version 7) (lib (name "MyLib")(type "KiCad")(uri "${MYLIB}/x.kicad_sym")(options "")(descr "")))',
+      [`${ROOT}/fp-lib-table`]: '(fp_lib_table (version 7) (lib (name "MyLib")(type "KiCad")(uri "${MYLIB}/x.pretty")(options "")(descr "")))',
+      [`${ROOT}/mylib/x.kicad_sym`]: SYMS,
+      [`${ROOT}/mylib/x.pretty/R.kicad_mod`]: FP,
+    });
+    const libs = createProjectLibs({ root: ROOT, fs: () => fs });
+    expect(libs.find('MyLib')).toEqual([]);
+    const before = libs.setVars({ MYLIB: 'mylib' });
+    expect(before).toEqual({});
+    expect(libs.find('MyLib')).toEqual([
+      { kind: 'symbol', nick: 'MyLib', path: 'mylib/x.kicad_sym', id: 'prj.sym.MyLib' },
+      { kind: 'footprint', nick: 'MyLib', path: 'mylib/x.pretty', id: 'prj.fp.MyLib' },
+    ]);
+    // Merged over the earlier ones; restoreVars puts back what setVars answered.
+    expect(libs.setVars({ OTHER: 'o' })).toEqual({ MYLIB: 'mylib' });
+    expect(libs.vars()).toEqual({ MYLIB: 'mylib', OTHER: 'o' });
+    libs.restoreVars(before);
+    expect(libs.vars()).toEqual({});
+    expect(libs.find('MyLib')).toEqual([]);
+  });
+
+  it('finds a design block row whose folder is there, registers and forgets it, and forgets a symbol or footprint registration', () => {
+    const fs = folder({
+      [`${ROOT}/design-block-lib-table`]: '(design_block_lib_table (version 7) (lib (name "b_blocks")(type "KiCad")(uri "${KIPRJMOD}/b_blocks.kicad_blocks")(options "")(descr "")))',
+      [`${ROOT}/b_blocks.kicad_blocks/LDO.kicad_block/LDO.kicad_sch`]: '(kicad_sch)',
+    });
+    const libs = createProjectLibs({ root: ROOT, fs: () => fs });
+    expect(parseLibTable(fs.files.get(`${ROOT}/design-block-lib-table`)!, 'block')).toEqual([{ name: 'b_blocks', type: 'KiCad', uri: '${KIPRJMOD}/b_blocks.kicad_blocks' }]);
+    expect(libs.findBlock('b_blocks')).toEqual({ nick: 'b_blocks', path: 'b_blocks.kicad_blocks' });
+    expect(libs.findBlock('glasgow_parts')).toBeNull();
+    // find never names a block row: those are KiCad's reader's, never served by the island.
+    expect(libs.find('b_blocks')).toEqual([]);
+    libs.registerBlock({ nick: 'b_blocks', path: 'b_blocks.kicad_blocks' });
+    expect(libs.registeredBlock('b_blocks')).toEqual({ nick: 'b_blocks', path: 'b_blocks.kicad_blocks' });
+    libs.unregister('block', 'b_blocks');
+    expect(libs.registeredBlock('b_blocks')).toBeNull();
+    const [sym] = libs.find('glasgow_parts');
+    libs.register(sym);
+    libs.unregister('symbol', 'glasgow_parts');
+    expect(libs.registered('symbol', 'glasgow_parts')).toBeNull();
+    expect(libs.owns(sym.id)).toBe(false);
+    for (const p of [...fs.files.keys()].filter((k) => k.startsWith(`${ROOT}/b_blocks.kicad_blocks/`))) fs.files.delete(p);
+    expect(libs.findBlock('b_blocks')).toBeNull();
+  });
+
+  it('is reached by its project folder, the last made for a folder standing', () => {
+    const a = createProjectLibs({ root: '/q/one', fs: () => null });
+    expect(projectLibsAt('/q/one')).toBe(a);
+    const b = createProjectLibs({ root: '/q/one', fs: () => null });
+    expect(projectLibsAt('/q/one')).toBe(b);
+    expect(projectLibsAt('/q/none')).toBeNull();
+    expect(b.root).toBe('/q/one');
   });
 });

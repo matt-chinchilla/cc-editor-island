@@ -1,0 +1,4 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "MyLib")(type "KiCad")(uri "${MYLIB}/x.kicad_sym")(options "")(descr "The design's own symbols, under a path variable"))
+)
