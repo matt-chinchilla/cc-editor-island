@@ -230,10 +230,14 @@ test.describe('the wave 2 chord ledger', () => {
     });
   }
 
-  for (const [editor, cap] of [['fpedit', 'fpedit'], ['ds', 'dsedit']] as const) {
+  // Each frame's first export of engine run 15 (the footprint editor's and the drawing sheet editor's kifaces join the merged image there).
+  for (const [editor, cap, marker] of [['fpedit', 'fpedit', 'kicadFpEditOpen'], ['ds', 'dsedit', 'kicadDsEditOpen']] as const) {
     test(`the ${editor === 'fpedit' ? 'footprint editor' : 'drawing sheet editor'}: each chord runs its own action and opens no window`, async ({ page, browserName }) => {
       test.skip(browserName === 'firefox', 'Playwright Firefox reaches no context in the cross-site island frame');
       test.setTimeout(480_000);
+      // A schematic frame lists the engine's export names: an engine without this editor's never boots its frame.
+      await boot(page, 'frame=sch', null);
+      test.skip(!((await of(page, 'ev.ready'))[0]?.caps ?? []).includes(marker), `this engine has no ${marker} (engine run 15)`);
       const frame = await boot(page, `frame=${editor}`, null);
       // An island without this frame boots a schematic frame in its place: nothing of this editor to press yet.
       test.skip(!((await of(page, 'ev.ready'))[0]?.caps ?? []).includes(cap), `no ${editor} frame on this island (its unit lands with engine run 15)`);
