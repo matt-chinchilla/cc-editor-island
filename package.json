@@ -15,6 +15,8 @@
     "ship": "bash scripts/ship.sh",
     "build:libs": "node scripts/build-libs.mjs --out dist/libs",
     "ship:libs": "bash scripts/ship-libs.sh",
+    "build:models": "node scripts/build-models.mjs",
+    "ship:models": "bash scripts/ship-models.sh",
     "test:join": "vitest run --config vitest.join.config.ts",
     "gen:ext": "node scripts/ext/gen.mjs",
     "ext:pending": "node scripts/ext/pending.mjs"

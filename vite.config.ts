@@ -13,6 +13,8 @@ export default defineConfig({
     __LIBS_TAG__: JSON.stringify(pin.libs.tag),  // the library mirror's tag (LIBRARY.md): /libs/<tag>/
     // The simulator service's raw wasm size, 0 when PIN.json lists no service (then the island serves none).
     __SIM_WASM_BYTES__: JSON.stringify(pin.engine.files?.['ngspice_service.wasm']?.bytes ?? 0),
+    // The 3D service's raw wasm size (src/occ-service.ts, wave unit 3d-i1), 0 when PIN.json lists no service.
+    __OCC_WASM_BYTES__: JSON.stringify(pin.engine.files?.['occ_service.wasm']?.bytes ?? 0),
   },
   build: { outDir: `dist/r/${pin.islandId}`, emptyOutDir: false, target: 'es2022', sourcemap: false },
   test: { environment: 'node', include: ['src/**/*.test.ts', 'bridge/**/*.test.ts', 'theme/**/*.test.ts'] },

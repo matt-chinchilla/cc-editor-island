@@ -78,6 +78,12 @@ export interface ResponderCtx {
   importing(): boolean;
   /** A sheet.check or a board.check runs. */
   checking(): boolean;
+  /** The simulator's live run number, null while no run is live (sim.run). */
+  simRun(): number | null;
+  /** The held actions as one union, read now: the built ins and every unit's rows (bridge/held.ts). */
+  heldRows(): readonly HeldAction[];
+  /** A record of an ev.prompt ask read through the reader the declaring unit gave (ExtUnit.askReaders), null when no unit reads that ask or the record is of another shape. */
+  readAsk(ask: string, record: unknown): Record<string, unknown> | null;
   /** Requests received and not yet answered. */
   inFlight(): number;
 
@@ -90,6 +96,21 @@ export interface ResponderCtx {
   documentGate(op: string, exports: readonly string[], section: string): Gated;
 
   // Doing things.
+  /**
+   * Joins a placement to the responder's place watch (bridge/place.ts
+   * PlacementWatch), as place does: the item `uuid` now hangs off the pointer,
+   * so placeHanging() answers true, every gate and project.export answer busy
+   * while it hangs, and a later place cancels it first.
+   */
+  placeStart(uuid: string): void;
+  /** Cancels the item hanging off the pointer, if any (place's own first step): false when it could not be canceled. */
+  placeCancel(): Promise<boolean>;
+  /**
+   * While held (a count: each true needs its false), KiCad's popup menus send
+   * no ev.menu and leave the coords chip uncovered: for a unit that parks a
+   * menu of KiCad's under a menu of its own (m1-i).
+   */
+  holdMenus(on: boolean): void;
   /** Presses one key in the engine as a reader would (bridge/keys.ts). */
   pressKey(k: KeyPress): void;
   /** Sends a built in event (bridge/responder.ts IslandEvent), with exactly its protocol keys. */
@@ -194,8 +215,60 @@ export interface FrameKind {
   undoDepth?: (mod: Record<string, unknown>, ctx: ResponderCtx) => number | null;
 }
 
-/** The row of a held action (bridge/held.ts HeldAction). */
-export type HeldRow = HeldAction;
+/**
+ * A frame's name as a unit names it: a frame that ships, a frame a landed
+ * unit defines, or a frame of the manifest whose unit has not landed yet
+ * (bridge/ext/pending-frames.json: fpedit, ds). A pending frame never
+ * matches the running frame, so what a unit gives it waits for its frame.
+ */
+export type FrameName = Frame | (string & Record<never, never>);
+
+/** The row of a held action (bridge/held.ts HeldAction), its frames by name (a pending frame waits). */
+export interface HeldRow { action: string; frames: readonly FrameName[]; cap: string }
+
+/** One run of project.export as the export hooks see it (ExtUnit.exportHooks). */
+export interface ExportRun {
+  /** The job (a built in job or a unit's exportJobs). */
+  job: string;
+  /** The run's fresh folder under /tmp/cc-out/ (the engine writes the job's files there). */
+  dir: string;
+  /** The run's number (the record names it). */
+  run: number;
+  /** The job's settings as the engine will receive them (a `before` may answer new ones). */
+  settings: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * A unit's part in project.export (3d-i3): the run's time, its staging and
+ * its settings before the run, its progress while it goes. Every hook is
+ * optional; the hooks of several units chain in unit id order.
+ */
+export interface ExportHooks {
+  /** The run's bound in ms for this job, null to leave it (the bridge's exportMs, or a later unit's). The longest bound named wins. */
+  msFor?(job: string): number | null;
+  /**
+   * After the checks and the run's fresh folder, before the engine is called:
+   * stage what the run reads (models), and answer the settings to run with,
+   * null to leave them, or a refusal (the folder is removed and the refusal answered).
+   */
+  before?(run: ExportRun, ctx: ResponderCtx): Promise<{ settings: Record<string, unknown> } | Answer | null> | { settings: Record<string, unknown> } | Answer | null;
+  /** Every tickMs (bridge/responder.ts timing.exportTickMs) while the run goes: progress (a unit's own event through ctx.emitExt). */
+  tick?(run: ExportRun, ctx: ResponderCtx): void;
+  /** After the run, whatever its outcome (the answer is already decided). */
+  after?(run: ExportRun, ctx: ResponderCtx): void;
+}
+
+/** A settings section a unit adds (settings.get, settings.set and the cap settings:<section>). */
+export interface SettingsSection {
+  /** The frames that hold it. */
+  frames: ReadonlyArray<'sch' | 'pcb'>;
+  /** A project-file section: a patch never deletes a key, so no null anywhere. */
+  projectFile?: boolean;
+  /** The pcb frame reads it and never sets it. */
+  pcbReadOnly?: boolean;
+  /** The value's own shape for settings.set (after the common checks), true to take it. */
+  check?(value: Readonly<Record<string, unknown>>): boolean;
+}
 
 /** One unit's file: its default export. Every field but `unit` is optional. */
 export interface ExtUnit {
@@ -203,8 +276,8 @@ export interface ExtUnit {
   unit: string;
   /** New request ops, by name. Never a name that ships (widen it instead). */
   ops?: Readonly<Record<string, ExtOp>>;
-  /** The frames this unit's ops answer in; elsewhere the seam answers them unsupported with `frameRefusal`. Absent: every frame. */
-  frames?: readonly Frame[];
+  /** The frames this unit's ops answer in; elsewhere the seam answers them unsupported with `frameRefusal`. Absent: every frame. A pending frame (FrameName) waits for its unit. */
+  frames?: readonly FrameName[];
   /** The message of that answer. */
   frameRefusal?: string;
   /** Ops that ship, widened from this file (see Widen). */
@@ -221,8 +294,26 @@ export interface ExtUnit {
   events?: Readonly<Record<string, readonly string[]>>;
   /** The ev.prompt ask names whose closed record shape this unit declares. */
   asks?: readonly string[];
+  /** Each declared ask's closed record reader (ResponderCtx.readAsk): the record checked closed, or null. */
+  askReaders?: Readonly<Record<string, (record: unknown) => Record<string, unknown> | null>>;
   /** New project.export jobs, each with its face. */
   exportJobs?: Readonly<Record<string, 'pcb' | 'sch'>>;
+  /** Its part in every project.export run (time, staging, progress). */
+  exportHooks?: ExportHooks;
+  /** New settings sections, by name (bridge/settings.ts): settings.get and settings.set take them in their frames. */
+  settingsSections?: Readonly<Record<string, SettingsSection>>;
+  /**
+   * KiCad tools a Switch item asks for that boot no frame (kicadWebOpenTool's
+   * name to the host's name): sent as ev.openTool { frame: <host name> }, as
+   * pcb_calculator becomes 'calculator' (st-calc-i).
+   */
+  hostTools?: Readonly<Record<string, string>>;
+  /**
+   * Guards on built in events (ev.sim, ev.menu, ...): called before each goes
+   * out, false drops it (lo-e2-i's run guard: an ended or progress ev.sim of a
+   * run that is not the live one). Guards of several units all must pass.
+   */
+  eventGuards?: Readonly<Record<string, (ev: Readonly<{ type: string } & Record<string, unknown>>, ctx: ResponderCtx) => boolean>>;
   /** New frames, by name (src/types.ts ExtFrames). */
   defineFrames?: Readonly<Record<string, FrameKind>>;
   /**

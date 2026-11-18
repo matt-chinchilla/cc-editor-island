@@ -10,7 +10,10 @@ import { HELD_ACTIONS } from '../held';
 import { BUILTIN_OPS } from './builtins';
 import { fail, ok, SEAM_PLACEHOLDER, type ExtUnit } from './contract';
 import { buildRegistry, exportJobs, heldActions, REGISTRY, requestOps } from './registry';
-import { bootFrame, documentExtension, frameForToolName, frameToken, frameTool, ownDocument, unitsPerMm } from '../../src/frames';
+import { bootFrame, documentExtension, frameForToolName, framePickKind, frameToken, frameTool, hostToolFor, ownDocument, unitsPerMm } from '../../src/frames';
+import { parseSettingsGetArgs, parseSettingsSetArgs, sectionFrames } from '../settings';
+import { kindOf, pickFor } from '../../src/picker';
+import type { ResponderCtx } from './contract';
 
 const PARENT = 'http://localhost';
 const settle = (ms = 20) => new Promise((r) => setTimeout(r, ms));
@@ -55,8 +58,8 @@ function fakeEngine(extra: Record<string, unknown> = {}) {
 }
 
 /** A responder on `units`, connected and booted; `got` collects what the host hears. */
-async function boot(units: ExtUnit[], opts: { frame?: string; exports?: Record<string, unknown>; pending?: Record<string, string> } = {}) {
-  const reg = buildRegistry(mods(...units), opts.pending ?? {});
+async function boot(units: ExtUnit[], opts: { frame?: string; exports?: Record<string, unknown>; pending?: Record<string, string>; pendingFrames?: Record<string, string> } = {}) {
+  const reg = buildRegistry(mods(...units), opts.pending ?? {}, opts.pendingFrames ?? {});
   expect(reg.problems).toEqual([]);
   const { page, parent } = fakePage(`?frame=${opts.frame ?? 'sch'}&theme=day`);
   const r = startResponder({ parentOrigin: PARENT, page, ext: reg });
@@ -166,10 +169,11 @@ describe('the frame registry', () => {
     expect(reg.problems).toEqual(["bad-i: frame 'pcb' is no new frame name", "bad-i: frame 'other': refuses must list ops that ship"]);
   });
 
-  it('boots a unit frame: its refusals, its caps alone, its unit ops only there', async () => {
+  it('boots a unit frame: its refusals, its built in caps alone and every unit cap its unit finds there, its unit ops only there', async () => {
     const unit: ExtUnit = { ...tf, frames: ['tframe' as never], frameRefusal: 'a test op runs in a test frame', ops: { 't.op': { run: (_a, ctx) => ok({ frame: ctx.frame }) } }, capNames: ['tcap', 'tother'], caps: () => ['tcap', 'tother'] };
     const t = await boot([unit], { frame: 'tframe', exports: { kicadThing: () => 1, kicadHostActions: () => true } });
-    expect(t.ready?.caps).toEqual(['kicadHostActions', 'kicadOpenFileBusy', 'kicadThing', 'tcap', 'write']);
+    // The descriptor's caps list governs the built in pseudo-caps; a unit's own caps are its caps(mod, frame) answer (tother too).
+    expect(t.ready?.caps).toEqual(['kicadHostActions', 'kicadOpenFileBusy', 'kicadThing', 'tcap', 'tother', 'write']);
     expect(await t.ask(1, 'project.open', { name: 'x', files: [] })).toEqual({ id: 1, ok: false, error: { code: 'unsupported', message: 'a test frame opens no documents' } });
     expect(await t.ask(2, 't.op')).toEqual({ id: 2, ok: true, result: { frame: 'tframe' } });
     const s = await boot([unit]);
@@ -264,5 +268,108 @@ describe('a unit in the responder', () => {
     expect(typeof slot).toBe('function');
     // No document is open: nothing reaches the host, so KiCad runs it.
     expect(slot?.(JSON.stringify({ action: 'eeschema.Unit.thing' }))).toBe(false);
+  });
+});
+
+describe('the seam join fixes', () => {
+  it('names a pending frame in frames and held rows before its unit lands; the frame never matches until then', async () => {
+    const unit: ExtUnit = { unit: 'm-i', frames: ['sch', 'fpedit'], ops: { 'm.op': { run: () => ok() } }, held: ['common.Control.foo'], heldRows: [{ action: 'common.Control.foo', frames: ['fpedit'], cap: 'mcap' }] };
+    const reg = buildRegistry(mods(unit), {}, { fpedit: 'fp-i1', ds: 'ds-i1' });
+    expect(reg.problems).toEqual([]);
+    expect([...reg.pendingFrames.keys()]).toEqual(['fpedit', 'ds']);
+    expect(reg.ops.get('m.op')?.frames).toEqual(['sch', 'fpedit']);
+    expect(bootFrame('fpedit', reg)).toBe('sch');
+    // Without the pending name the same unit breaks the rule.
+    expect(buildRegistry(mods(unit)).problems).toContain('m-i: frames names a frame no one defines');
+    // A landed frame takes the name off the pending list.
+    const fp: ExtUnit = { unit: 'fp-i1', defineFrames: { fpedit: { token: 'fpedit', tool: 'pcbnew', document: null, extension: '.kicad_mod', unitsPerMm: 1e6, pickKind: 'footprint', picker: true, refuses: [], refusal: 'x' } } };
+    const both = buildRegistry(mods(unit, fp), {}, { fpedit: 'fp-i1' });
+    expect(both.problems).toEqual([]);
+    expect([...both.pendingFrames.keys()]).toEqual([]);
+    expect(framePickKind('fpedit' as never, both)).toBe('footprint');
+    expect(framePickKind('pcb', both)).toBeNull();
+    expect(kindOf('fpedit' as never, framePickKind('fpedit' as never, both))).toBe('footprint');
+    expect(pickFor('fpedit' as never, { key: 'a' }, 'footprint')).toEqual({ kind: 'footprint' });
+    const t = await boot([unit], { pendingFrames: { fpedit: 'fp-i1' } });
+    expect(await t.ask(1, 'm.op')).toEqual({ id: 1, ok: true, result: {} });
+  });
+
+  it('runs a unit export job through project.export (never bad_args), with the hooks heard', async () => {
+    const unit: ExtUnit = { unit: 'x3-i', exportJobs: { pcb_render: 'pcb' }, exportHooks: { msFor: (job) => (job === 'pcb_render' ? 600_000 : null) } };
+    const t = await boot([unit], { frame: 'pcb' });
+    // The engine has no kicadExportBoardOutput here: the job got past the parse to the export check.
+    expect(await t.ask(1, 'project.export', { job: 'pcb_render', settings: {} })).toEqual({ id: 1, ok: false, error: { code: 'unsupported', message: 'kicadExportBoardOutput' } });
+    expect(await t.ask(2, 'project.export', { job: 'pcb_nothing', settings: {} })).toEqual({ id: 2, ok: false, error: { code: 'bad_args', message: 'project.export' } });
+    const s = await boot([unit], { frame: 'sch' });
+    expect(await s.ask(3, 'project.export', { job: 'pcb_render', settings: {} })).toEqual({ id: 3, ok: false, error: { code: 'unsupported', message: 'a board output runs in a pcb frame' } });
+    expect(buildRegistry(mods({ unit: 'bad-i', exportHooks: { msFor: 3 as never } })).problems).toEqual(['bad-i: exportHooks must be functions msFor, before, tick, after']);
+  });
+
+  it('widens sim.stop and sim.release off the queue, and drops a built in event a unit guard refuses', async () => {
+    let ctxSeen: ResponderCtx | null = null;
+    const unit: ExtUnit = {
+      unit: 'se-i',
+      opsWidened: { 'sim.stop': async (args, _ctx, next) => (args === 'mine' ? ok({ hooked: true }) : next(args)) },
+      eventGuards: { 'ev.held': (ev) => ev.action !== 'drop.this.one' },
+      install: (ctx) => { ctxSeen = ctx; },
+    };
+    const t = await boot([unit]);
+    expect(await t.ask(1, 'sim.stop', 'mine')).toEqual({ id: 1, ok: true, result: { hooked: true } });
+    // The op's own answer for the rest (no simulator exports here).
+    expect((await t.ask(2, 'sim.stop'))?.ok).toBe(false);
+    const ctx = ctxSeen as unknown as ResponderCtx;
+    expect(ctx.simRun()).toBeNull();
+    ctx.emit({ type: 'ev.held', action: 'keep.this.one' });
+    ctx.emit({ type: 'ev.held', action: 'drop.this.one' });
+    await settle();
+    expect(t.got.filter((m) => m.type === 'ev.held').map((m) => m.action)).toEqual(['keep.this.one']);
+    expect(buildRegistry(mods({ unit: 'bad-i', eventGuards: { 'ev.nothing': () => true } })).problems).toEqual(["bad-i: eventGuards 'ev.nothing' is no built in event"]);
+  });
+
+  it('gives a unit the held union, the ask readers, the place watch and the menu hold through ctx', async () => {
+    let ctxSeen: ResponderCtx | null = null;
+    const reader = (r: unknown) => (typeof r === 'object' && r !== null && Object.keys(r).join() === 'x' ? (r as Record<string, unknown>) : null);
+    const a: ExtUnit = { unit: 'ask-i', asks: ['vertex'], askReaders: { vertex: reader } };
+    const b: ExtUnit = { unit: 'use-i', held: ['pcbnew.Foo.bar'], heldRows: [{ action: 'pcbnew.Foo.bar', frames: ['pcb'], cap: 'foo' }], install: (ctx) => { ctxSeen = ctx; } };
+    const t = await boot([a, b]);
+    const ctx = ctxSeen as unknown as ResponderCtx;
+    expect(ctx.heldRows()).toEqual(heldActions(t.reg));
+    expect(ctx.heldRows().at(-1)).toEqual({ action: 'pcbnew.Foo.bar', frames: ['pcb'], cap: 'foo' });
+    expect(ctx.readAsk('vertex', { x: 1 })).toEqual({ x: 1 });
+    expect(ctx.readAsk('vertex', { y: 1 })).toBeNull();
+    expect(ctx.readAsk('nobody', { x: 1 })).toBeNull();
+    expect(ctx.placeHanging()).toBe(false);
+    expect(await ctx.placeCancel()).toBe(true);
+    ctx.holdMenus(true);
+    ctx.holdMenus(false);
+    expect(buildRegistry(mods({ unit: 'bad-i', askReaders: { vertex: reader } })).problems).toEqual(["bad-i: askReaders 'vertex' is no ask the unit declares"]);
+  });
+
+  it('takes a unit settings section in settings.get and settings.set, in its frames only', async () => {
+    const unit: ExtUnit = { unit: 'st-i', settingsSections: { router: { frames: ['pcb'], check: (v) => typeof v.mode === 'string' }, annotation: { frames: ['sch'], projectFile: true } } };
+    const reg = buildRegistry(mods(unit));
+    expect(reg.problems).toEqual([]);
+    expect(sectionFrames('router', reg.settingsSections)).toEqual(['pcb']);
+    expect(sectionFrames('router')).toEqual([]);
+    expect(parseSettingsGetArgs({ section: 'router' })).toBeNull();
+    expect(parseSettingsGetArgs({ section: 'router' }, reg.settingsSections)).toEqual({ section: 'router' });
+    expect(parseSettingsSetArgs({ section: 'router', value: { mode: 'walk' } }, reg.settingsSections)).toEqual({ section: 'router', value: { mode: 'walk' } });
+    expect(parseSettingsSetArgs({ section: 'router', value: { mode: 3 } }, reg.settingsSections)).toBeNull();
+    expect(parseSettingsSetArgs({ section: 'annotation', value: { a: null } }, reg.settingsSections)).toBeNull();
+    const t = await boot([unit], { exports: { kicadSettingsGet: () => '{}' } });
+    expect(await t.ask(1, 'settings.get', { section: 'router' })).toEqual({ id: 1, ok: false, error: { code: 'unsupported', message: 'router is a board setting' } });
+    expect(buildRegistry(mods({ unit: 'bad-i', settingsSections: { page: { frames: ['sch'] } } })).problems).toEqual(["bad-i: settings section 'page' is no new section"]);
+  });
+
+  it('sends a host tool that boots no frame as ev.openTool with its host name', () => {
+    const reg = buildRegistry(mods({ unit: 'calc-i', hostTools: { pcb_calculator: 'calculator' } }));
+    expect(reg.problems).toEqual([]);
+    expect(hostToolFor('/bin/pcb_calculator.exe', reg)).toBe('calculator');
+    expect(frameForToolName('pcb_calculator', reg)).toBeNull();
+    expect(hostToolFor('pcbnew', reg)).toBeNull();
+    expect(buildRegistry(mods({ unit: 'bad-i', hostTools: { pcbnew: 'calculator', x_tool: 'pcb' } })).problems).toEqual([
+      "bad-i: host tool 'pcbnew' is no new tool name",
+      "bad-i: host tool 'x_tool' needs a host name that is no frame",
+    ]);
   });
 });

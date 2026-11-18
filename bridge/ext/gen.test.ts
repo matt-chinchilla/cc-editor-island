@@ -4,7 +4,9 @@
 // where the markers say, tagged with the unit, and a second run changes nothing.
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error a plain ES module of the scripts folder, with no types
-import { assembleProtocol, PARTS, readFragment, readFragments, ROWS_MARK, SECTIONS_BEGIN, SECTIONS_END } from '../../scripts/ext/gen.mjs';
+import { assembleProtocol, PARTS, readFragment, readFragments, readProtocol, ROWS_MARK, SECTIONS_BEGIN, SECTIONS_END } from '../../scripts/ext/gen.mjs';
+// @ts-expect-error a plain ES module of the scripts folder, with no types
+import { heldRowOf } from '../../scripts/ext/manifest.mjs';
 
 const FRAGMENT = [
   '<!-- Copyright (C) 2026 Circuit Center Inc -->',
@@ -53,5 +55,40 @@ describe('the PROTOCOL.md assembly', () => {
     expect(() => readFragment('y-i', 'stray text\n<!-- part: section -->')).toThrow(/before the first part marker/);
     expect(() => readFragment('y-i', '<!-- part: requests -->\nnot a row')).toThrow(/table rows/);
     expect(() => readFragment('y-i', '<!-- part: other -->')).toThrow(/no part/);
+  });
+});
+
+describe('the generator at the join', () => {
+  const protocol = readProtocol() as string;
+  const frag = (unit: string, text: string) => ({ unit, ...readFragment(unit, text) });
+
+  it('adds a code once: a code the table holds, or an earlier unit gave, is not added again', () => {
+    const out = assembleProtocol(protocol, [
+      frag('a-i', '<!-- part: codes -->\n| `block_failed` | first |\n| `not_found` | again |'),
+      frag('b-i', '<!-- part: codes -->\n| `block_failed` | second |'),
+    ]) as string;
+    const rows = out.split('\n').filter((l) => l.includes('<!-- ext:'));
+    expect(rows).toEqual(['| `block_failed` | first <!-- ext:a-i --> |']);
+    expect(assembleProtocol(out, [])).toBe(protocol);
+  });
+
+  it('puts a unit note at the end of an op section that ships, its family heading when it has none of its own', () => {
+    const out = assembleProtocol(protocol, [frag('n-i', '<!-- part: notes sim.run -->\n- a run note\n<!-- part: notes settings.set -->\n- a set note')]) as string;
+    const lines = out.split('\n');
+    const at = (text: string) => lines.findIndex((l) => l === text);
+    const sim = lines.findIndex((l) => l.startsWith('### The simulator'));
+    const settings = lines.findIndex((l) => l.startsWith('### settings.get and settings.set'));
+    expect(at('- a run note <!-- ext:n-i -->')).toBeGreaterThan(sim);
+    expect(at('- a set note <!-- ext:n-i -->')).toBeGreaterThan(settings);
+    expect(lines.slice(settings + 1, at('- a set note <!-- ext:n-i -->')).some((l) => l.startsWith('### '))).toBe(false);
+    expect(assembleProtocol(out, [])).toBe(protocol);
+    expect(() => readFragment('n-i', '<!-- part: notes sim.run -->\nnot an item')).toThrow(/list items/);
+    expect(() => assembleProtocol(protocol, [frag('n-i', '<!-- part: notes no.such -->\n- x')])).toThrow(/no section/);
+  });
+
+  it('reads a held entry note as its row', () => {
+    expect(heldRowOf('common.Control.saveAs (fpedit, under fpedit)')).toEqual({ action: 'common.Control.saveAs', frames: ['fpedit'], cap: 'fpedit' });
+    expect(heldRowOf('eeschema.EditorControl.importGraphics (sch, under importGraphics; symedit already holds it)')).toEqual({ action: 'eeschema.EditorControl.importGraphics', frames: ['sch'], cap: 'importGraphics' });
+    expect(heldRowOf('pcbnew.EditorControl.exportSTEP')).toBeNull();
   });
 });

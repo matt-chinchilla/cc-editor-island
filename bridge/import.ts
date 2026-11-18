@@ -156,7 +156,9 @@ export type ImportCall = { name: 'kicadOpenFile'; args: [path: string] } | { nam
  * `.PrjPcb`'s absolute path, then `sch0`, `sch1`, ... over every sheet's
  * absolute path, each once, in a std::set's order (code point order).
  */
-export function importCall(frame: Frame, root: string, source: string, altium?: { project: string; sheets: readonly string[] }): ImportCall {
+// `format` is project.import's optional format name, passed through by the responder (the import units read it here).
+export function importCall(frame: Frame, root: string, source: string, altium?: { project: string; sheets: readonly string[] }, format?: string): ImportCall {
+  void format;
   const abs = (p: string): string => `${root}/${p}`;
   if (frame === 'pcb') return { name: 'kicadOpenFile', args: [abs(source)] };
   if (altium != null) {

@@ -27,8 +27,8 @@ import { CHECK_DONE, CHECK_EXPORTS, CHECK_REPORT, CHECK_ROOT, readCheckDone, rea
 import { MODEL_EXPORTS, modelsJson, parseModelsArgs, readModels, sameModels } from './models';
 import { BUILTIN_EVENTS, BUILTIN_OPS } from './ext/builtins';
 import { exportJobs as extExportJobs, heldActions, REGISTRY, type Registry } from './ext/registry';
-import { SEAM_PLACEHOLDER, type Answer, type FrameKind, type ResponderCtx } from './ext/contract';
-import { documentExtension, framePicks, frameKind as extFrameKind, frameRefusal as extFrameRefusal, ownDocument, unitsPerMm } from '../src/frames';
+import { SEAM_PLACEHOLDER, type Answer, type ExportRun, type FrameKind, type ResponderCtx } from './ext/contract';
+import { documentExtension, framePickKind, framePicks, frameKind as extFrameKind, frameRefusal as extFrameRefusal, ownDocument, unitsPerMm } from '../src/frames';
 import { parsePlotArgs, plotFailure, plotJson, plotNotes, PLOT_DONE, PLOT_EXPORTS, PLOT_ROOT, readPlotDone, readPlotFolder, type PlotDone } from './plot';
 import { placeBlob, PlacementWatch } from './place';
 import { BOARD_PROPERTIES_CAP, BOARD_PROPERTIES_EXPORT, installProperties, PROPERTIES_CAP, PROPERTIES_EXPORT, type BoardPropertiesKind, type PropertiesWindow } from './properties';
@@ -68,7 +68,7 @@ import {
 import { BOARD_EDIT_EXPORTS, BOARD_OPS, EDIT_DONE, EDIT_ERRORS, EDIT_REPORT, EDIT_ROOT, editJson, parseEditArgs, readEditErrors, readEditReport, SCH_EDIT_EXPORTS, SCH_OPS, type EditArgs } from './edit';
 import { FOOTPRINTS_EXPORTS, readBoardFootprints } from './footprints';
 import {
-  parseSettingsGetArgs, parseSettingsSetArgs, PCB_READ_ONLY, readSection, readSettingsRecord, rulesPathOf, sectionFrames, SETTINGS_DONE,
+  parseSettingsGetArgs, parseSettingsSetArgs, PCB_READ_ONLY, pcbReadOnly, readSection, readSettingsRecord, rulesPathOf, sectionFrames, SETTINGS_DONE,
   SETTINGS_ERRORS, SETTINGS_EXPORTS, SETTINGS_REPORT, SETTINGS_ROOT, settingsSetJson,
 } from './settings';
 
@@ -78,7 +78,7 @@ export type IslandEvent =
   | { type: 'ev.state'; phase: string; detail?: string }
   | { type: 'ev.ready'; caps: string[]; engine: { tag: string; kicad: string } }
   | { type: 'ev.saved'; path: string; bytes: Uint8Array }
-  | { type: 'ev.openTool'; frame: Frame }
+  | { type: 'ev.openTool'; frame: Frame | string }
   | { type: 'ev.help'; topic: string }
   | { type: 'ev.menu'; open: boolean }
   | { type: 'ev.chrome'; shown: boolean }
@@ -134,7 +134,7 @@ type ExtPost = { type: typeof EXT_POST; out: Record<string, unknown>; transfer: 
 type ChromeWindow = ToolWindow & { kicadChrome?: { onChange?: (shown: boolean) => void } };
 type CollabWindow = ToolWindow & { kicadCollab?: { onSave?: (absPath: string) => void; onSheetChanged?: (absPath: string) => void; onSheetsState?: (json: string) => void } };
 /** A project.import that passed its checks: the source, the files, and an Altium project's sheets and project file (sch frame). */
-type CheckedImport = { w: ToolWindow; FS: EmscriptenFS; open: string; files: Array<{ path: string; bytes: Uint8Array }>; altium?: { project: string; sheets: string[] } };
+type CheckedImport = { w: ToolWindow; FS: EmscriptenFS; open: string; files: Array<{ path: string; bytes: Uint8Array }>; altium?: { project: string; sheets: string[] }; format?: string };
 
 /** MEMFS's errno for a busy directory (the engine's working directory). */
 const EBUSY = 10;
@@ -307,6 +307,8 @@ export const timing = {
    * 8.4 s over the local pair, tests/e2e/export.spec.ts, 2026-11-17).
    */
   exportMs: 45_000,
+  /** How often a unit's export hook hears that the run still goes (ExportHooks.tick). */
+  exportTickMs: 250,
   /**
    * Properties, numbering and rules (island v0.2.3-cc23): how long a
    * symbols.set, a symbols.exchange or footprints.exchange, a sch.edit or
@@ -630,6 +632,8 @@ export function startResponder(opts: {
   const kind: FrameKind | null = extFrameKind(frame, reg);
   /** The extension of the file this frame opens. */
   const EXT_OF_FRAME = documentExtension(frame, reg);
+  /** What this frame places (a unit frame's descriptor says; src/picker.ts kindOf otherwise). */
+  const PICK_KIND = kindOf(frame, framePickKind(frame, reg));
   let staged: StagedProject | null = null;
   let opened: string | null = null;
   /**
@@ -720,6 +724,8 @@ export function startResponder(opts: {
   /** Rebuilds each event with exactly its protocol keys; saved bytes travel as a transferred copy. */
   const emit = (ev: IslandEvent): void => {
     if (closed) return;
+    // A wave unit's guard on this event (ExtUnit.eventGuards) may drop it.
+    if (reg.eventGuards.has(ev.type) && !guardsPass(ev as unknown as { type: string } & Record<string, unknown>)) return;
     if (port == null) {
       if (queued.length >= MAX_QUEUED) queued.shift();
       queued.push(ev);
@@ -856,6 +862,7 @@ export function startResponder(opts: {
   // engine's scripts load, so these capture listeners run before KiCad's own.
   installPickKeys(page, {
     frame,
+    pickKind: PICK_KIND,
     open: () => win != null && pickOpen(win),
     focused: () => { try { return page.document?.activeElement ?? null; } catch { return null; } },
     onPick: (pick) => emitPick(pick),
@@ -1355,7 +1362,8 @@ export function startResponder(opts: {
     const mod: KicadImportExports | undefined = w.Module;
     for (const name of needs) if (typeof mod?.[name] !== 'function') return fail('unsupported', name);
     if (engineBusy() || keysBlocked(w)) return fail('busy', op);
-    return { w, FS: w.FS, open: a.open, files, altium };
+    // The format named passes through to bridge/import.ts importCall (the import units read it there).
+    return typeof a.format === 'string' ? { w, FS: w.FS, open: a.open, files, altium, format: a.format } : { w, FS: w.FS, open: a.open, files, altium };
   }
 
   /** Starts a checked import off the request chain; its answer goes to `done` when it ends. */
@@ -1440,7 +1448,7 @@ export function startResponder(opts: {
       return fail('open_failed', target);
     }
     if (closed) return fail('import_failed', 'the frame closed');
-    const drove = await driveImport(w, importCall(frame, root, source, altium), { deadline, timing, closed: () => closed, engineBusy });
+    const drove = await driveImport(w, importCall(frame, root, source, altium, a.format), { deadline, timing, closed: () => closed, engineBusy });
     if (closed) return fail('import_failed', 'the frame closed');
     if (!drove.ok) {
       // A stopped engine is not called again, not even to settle the chrome
@@ -1822,7 +1830,7 @@ export function startResponder(opts: {
     if (keysBlocked(w)) return fail('busy', op);
     // A place key from the host takes the reader's own key's path (PICKER.md):
     // KiCad's chooser never opens, ev.pick goes out, and nothing is pressed.
-    const pick = op === 'key.press' ? pickFor(frame, { key: k.key, ctrlKey: k.ctrl, shiftKey: k.shift, altKey: k.alt }) : null;
+    const pick = op === 'key.press' ? pickFor(frame, { key: k.key, ctrlKey: k.ctrl, shiftKey: k.shift, altKey: k.alt }, PICK_KIND) : null;
     if (pick != null && pickOpen(w) && !takesText(w.document?.activeElement)) {
       emitPick(pick);
       return ok();
@@ -2033,7 +2041,7 @@ export function startResponder(opts: {
     const op = 'place';
     const a = parsePlaceArgs(args);
     if (a == null) return fail('bad_args', op);
-    if (a.kind !== kindOf(frame)) return fail('unsupported', `a ${a.kind} does not place in a ${frame} frame`);
+    if (a.kind !== PICK_KIND) return fail('unsupported', `a ${a.kind} does not place in a ${frame} frame`);
     const w = win;
     if (w == null) return fail('not_ready', op);
     if (typeof w.Module?.kicadPlaceImportedItem !== 'function') return fail('unsupported', 'kicadPlaceImportedItem');
@@ -2529,17 +2537,30 @@ export function startResponder(opts: {
   function simNow(data: { id: number; op: string; args?: unknown }): void {
     if (closed) return;
     const { id, op } = data;
-    if (!onlyKeys(data as unknown as Record<string, unknown>, ['id', 'op', 'args']) || !noArgs(data.args)) return reply(id, fail('bad_args', op));
-    if (stopped != null) return reply(id, fail('not_ready', 'the engine stopped'));
+    if (!onlyKeys(data as unknown as Record<string, unknown>, ['id', 'op', 'args'])) return reply(id, fail('bad_args', op));
+    // A wave unit's widening of sim.stop or sim.release (lo-e2-i) runs here too, still off the queue.
+    if (reg.widen.has(op)) {
+      void widened(op, async (args) => simNowAnswer(op, args))(data.args)
+        .catch((err: unknown) => fail('island_error', describeError(err)))
+        .then((a) => reply(id, a));
+      return;
+    }
+    reply(id, simNowAnswer(op, data.args));
+  }
+
+  /** sim.stop's or sim.release's answer past the request's own keys (simNow). */
+  function simNowAnswer(op: string, args: unknown): Answer {
+    if (!noArgs(args)) return fail('bad_args', op);
+    if (stopped != null) return fail('not_ready', 'the engine stopped');
     const gate = simGate(op, SIM_RUN_EXPORTS, { service: true, held: false });
-    if ('ok' in gate) return reply(id, gate);
+    if ('ok' in gate) return gate;
     if (op === 'sim.stop') {
       if (simLive != null) simStopCall();
-      return reply(id, ok());
+      return ok();
     }
-    if (simLive != null) return reply(id, fail('busy', 'a run is live'));
+    if (simLive != null) return fail('busy', 'a run is live');
     simService?.release();
-    return reply(id, ok());
+    return ok();
   }
 
   /** kicadSimNetlist's raw answer ('' when it refused); it may answer a Promise (it waits on the service for an IBIS part). */
@@ -3172,9 +3193,11 @@ export function startResponder(opts: {
    */
   async function projectExport(args: unknown): Promise<Answer> {
     const op = 'project.export';
-    const a = parseExportArgs(args);
-    if (a == null) return fail('bad_args', op);
-    const face = exportFace(a.job);
+    // The jobs are the built ins and every wave unit's (bridge/ext/registry.ts exportJobs).
+    const parsed = parseExportArgs(args, jobs);
+    if (parsed == null) return fail('bad_args', op);
+    let a = parsed;
+    const face = exportFace(a.job, jobs);
     if (face !== frame) return fail('unsupported', face === 'pcb' ? 'a board output runs in a pcb frame' : 'a schematic output runs in a sch frame');
     const w = win;
     if (w == null) return fail('not_ready', op);
@@ -3189,16 +3212,41 @@ export function startResponder(opts: {
     try { dir = freshRunFolder(FS, EXPORT_ROOT); } catch (err) { return fail('island_error', describeError(err)); }
     const run = runs;
     const t0 = Date.now();
+    // The wave units' export hooks (ExtUnit.exportHooks): the run's bound, its staging and settings, its progress.
+    const hooks = reg.exportHooks;
+    const xrun: ExportRun = { job: a.job, dir, run, settings: a.settings };
+    let ms = timing.exportMs;
+    for (const { hooks: h } of hooks) {
+      const named = h.msFor?.(a.job);
+      if (typeof named === 'number' && Number.isFinite(named) && named > ms) ms = named;
+    }
+    for (const { hooks: h } of hooks) {
+      if (h.before == null) continue;
+      let said: Awaited<ReturnType<NonNullable<typeof h.before>>>;
+      try { said = await h.before(xrun, ctx); } catch (err) { dropRunFolder(FS, dir); return fail('island_error', describeError(err)); }
+      if (said == null) continue;
+      if ('ok' in said) { dropRunFolder(FS, dir); return said; }
+      a = { ...a, settings: said.settings as typeof a.settings };
+      xrun.settings = said.settings;
+    }
+    const ticks = hooks.some(({ hooks: h }) => h.tick != null)
+      ? setInterval(() => { for (const { hooks: h } of hooks) { try { h.tick?.(xrun, ctx); } catch (err) { console.debug('[export]', 'tick', describeError(err)); } } }, timing.exportTickMs)
+      : null;
     // The export answers false at once for settings it refuses (a known key of another
     // JSON type, a cc_* output's key it does not take): that is the request's fault.
     let refused = false;
-    const result = await watchedRun<ExportDone>(op, w, FS, dir, timing.exportMs,
+    const ran = a;
+    const result = await watchedRun<ExportDone>(op, w, FS, dir, ms,
       async () => {
-        const queued = await (mod[exports[0]] as (json: string) => unknown)(exportJson(run, dir, a));
+        const queued = await (mod[exports[0]] as (json: string) => unknown)(exportJson(run, dir, ran));
         refused = queued !== true;
         return queued;
       },
-      () => readExportDone(readBytes(FS, `${dir}/${EXPORT_DONE}`)));
+      () => readExportDone(readBytes(FS, `${dir}/${EXPORT_DONE}`)))
+      .finally(() => {
+        if (ticks != null) clearInterval(ticks);
+        for (const { hooks: h } of hooks) { try { h.after?.(xrun, ctx); } catch (err) { console.debug('[export]', 'after', describeError(err)); } }
+      });
     if (!('done' in result)) return refused ? fail('bad_args', 'the engine refused the settings') : result;
     if (result.dialog != null) { dropRunFolder(FS, dir); return fail('island_error', result.dialog); }
     const { done } = result;
@@ -3235,7 +3283,7 @@ export function startResponder(opts: {
    */
   function documentGate(op: string, exports: readonly string[], section: string): Answer | { w: ToolWindow; mod: Record<string, unknown> } {
     if (frame !== 'sch' && frame !== 'pcb') return fail('unsupported', SYMEDIT_REFUSAL);
-    if (!(sectionFrames(section) as string[]).includes(frame)) return fail('unsupported', `${section} is a ${frame === 'sch' ? 'board' : 'schematic'} setting`);
+    if (!(sectionFrames(section, reg.settingsSections) as string[]).includes(frame)) return fail('unsupported', `${section} is a ${frame === 'sch' ? 'board' : 'schematic'} setting`);
     const w = win;
     if (w == null) return fail('not_ready', op);
     const mod = (w.Module ?? {}) as Record<string, unknown>;
@@ -3449,7 +3497,7 @@ export function startResponder(opts: {
    */
   function settingsGet(args: unknown): Answer {
     const op = 'settings.get';
-    const a = parseSettingsGetArgs(args);
+    const a = parseSettingsGetArgs(args, reg.settingsSections);
     if (a == null) return fail('bad_args', op);
     const gate = documentGate(op, ['kicadSettingsGet'], a.section);
     if ('ok' in gate) return gate;
@@ -3471,9 +3519,10 @@ export function startResponder(opts: {
    */
   async function settingsSet(args: unknown): Promise<Answer> {
     const op = 'settings.set';
-    const a = parseSettingsSetArgs(args);
+    const a = parseSettingsSetArgs(args, reg.settingsSections);
     if (a == null) return fail('bad_args', op);
     if (frame === 'pcb' && PCB_READ_ONLY.includes(a.section)) return fail('unsupported', 'the board takes variants through Update the board');
+    if (frame === 'pcb' && pcbReadOnly(a.section, reg.settingsSections)) return fail('unsupported', `the board reads ${a.section} and never sets it`);
     const gate = documentGate(op, SETTINGS_EXPORTS, a.section);
     if ('ok' in gate) return gate;
     const { w, mod } = gate;
@@ -4037,6 +4086,18 @@ export function startResponder(opts: {
   let readyCaps: readonly string[] = [];
   /** The wave units' installs' stops, run when the bridge stops. */
   const extStops: Array<() => void> = [];
+  /** ctx.holdMenus: while above zero, KiCad's popup menus send no ev.menu and leave the coords chip alone. */
+  let menusHeld = 0;
+
+  /** Every unit's guard on a built in event passes it (a guard that throws passes it). */
+  function guardsPass(ev: { type: string } & Record<string, unknown>): boolean {
+    for (const { guard } of reg.eventGuards.get(ev.type) ?? []) {
+      let pass = true;
+      try { pass = guard(ev, ctx) !== false; } catch { pass = true; }
+      if (!pass) return false;
+    }
+    return true;
+  }
 
   /** A frame a unit defines: its own document is open (its descriptor's documentOpen). */
   function frameOpen(): boolean {
@@ -4074,10 +4135,20 @@ export function startResponder(opts: {
     placeHanging: () => placeWatch?.hanging() === true,
     importing: () => importing,
     checking: () => checking,
+    simRun: () => simLive?.run ?? null,
+    heldRows: () => heldRows,
+    readAsk: (ask, record) => {
+      const r = reg.askReaders.get(ask);
+      if (r == null) return null;
+      try { return r.read(record); } catch { return null; }
+    },
     inFlight: () => inFlight,
     boardGate: (op, exports) => boardGate(op, exports),
     schematicGate: (op, exports) => schematicGate(op, exports),
     documentGate: (op, exports, section) => documentGate(op, exports, section),
+    placeStart: (uuid) => { placeWatch?.start(uuid); },
+    placeCancel: async () => (placeWatch == null ? true : placeWatch.cancel()),
+    holdMenus: (on) => { menusHeld = Math.max(0, menusHeld + (on ? 1 : -1)); },
     pressKey: (k) => { if (win != null) pressKey(win, k); },
     emit: (ev) => {
       if (!BUILTIN_EVENTS.includes(ev.type)) throw new Error(`${ev.type} is no built in event (a unit's own goes through emitExt)`);
@@ -4163,7 +4234,12 @@ export function startResponder(opts: {
       // it; it reads the viewport only while no import or save runs, as the fit watch does.
       const chip = new CoordsChip(w as unknown as CoordsWindow, { frame, live: () => !closed && !importing && collecting == null, unitsPerMm: unitsPerMm(frame, reg) });
       if (chip.start()) coords = chip;
-      stopMenus = watchMenus(w, (open) => { coords?.cover(open); emit({ type: 'ev.menu', open }); });
+      stopMenus = watchMenus(w, (open) => {
+        // A wave unit that parks KiCad's menu under its own (ctx.holdMenus) keeps both quiet.
+        if (menusHeld > 0) return;
+        coords?.cover(open);
+        emit({ type: 'ev.menu', open });
+      });
       // KiCad's own chrome as the engine says it is (our engine from run 9:
       // window.kicadChrome.onChange each time it flips), so the host's menus
       // control tells the truth. An engine without kicadChromeShown says nothing.
@@ -4300,15 +4376,17 @@ export function startResponder(opts: {
       }
       // The wave units' caps (bridge/ext/<unit>.ts caps), each feature detected on
       // the engine's exports by its unit, only names the unit declared.
+      // A frame a unit defines lists only the built in pseudo-caps its descriptor
+      // allows (the engine's export names always); a unit's own caps are its own
+      // caps(mod, frame) answer for this frame, never filtered by the descriptor.
+      const capAllowed = (c: string): boolean => kind?.caps == null || /^kicad[A-Za-z0-9]*$/.test(c) || kind.caps.includes(c);
+      if (kind?.caps != null) for (let i = caps.length - 1; i >= 0; i--) if (!capAllowed(caps[i])) caps.splice(i, 1);
       for (const u of reg.units) {
         if (typeof u.caps !== 'function') continue;
         try {
           for (const c of u.caps(mod, frame)) if (reg.capNames.get(c) === u.unit && !caps.includes(c)) caps.push(c);
         } catch (err) { console.debug('[ext]', u.unit, 'caps', describeError(err)); }
       }
-      // A frame a unit defines lists only the pseudo-caps its descriptor allows (the engine's export names always).
-      const capAllowed = (c: string): boolean => kind?.caps == null || /^kicad[A-Za-z0-9]*$/.test(c) || kind.caps.includes(c);
-      if (kind?.caps != null) for (let i = caps.length - 1; i >= 0; i--) if (!capAllowed(caps[i])) caps.splice(i, 1);
       caps.sort();
       // ev.held: our engine (run 12) asks the page before a hotkey's action;
       // the frame holds the actions whose windows the host replaces, each only

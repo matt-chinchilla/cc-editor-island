@@ -14,6 +14,19 @@ export const manifestPath = () => process.env.CC_W2_MANIFEST || DEFAULT_MANIFEST
 export const bare = (s) => String(s).replace(/\s*\(.*$/s, '').trim();
 /** A held entry "pcbnew.X.y (fpedit, under fpedit)": the action. */
 const heldName = (s) => bare(s);
+/**
+ * A held entry's row when its note names one: "a.b.c (fpedit, under fpedit)"
+ * or "a.b.c (sch, under importGraphics; symedit already holds it)" is
+ * { action, frames, cap }; null when the note names none.
+ */
+export function heldRowOf(s) {
+  const m = String(s).match(/\(\s*([a-z][a-z0-9 ,]*?)\s*,\s*under\s+([A-Za-z][A-Za-z0-9:]*)/);
+  if (m == null) return null;
+  const frames = m[1].split(/[\s,]+|\band\b/).filter((f) => f !== '');
+  return frames.length === 0 ? null : { action: bare(s), frames, cap: m[2] };
+}
+/** An owned path of the island ("island:bridge/x.ts (note)" is "bridge/x.ts"); null for another repository or a unit files entry. */
+const islandPath = (s) => (typeof s === 'string' && s.startsWith('island:') ? bare(s.slice('island:'.length)).replace(/#.*$/, '') : null);
 
 /** Every island unit of the manifest, with its names. */
 export function islandUnits(path = manifestPath()) {
@@ -24,6 +37,12 @@ export function islandUnits(path = manifestPath()) {
     if (u == null || u.layer !== 'island') continue;
     const i = u.island ?? {};
     const list = (k) => (Array.isArray(i[k]) ? i[k].map(bare).filter((s) => s !== '') : []);
+    const heldRows = Array.isArray(i.heldRows) ? [...i.heldRows] : [];
+    // A held entry whose note names its frames and cap is a row too (fp-i6's "(fpedit, under fpedit)").
+    for (const h of Array.isArray(i.held) ? i.held : []) {
+      const row = heldRowOf(h);
+      if (row != null && !heldRows.some((r) => r.action === row.action && row.frames.every((f) => (r.frames ?? []).includes(f)))) heldRows.push(row);
+    }
     const widened = (k) => list(k).filter((s) => !/\bwidened\b|\bexisting\b|\bunchanged\b/.test(String((i[k] ?? []).find((x) => bare(x) === s) ?? '')));
     out.push({
       id: u.id,
@@ -33,11 +52,15 @@ export function islandUnits(path = manifestPath()) {
       /** New event types only (a widened, existing or unchanged one ships already). */
       events: widened('events'),
       held: Array.isArray(i.held) ? i.held.map(heldName) : [],
-      heldRows: Array.isArray(i.heldRows) ? i.heldRows : [],
+      heldRows,
       asks: list('asks'),
       exportJobs: list('exportJobs'),
       frames: list('frames'),
       e2e: typeof i.e2e === 'string' ? i.e2e : null,
+      /** The island fixture folders and files its record names. */
+      fixtures: Array.isArray(i.fixtures) ? i.fixtures.map(bare).filter((f) => f !== '') : [],
+      /** The island paths it may create or edit (its ownedPaths). */
+      owned: (Array.isArray(u.ownedPaths) ? u.ownedPaths : []).map(islandPath).filter((p) => p != null),
     });
   }
   return out;

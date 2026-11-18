@@ -67,8 +67,13 @@ window.__bridge = {
 };
 
 async function loadFixture(name) {
-  const spec = FIXTURES[name];
-  if (spec == null) throw new Error(`no fixture ${name}`);
+  // A fixture not in the table (a wave unit's) lists its files in its own files.json: ["a.kicad_pro", "b.kicad_sch", ...].
+  let spec = FIXTURES[name];
+  if (spec == null && /^[a-z0-9][a-z0-9-]*$/.test(name ?? '')) {
+    const listed = await fetch(`/fixtures/${name}/files.json`);
+    if (listed.ok) spec = { files: await listed.json() };
+  }
+  if (spec == null || (spec.files != null && (!Array.isArray(spec.files) || !spec.files.every((f) => typeof f === 'string')))) throw new Error(`no fixture ${name}`);
   const enc = new TextEncoder();
   if (spec.manifest != null) {
     const entries = await (await fetch(`/fixtures/${name}/${spec.manifest}`)).json();

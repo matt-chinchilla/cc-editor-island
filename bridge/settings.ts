@@ -42,6 +42,10 @@ const PROJECT_FILE_SECTIONS: readonly string[] = ['netClasses', 'schFormatting',
 const VARIANT_ACTIONS = ['add', 'copy', 'rename', 'delete', 'describe', 'current'] as const;
 
 export type SettingsFrame = 'sch' | 'pcb';
+/** A section a wave unit adds (bridge/ext/contract.ts SettingsSection), by name: the parsers take it beside the built ins. */
+export interface ExtraSection { frames: readonly SettingsFrame[]; projectFile?: boolean; pcbReadOnly?: boolean; check?(value: Readonly<Record<string, unknown>>): boolean }
+export type ExtraSections = ReadonlyMap<string, ExtraSection>;
+const NO_EXTRA: ExtraSections = new Map();
 export interface SettingsGetArgs { section: string }
 export interface SettingsSetArgs { section: string; value: Record<string, unknown>; dryRun?: boolean }
 export interface RuleError { line: number; column: number; message: string }
@@ -68,13 +72,19 @@ function plainJson(v: unknown, nulls: boolean, depth = 0): boolean {
 }
 
 /** Where a section lives: the frames that hold it. */
-export function sectionFrames(section: string): SettingsFrame[] {
+export function sectionFrames(section: string, extra: ExtraSections = NO_EXTRA): SettingsFrame[] {
+  const added = extra.get(section);
+  if (added != null && !SCH_SECTIONS.includes(section) && !PCB_SECTIONS.includes(section)) return (['sch', 'pcb'] as const).filter((f) => added.frames.includes(f));
   return (['sch', 'pcb'] as const).filter((f) => (f === 'sch' ? SCH_SECTIONS : PCB_SECTIONS).includes(section));
 }
 
+/** The pcb frame reads this section and never sets it (variants, and a unit section that says so). */
+export const pcbReadOnly = (section: string, extra: ExtraSections = NO_EXTRA): boolean =>
+  PCB_READ_ONLY.includes(section) || extra.get(section)?.pcbReadOnly === true;
+
 /** settings.get's args: exactly `{ section }`, a section either frame holds; null otherwise. */
-export function parseSettingsGetArgs(args: unknown): SettingsGetArgs | null {
-  if (!isObj(args) || !exactKeys(args, ['section']) || typeof args.section !== 'string' || sectionFrames(args.section).length === 0) return null;
+export function parseSettingsGetArgs(args: unknown, extra: ExtraSections = NO_EXTRA): SettingsGetArgs | null {
+  if (!isObj(args) || !exactKeys(args, ['section']) || typeof args.section !== 'string' || sectionFrames(args.section, extra).length === 0) return null;
   return { section: args.section };
 }
 
@@ -100,14 +110,16 @@ function isVariantAction(v: Record<string, unknown>): boolean {
  * KiB), `{ aliases }` for the bus aliases, names to text or null (removed) for
  * the text variables. Null for anything else.
  */
-export function parseSettingsSetArgs(args: unknown): SettingsSetArgs | null {
+export function parseSettingsSetArgs(args: unknown, extra: ExtraSections = NO_EXTRA): SettingsSetArgs | null {
   if (!isObj(args) || !Object.keys(args).every((k) => k === 'section' || k === 'value' || k === 'dryRun') || !own(args, 'section') || !own(args, 'value')) return null;
   const { section, value } = args;
-  if (typeof section !== 'string' || sectionFrames(section).length === 0) return null;
+  if (typeof section !== 'string' || sectionFrames(section, extra).length === 0) return null;
   if (own(args, 'dryRun') && typeof args.dryRun !== 'boolean') return null;
   if (!isPlain(value) || Object.keys(value).length === 0 || !plainJson(value, true)) return null;
   if (utf8Bytes(JSON.stringify(value)) > MAX_SETTINGS_BYTES) return null;
-  if (PROJECT_FILE_SECTIONS.includes(section) && !plainJson(value, false)) return null;
+  const added = SCH_SECTIONS.includes(section) || PCB_SECTIONS.includes(section) ? undefined : extra.get(section);
+  if ((PROJECT_FILE_SECTIONS.includes(section) || added?.projectFile === true) && !plainJson(value, false)) return null;
+  if (added?.check != null && added.check(value) !== true) return null;
   switch (section) {
     case 'variants': if (!isVariantAction(value)) return null; break;
     case 'customRules': if (!exactKeys(value, ['text']) || typeof value.text !== 'string' || utf8Bytes(value.text) > MAX_RULES_BYTES) return null; break;

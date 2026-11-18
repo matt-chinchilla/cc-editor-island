@@ -219,7 +219,10 @@ const isText = (buf) => !buf.subarray(0, 8192).includes(0);
  *     <file>.license beside it whose first two lines are the copyright line and
  *     an SPDX line; fixtures under tests/fixtures/ and tests/e2e/fixtures/ are
  *     left to their manifest records;
- *   - as text, name no agent, AI tool or model, and no session (AGENT_RE).
+ *   - as text, name no agent, AI tool or model, and no session (AGENT_RE);
+ *   - restored from PCBJam under loader/src/: its own header, a GPL SPDX
+ *     line and our dated "Modified by Circuit Center on" notice, in place of
+ *     our copyright line.
  * Answers the problems, one line each; [] outside a git checkout (a release's
  * source tarball holds the files the census passed already).
  */
@@ -240,6 +243,10 @@ export function censusNewFiles(root = '.') {
     if (text != null && AGENT_RE.test(text)) problems.push(`${f} names an agent, a tool, a model or a session`);
     if (f.endsWith('.license')) continue;
     if (FIXTURE_DIRS.some((d) => f.startsWith(d))) continue;
+    // A file restored from PCBJam under loader/src/ (3d-i1's occ-service.ts and
+    // occ-worker.js) keeps PCBJam's own header and gains our dated "Modified by
+    // Circuit Center on YYYY-MM-DD:" notice (the census of loader/src below reads it); it never takes our copyright line.
+    if (text != null && f.startsWith('loader/src/') && readNotices(text).length > 0 && text.includes('SPDX-License-Identifier: GPL-3.0-or-later')) continue;
     const syntax = syntaxOf(f);
     if (syntax != null && text != null) {
       const lines = text.split('\n');

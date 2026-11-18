@@ -13,7 +13,7 @@ Every wave 2 island unit adds ONLY new files, each named by its unit id (RULINGS
 | helper modules | `bridge/ext/<unit>/*.ts` (a folder of the unit's own; the glob reads only `bridge/ext/*.ts`) | the unit's file |
 | its PROTOCOL.md part | `bridge/ext/<unit>.md` (below) | `node scripts/ext/gen.mjs` at the join |
 | its e2e spec | the path the manifest's `e2e` names (`mq.py field e2e`) | Playwright, on its own port pair |
-| fixtures | the paths the manifest's `fixtures` name, each with its source and license | its e2e spec |
+| fixtures | the paths the manifest's `fixtures` name, each with its source and license, and a `files.json` listing the files a project fixture opens (`["x.kicad_pro", "x.kicad_pcb"]`) | its e2e spec through `tests/harness/parent.html?fixture=<folder>` (a folder not in the harness's own table is read from its `files.json`) |
 | pencil rows and chords | NOT the unit's: the ST-PRESS run writes `theme/pencil/<unit>.json` and `theme/hotkeys/<unit>.hotkeys` (`theme/pencil/README.md`) | `theme/pencil-tools.gen.mjs`, `theme/seeds.ts` |
 
 Never written by a unit: `bridge/ops.json` and `bridge/exports.json` (generated at the join from `bridge/ops.builtin.json`, `bridge/exports.builtin.json` and every unit's file), `island.json`'s `ops` and `exportKinds` (`scripts/build.mjs` reads them through the registry), `ev.ready`'s caps (the built ins and every unit's `caps`, at run time), `bridge/ext/pending.json` (the seam's, from the manifest).
@@ -37,6 +37,11 @@ export default {
   asks: [],                          // ev.prompt ask names it declares (m1x-i's grammar)
   exportJobs: { pcb_x: 'pcb' },      // new project.export jobs and their face
   defineFrames: {},                  // a new frame (fp-i1: fpedit, ds-i1: ds): FrameKind
+  askReaders: {},                    // each declared ask's closed record reader (ctx.readAsk)
+  exportHooks: {},                   // its part in project.export: msFor, before, tick, after
+  settingsSections: {},              // new settings sections (settings.get, settings.set, cap settings:<section>)
+  hostTools: {},                     // a KiCad tool that boots no frame: { pcb_calculator: 'calculator' } (ev.openTool)
+  eventGuards: {},                   // guards on built in events: { 'ev.sim': (ev, ctx) => keep }
   install(ctx) { ...; return () => { ... } },   // once at engineReady, before ev.ready; the stop runs at close
 } satisfies ExtUnit;
 ```
@@ -53,9 +58,33 @@ The manifest's ops answer `unsupported` with the message `seam placeholder: <op>
 
 `opsWidened: { '<op>': hook }`. The hook is called in place of the op with its args, the ctx and `next`, the op as it stood before the hook: answer your own form of the args yourself, and `return next(args)` for every form the op already takes (rewrite the args first if your form maps onto one). Hooks chain in unit id order, the first wrapping the op. A hook of `project.import`, `sheet.check` or `board.check` runs off the queue as those runs do: call `next` before awaiting anything of the engine. Today's widenings: `board.item.get` and `board.item.set` (m4-i), `settings.get` and `settings.set` (m7-i, lo-e3-i), `project.import` (st-open-foreign-i, st-open-kicad5-i), `board.preview` and `board.update` (i-block-layout), `project.libs` (i-librows), `place` (i-placebody), `sim.run`, `sim.stop`, `sim.result`, `sim.netlist` (lo-e2-i, si1-i).
 
+`sim.stop` and `sim.release` are widened the same way and still answered off the queue (lo-e2-i). A unit that edits a bridge file it alone owns may widen there instead; the join test takes that only from the unit the manifest names. `select` in a frame a unit defines (fp-i1's `fpedit`) is widened from that unit's file: `opsWidened: { select: (args, ctx, next) => ctx.frame === 'fpedit' ? ... : next(args) }`.
+
+A failure answer carries `code` and `message` only (PROTOCOL.md): a state the host must read (st-compare-i's no source) is a code of its own or a field of a success answer, never an extra key of a failure.
+
+### Frames named before they land
+
+`frames`, `heldRows[].frames` and the ops' frames may name `fpedit` and `ds` before fp-i1 and ds-i1 land (`bridge/ext/pending-frames.json`, written by `npm run ext:pending` from the manifest). A pending frame never matches the running frame, so what a unit gives it waits; once its unit lands the name is a defined frame. In TypeScript the frames are `FrameName` (any frame name), so no `declare module` of another unit is needed.
+
 ### Caps
 
-`caps(mod, frame)` answers the caps to list now. Feature detect: `hasAll(mod, ['kicadXGet', 'kicadCollabBusy'])`, never a flag. Only names in `capNames` are listed.
+`caps(mod, frame)` answers the caps to list now. Feature detect: `hasAll(mod, ['kicadXGet', 'kicadCollabBusy'])`, never a flag. Only names in `capNames` are listed. A frame descriptor's `caps` list (fp-i1, ds-i1) governs the BUILT IN pseudo-caps of that frame (and `heldKeys`); a unit's own caps are its own `caps(mod, frame)` answer for that frame and are never filtered by the descriptor, so m1-i lists `contextMenu` in `fpedit` with no edit of fp-i1's file.
+
+### Settings sections
+
+`settingsSections: { router: { frames: ['pcb'], projectFile?, pcbReadOnly?, check?(value) } }` adds a section to settings.get and settings.set (bridge/settings.ts takes the registry's sections beside the built ins): the built in op reads it with `kicadSettingsGet`, sets it with `kicadSettingsSet` in its fresh folder and reads the record back, and `documentGate` answers `router is a board setting` in a `sch` frame. The unit lists the cap `settings:router` in `capNames` and from `caps` when its engine reads the section. No hook of settings.get or settings.set is needed for a plain section.
+
+### project.export: jobs and hooks
+
+`exportJobs` reach project.export (its parse and its face) and island.json `exportKinds`. `exportHooks` (3d-i3): `msFor(job)` names the run's bound in ms (the longest named wins over the bridge's exportMs), `before(run, ctx)` runs after the checks with the run's fresh folder (`run.dir`) and stages what the run reads, answering `{ settings }` to run with (cc_occ false), null, or a refusal; `tick(run, ctx)` is called every 250 ms while the run goes (progress: `ctx.emitExt('ev.export', ...)`); `after(run, ctx)` once, whatever the outcome.
+
+### The 3D service (3d-i1, 3d-i2)
+
+`src/main.ts` installs `src/occ-service.ts`'s `installOccService({ base, wasmBytes, log })` in a `pcb` frame when that file exists (read by glob, the sim service's twin), with `__OCC_WASM_BYTES__` from PIN.json's `occ_service.wasm` (vite.config.ts). `npm run build:models` runs `scripts/build-models.mjs`, `npm run ship:models` runs `scripts/ship-models.sh`. A file restored from PCBJam under `loader/src/` keeps PCBJam's own header, a GPL SPDX line and our dated `Modified by Circuit Center on YYYY-MM-DD:` notice: the census takes it in place of our copyright line.
+
+### Host tools
+
+`hostTools: { pcb_calculator: 'calculator' }`: KiCad's Switch item asking for that tool sends `ev.openTool { frame: 'calculator' }` and boots nothing (src/frames.ts hostToolFor; st-calc-i writes no line of src/main.ts).
 
 ### Held rows
 
@@ -63,7 +92,7 @@ The manifest's ops answer `unsupported` with the message `seam placeholder: <op>
 
 ### Events
 
-A new event goes out through `ctx.emitExt('ev.x', { uuid, kind }, transfer?)`: only the keys declared in `events['ev.x']` leave, `undefined` ones left out. A widened built in event (`ev.held`, `ev.edited`, `ev.selected`, `ev.openTool`, `ev.saved`) goes out through `ctx.emit({ type: 'ev.held', action })`, rebuilt with exactly its protocol keys. `ctx.emitExt` of an undeclared type and `ctx.emit` of a non built in type throw.
+A built in event a unit must keep quiet in some state takes a guard: `eventGuards: { 'ev.sim': (ev, ctx) => ev.run === ctx.simRun() || ... }` (false drops it; every unit's guard must pass). A new event goes out through `ctx.emitExt('ev.x', { uuid, kind }, transfer?)`: only the keys declared in `events['ev.x']` leave, `undefined` ones left out. A widened built in event (`ev.held`, `ev.edited`, `ev.selected`, `ev.openTool`, `ev.saved`) goes out through `ctx.emit({ type: 'ev.held', action })`, rebuilt with exactly its protocol keys. `ctx.emitExt` of an undeclared type and `ctx.emit` of a non built in type throw.
 
 ### A new frame
 
@@ -76,7 +105,9 @@ Read state when called; nothing is cached.
 - `frame`, `root` (the project folder), `timing` (the bridge's waits, shortened by the unit tests)
 - the engine: `win()`, `mod()`, `fs()`, `has(names)`, `ready()` (ev.ready went out), `closed()`, `caps()` (ev.ready's caps)
 - the document: `opened()`, `staged()`, `hasDocument()`, `admit()` (a held action or a properties request reaches the host now)
-- the engine's state: `engineBusy()` (a load parked), `keysBlocked()` (a popup menu or a dialog up), `placeHanging()`, `importing()`, `checking()`, `inFlight()`
+- the engine's state: `engineBusy()` (a load parked), `keysBlocked()` (a popup menu or a dialog up), `placeHanging()`, `importing()`, `checking()`, `simRun()` (the live simulator run, or null), `inFlight()`
+- the tables: `heldRows()` (the held union read now, built ins and every unit's: m1-i's doors table), `readAsk(ask, record)` (the declaring unit's closed reader, null for no reader or another shape: m1x-i reads m3-i's, m6-i's and m12-i's asks this way)
+- the place watch: `placeStart(uuid)` joins a unit placement to the responder's watch (busy everywhere while it hangs, a later place cancels it first), `placeCancel()` cancels the hanging one; `holdMenus(on)` keeps ev.menu and the coords chip's cover quiet while a unit parks KiCad's menu under its own
 - the built in gates, same checks same order: `boardGate(op, exports)`, `schematicGate(op, exports)`, `documentGate(op, exports, section)`; each answers a refusal (`refused(g)`) or `{ w, mod }`
 - doing things: `pressKey(k)`, `emit(ev)`, `emitExt(type, payload, transfer?)`, `withTimeout(value, ms)`, `applyIdle(ms)`, `freshRunFolder(rootDir)`, `dropRunFolder(dir)`, `queuedRun(op, dir, ms, call, record)`, `watchedRun(...)` (closes dialogs met), `closeRunDialogs()`, `readBytes(abs)`, `refocus()`, `log(...)`
 
@@ -130,7 +161,7 @@ export default {
 Every net of the board ... (island `v0.2.3-cc25`, on an engine with `kicadBoardNets`; a host gates it on `ev.ready` `caps` listing `netReport`).
 ```
 
-The parts are `requests` (rows of the request table), `codes` (rows of the error codes table), `events` (items of the events list, `- \`ev.x { ... }\` ...`) and `section` (the op's own section). `node scripts/ext/gen.mjs` puts them in PROTOCOL.md at the join, each row tagged with the unit; a unit never edits PROTOCOL.md.
+The parts are `requests` (rows of the request table), `codes` (rows of the error codes table; a code the table holds already, or an earlier unit gave, is added once: the first row stands), `events` (items of the events list, `- \`ev.x { ... }\` ...`), `section` (the op's own section) and `notes <op>` (list items added at the end of the section of an op that ships: `<!-- part: notes sim.run -->`, under its own heading or its family's, as `sim.run` is under the simulator's). `node scripts/ext/gen.mjs` puts them in PROTOCOL.md at the join, each row tagged with the unit; a unit never edits PROTOCOL.md.
 
 `bridge/ext/st-len-e-i.test.ts`: the unit's own checks through `buildRegistry` and `startResponder({ ..., ext: buildRegistry({ './st-len-e-i.ts': { default: unit } }) })`, as `bridge/ext/seam.test.ts` does, with a fake engine module in the test file only.
 
@@ -151,4 +182,4 @@ CC_E2E_PORT=$(/home/matthew/cc-wave2/bin/port.sh <your seat>) /home/matthew/cc-w
 - `npx tsc --noEmit -p .`
 - `npx vitest run bridge/ext/<unit>.test.ts bridge/ext/seam.test.ts src/new-files.test.ts src/wording.test.ts`
 - your e2e as above
-- at the join only: `npm run gen:ext` (writes `bridge/ops.json`, `bridge/exports.json` and PROTOCOL.md's parts) then `npm run test:join` (fails while any manifest name is missing or any manifest op still answers the seam placeholder; `CC_W2_MANIFEST` names the manifest).
+- at the join only: `npm run ext:pending` (when the manifest changed or a unit was dropped from the wave: its ops and frames leave the pending lists), then `npm run gen:ext` (writes `bridge/ops.json`, `bridge/exports.json` and PROTOCOL.md's parts) then `npm run test:join` (fails while any manifest name is missing or any manifest op still answers the seam placeholder; `CC_W2_MANIFEST` names the manifest).

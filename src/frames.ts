@@ -83,6 +83,17 @@ export function framePicks(frame: Frame, reg: Registry = REGISTRY): boolean {
   return frameKind(frame, reg)?.picker === true;
 }
 
+/** What a frame places through the picker: a unit frame's pickKind, else null (src/picker.ts kindOf's rule). */
+export function framePickKind(frame: Frame, reg: Registry = REGISTRY): 'symbol' | 'footprint' | null {
+  return isBuiltinFrame(frame) ? null : (frameKind(frame, reg)?.pickKind ?? null);
+}
+
+/** kicadWebOpenTool's name as a host tool that boots no frame (ExtUnit.hostTools: pcb_calculator is 'calculator'), or null. */
+export function hostToolFor(raw: string, reg: Registry = REGISTRY): string | null {
+  const base = (raw.replace(/\\/g, '/').split('/').pop() ?? raw).replace(/\.exe$/i, '');
+  return reg.hostTools.get(base)?.frame ?? null;
+}
+
 /** The refusal a unit frame answers for a built in op it does not run, or null. */
 export function frameRefusal(frame: Frame, op: string, reg: Registry = REGISTRY): string | null {
   const kind = isBuiltinFrame(frame) ? null : frameKind(frame, reg);

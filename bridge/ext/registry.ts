@@ -10,9 +10,11 @@ import { ACTION_RE, HELD_ACTIONS, type HeldAction } from '../held';
 import { BUILTIN_EVENTS, BUILTIN_EXPORT_JOBS, BUILTIN_OPS } from './builtins';
 import {
   CAP_RE, EVENT_RE, FRAME_RE, JOB_RE, OP_RE, UNIT_ID_RE,
-  type ExtOp, type ExtUnit, type FrameKind, type Widen,
+  type ExportHooks, type ExtOp, type ExtUnit, type FrameKind, type ResponderCtx, type SettingsSection, type Widen,
 } from './contract';
 import PENDING from './pending.json';
+import PENDING_FRAMES from './pending-frames.json';
+import { PCB_SECTIONS, SCH_SECTIONS } from '../settings';
 import type { Frame } from '../../src/types';
 
 const BUILTIN_FRAMES: readonly string[] = ['sch', 'pcb', 'symedit'];
@@ -40,6 +42,18 @@ export interface Registry {
   asks: ReadonlyMap<string, string>;
   /** Ops the manifest names whose unit has not landed: answered unsupported with SEAM_PLACEHOLDER (never in island.json). */
   pending: ReadonlyMap<string, string>;
+  /** Frames the manifest names whose defining unit has not landed (fpedit, ds), each with that unit: a unit may name them, they never match the running frame. */
+  pendingFrames: ReadonlyMap<string, string>;
+  /** Each ask's closed record reader, with its unit (ResponderCtx.readAsk). */
+  askReaders: ReadonlyMap<string, { unit: string; read: (record: unknown) => Record<string, unknown> | null }>;
+  /** The units' project.export hooks, in unit id order. */
+  exportHooks: ReadonlyArray<{ unit: string; hooks: ExportHooks }>;
+  /** The units' settings sections, each with its unit (bridge/settings.ts takes them). */
+  settingsSections: ReadonlyMap<string, SettingsSection & { unit: string }>;
+  /** KiCad tool names that boot no frame, each with the host's name and its unit (ev.openTool). */
+  hostTools: ReadonlyMap<string, { unit: string; frame: string }>;
+  /** Guards on built in events, per type, in unit id order. */
+  eventGuards: ReadonlyMap<string, ReadonlyArray<{ unit: string; guard: (ev: Readonly<{ type: string } & Record<string, unknown>>, ctx: ResponderCtx) => boolean }>>;
   /** Every rule a unit broke, one line each. */
   problems: readonly string[];
 }
@@ -54,7 +68,7 @@ const strings = (v: unknown): v is readonly string[] => Array.isArray(v) && v.ev
  * ops (bridge/ext/pending.json: op to unit). Pure: the tests feed it units of
  * their own.
  */
-export function buildRegistry(modules: Readonly<Record<string, unknown>>, pending: Readonly<Record<string, string>> = {}): Registry {
+export function buildRegistry(modules: Readonly<Record<string, unknown>>, pending: Readonly<Record<string, string>> = {}, pendingFrames: Readonly<Record<string, string>> = {}): Registry {
   const problems: string[] = [];
   const units: ExtUnit[] = [];
   for (const path of Object.keys(modules).sort()) {
@@ -79,7 +93,10 @@ export function buildRegistry(modules: Readonly<Record<string, unknown>>, pendin
       frames.set(name, { unit: u.unit, kind });
     }
   }
-  const isFrame = (f: unknown): boolean => typeof f === 'string' && (BUILTIN_FRAMES.includes(f) || frames.has(f));
+  // A frame the manifest names whose unit has not landed is a name a unit may give already (it never matches the running frame).
+  const waitingFrames = new Map<string, string>();
+  for (const [name, unit] of Object.entries(pendingFrames)) if (FRAME_RE.test(name) && !BUILTIN_FRAMES.includes(name) && !frames.has(name)) waitingFrames.set(name, unit);
+  const isFrame = (f: unknown): boolean => typeof f === 'string' && (BUILTIN_FRAMES.includes(f) || frames.has(f) || waitingFrames.has(f));
 
   const ops = new Map<string, RegOp>();
   for (const u of units) {
@@ -127,6 +144,7 @@ export function buildRegistry(modules: Readonly<Record<string, unknown>>, pendin
       if (clash != null) { problems.push(`${u.unit}: held ${row.action} in ${clash} is held already`); continue; }
       for (const f of row.frames) taken.add(`${row.action} ${f}`);
       own.add(row.action);
+      // A pending frame's name is kept: it never matches the running frame until its unit lands.
       heldRows.push(Object.freeze({ action: row.action, frames: Object.freeze([...row.frames]) as readonly Frame[], cap: row.cap }));
     }
     for (const name of u.held ?? []) if (!own.has(name)) problems.push(`${u.unit}: held '${name}' has no held row of the unit`);
@@ -165,10 +183,58 @@ export function buildRegistry(modules: Readonly<Record<string, unknown>>, pendin
     if (u.install !== undefined && typeof u.install !== 'function') problems.push(`${u.unit}: install must be a function`);
   }
 
+  const askReaders = new Map<string, { unit: string; read: (record: unknown) => Record<string, unknown> | null }>();
+  for (const u of units) {
+    for (const [ask, read] of Object.entries(u.askReaders ?? {})) {
+      if (asks.get(ask) !== u.unit) { problems.push(`${u.unit}: askReaders '${ask}' is no ask the unit declares`); continue; }
+      if (typeof read !== 'function') { problems.push(`${u.unit}: askReaders '${ask}' is no function`); continue; }
+      askReaders.set(ask, { unit: u.unit, read });
+    }
+  }
+
+  const exportHooks: Array<{ unit: string; hooks: ExportHooks }> = [];
+  for (const u of units) {
+    const h = u.exportHooks;
+    if (h === undefined) continue;
+    if (h == null || typeof h !== 'object' || (['msFor', 'before', 'tick', 'after'] as const).some((k) => h[k] !== undefined && typeof h[k] !== 'function')) { problems.push(`${u.unit}: exportHooks must be functions msFor, before, tick, after`); continue; }
+    exportHooks.push({ unit: u.unit, hooks: h });
+  }
+
+  const settingsSections = new Map<string, SettingsSection & { unit: string }>();
+  for (const u of units) {
+    for (const [name, sec] of Object.entries(u.settingsSections ?? {})) {
+      if (!/^[a-z][A-Za-z0-9]*$/.test(name) || SCH_SECTIONS.includes(name) || PCB_SECTIONS.includes(name)) { problems.push(`${u.unit}: settings section '${name}' is no new section`); continue; }
+      if (settingsSections.has(name)) { problems.push(`${u.unit}: settings section '${name}' is already ${settingsSections.get(name)?.unit}'s`); continue; }
+      if (sec == null || !Array.isArray(sec.frames) || sec.frames.length === 0 || !sec.frames.every((f) => f === 'sch' || f === 'pcb') || (sec.check !== undefined && typeof sec.check !== 'function')) { problems.push(`${u.unit}: settings section '${name}' needs frames sch or pcb (and check a function)`); continue; }
+      settingsSections.set(name, { ...sec, frames: Object.freeze([...sec.frames]), unit: u.unit });
+    }
+  }
+
+  const hostTools = new Map<string, { unit: string; frame: string }>();
+  for (const u of units) {
+    for (const [tool, name] of Object.entries(u.hostTools ?? {})) {
+      if (!/^[a-z][a-z0-9_]{0,31}$/.test(tool) || tool === 'pcbnew' || tool === 'eeschema' || [...frames.values()].some((f) => (f.kind.toolNames ?? []).includes(tool))) { problems.push(`${u.unit}: host tool '${tool}' is no new tool name`); continue; }
+      if (typeof name !== 'string' || !FRAME_RE.test(name) || isFrame(name)) { problems.push(`${u.unit}: host tool '${tool}' needs a host name that is no frame`); continue; }
+      if (hostTools.has(tool)) { problems.push(`${u.unit}: host tool '${tool}' is already ${hostTools.get(tool)?.unit}'s`); continue; }
+      hostTools.set(tool, { unit: u.unit, frame: name });
+    }
+  }
+
+  const eventGuards = new Map<string, Array<{ unit: string; guard: (ev: Readonly<{ type: string } & Record<string, unknown>>, ctx: ResponderCtx) => boolean }>>();
+  for (const u of units) {
+    for (const [type, guard] of Object.entries(u.eventGuards ?? {})) {
+      if (!BUILTIN_EVENTS.includes(type)) { problems.push(`${u.unit}: eventGuards '${type}' is no built in event`); continue; }
+      if (typeof guard !== 'function') { problems.push(`${u.unit}: eventGuards '${type}' is no function`); continue; }
+      const list = eventGuards.get(type) ?? [];
+      list.push({ unit: u.unit, guard });
+      eventGuards.set(type, list);
+    }
+  }
+
   const waiting = new Map<string, string>();
   for (const [op, unit] of Object.entries(pending)) if (!BUILTIN_OPS.includes(op) && !ops.has(op)) waiting.set(op, unit);
 
-  return { units, ops, widen, events, heldRows, exportJobs, frames, capNames, asks, pending: waiting, problems };
+  return { units, ops, widen, events, heldRows, exportJobs, frames, capNames, asks, pending: waiting, pendingFrames: waitingFrames, askReaders, exportHooks, settingsSections, hostTools, eventGuards, problems };
 }
 
 /** What is wrong with a frame descriptor, or null. */
@@ -190,7 +256,7 @@ function frameKindProblem(k: FrameKind): string | null {
 const MODULES = import.meta.glob(['./*.ts', '!./*.test.ts', '!./contract.ts', '!./registry.ts', '!./builtins.ts'], { eager: true });
 
 /** The registry of this checkout's units. */
-export const REGISTRY: Registry = buildRegistry(MODULES, PENDING as Record<string, string>);
+export const REGISTRY: Registry = buildRegistry(MODULES, PENDING as Record<string, string>, PENDING_FRAMES as Record<string, string>);
 
 /** The held actions read at run time: the built ins and every unit's rows (m1-i's doors table reads this). */
 export function heldActions(reg: Registry = REGISTRY): readonly HeldAction[] {

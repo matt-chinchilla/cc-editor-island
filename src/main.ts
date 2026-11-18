@@ -24,7 +24,7 @@ import { createFatalGate } from './fatal';
 import { cleanDetail, hideScreens, showScreen } from './screens';
 import { statusFatal } from './status';
 import type { Frame } from './types';
-import { framePicks, frameForToolName, frameToken, frameTool } from './frames';
+import { framePickKind, framePicks, frameForToolName, frameToken, frameTool, hostToolFor } from './frames';
 import { installQuitHandler } from './quit';
 import { installEngineTeardown, isShutdownError, teardownOnPagehide } from './teardown';
 import { bootHeartbeat } from './boot-heartbeat';
@@ -41,13 +41,25 @@ declare const __ISLAND_TAG__: string;      // define'd by vite.config.ts from PI
 declare const __KICAD_VERSION__: string;   // define'd by vite.config.ts
 declare const __LIBS_TAG__: string;        // define'd by vite.config.ts from PIN.json libs.tag
 declare const __SIM_WASM_BYTES__: number;   // define'd by vite.config.ts from PIN.json (0: no simulator service)
+declare const __OCC_WASM_BYTES__: number;   // define'd by vite.config.ts from PIN.json (0: no 3D service)
+
+/**
+ * The 3D service's installer (src/occ-service.ts, wave unit 3d-i1, the
+ * sim-service pattern), read by glob so this file builds before that unit
+ * lands: no file, no installer, no service.
+ */
+const OCC_SERVICE = import.meta.glob<{ installOccService?: (opts: { base: string; wasmBytes: number; log: (m: string) => void }) => unknown }>('./occ-service.ts', { eager: true })['./occ-service.ts'];
 
 /** How long the engine may take, after its scripts ran, to show its editor frame. */
 const ENGINE_UP_TIMEOUT_MS = 180_000;
 
-/** kicadWebOpenTool receives a tool name, sometimes a path, sometimes with .exe; a wave unit's frame adds its own names (src/frames.ts). */
-function frameForTool(raw: string): Frame | null {
-  return frameForToolName(raw);
+/**
+ * kicadWebOpenTool receives a tool name, sometimes a path, sometimes with
+ * .exe; a wave unit's frame adds its own names, and a unit's host tool (one
+ * that boots no frame, as pcb_calculator) its host name (src/frames.ts).
+ */
+function frameForTool(raw: string): Frame | string | null {
+  return frameForToolName(raw) ?? hostToolFor(raw);
 }
 
 /**
@@ -99,6 +111,8 @@ async function main(): Promise<void> {
   // boots, in a schematic frame when the island serves its files; its worker is made
   // only on the engine's first simulator request.
   const sim = frame === 'sch' ? installSimService({ base: engineBase(), wasmBytes: __SIM_WASM_BYTES__, log: (m) => console.info('[editor]', m) }) : null;
+  // The 3D service (3d-i1), the simulator's twin: installed in a pcb frame when its unit has landed; no fetch until its first request.
+  if (frame === 'pcb') OCC_SERVICE?.installOccService?.({ base: engineBase(), wasmBytes: __OCC_WASM_BYTES__, log: (m) => console.info('[editor]', m) });
   const responder = startResponder({
     parentOrigin: parent,
     page: window,
@@ -269,7 +283,7 @@ async function main(): Promise<void> {
   // first-enumerate warm-up above.
   // A symedit frame places nothing, so it warms nothing (spec 2026-11-16, section 6.1);
   // nor does a frame a wave unit adds unless its descriptor says it picks.
-  if (framePicks(frame) && choice?.mirror != null) void quietWarmUp({ frame, mirror: choice.mirror, signal: libsWarmUp.signal, busy: () => responder.busy(), log: libsLog });
+  if (framePicks(frame) && choice?.mirror != null) void quietWarmUp({ frame, pickKind: framePickKind(frame) ?? undefined, mirror: choice.mirror, signal: libsWarmUp.signal, busy: () => responder.busy(), log: libsLog });
 }
 
 void main();

@@ -41,8 +41,8 @@ export const COMMON_LIBS: Record<PickKind, readonly string[]> = {
   footprint: ['Resistor_SMD', 'Capacitor_SMD', 'LED_SMD', 'Diode_SMD', 'Package_TO_SOT_SMD', 'Connector_PinHeader_2.54mm'],
 };
 
-/** The kind of item a frame places: symbols in a schematic, footprints on a board. */
-export const kindOf = (frame: Frame): PickKind => (frame === 'pcb' ? 'footprint' : 'symbol');
+/** The kind of item a frame places: symbols in a schematic, footprints on a board; a frame a wave unit defines says its own (`own`, src/frames.ts framePickKind). */
+export const kindOf = (frame: Frame, own?: PickKind | null): PickKind => own ?? (frame === 'pcb' ? 'footprint' : 'symbol');
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const onlyKeys = (o: Record<string, unknown>, allowed: readonly string[]): boolean => Object.keys(o).every((k) => allowed.includes(k));
@@ -133,10 +133,10 @@ export interface KeyLike { key?: string; code?: string; ctrlKey?: boolean; shift
  * letter hotkeys by character, so A on an AZERTY keyboard is the key that
  * types a), whichever case it types in (Caps Lock).
  */
-export function pickFor(frame: Frame, e: KeyLike): KeyPick | null {
+export function pickFor(frame: Frame, e: KeyLike, own?: PickKind | null): KeyPick | null {
   if (e.ctrlKey === true || e.shiftKey === true || e.altKey === true || e.metaKey === true) return null;
   const k = typeof e.key === 'string' && e.key.length === 1 ? e.key.toLowerCase() : '';
-  if (k === 'a') return { kind: kindOf(frame) };
+  if (k === 'a') return { kind: kindOf(frame, own) };
   if (k === 'p' && frame === 'sch') return { kind: 'symbol', power: true };
   return null;
 }
@@ -155,6 +155,8 @@ export function takesText(el: unknown): boolean {
 
 export interface PickKeysOptions {
   frame: Frame;
+  /** What the frame places when a wave unit's frame says (src/frames.ts framePickKind); absent: kindOf's rule. */
+  pickKind?: PickKind;
   /**
    * Whether a place key may be taken now: the engine is up and nothing of
    * KiCad's own is over its canvas (no dialog, no popup menu, no other window
@@ -185,7 +187,7 @@ export function installPickKeys(win: Pick<Window, 'addEventListener' | 'removeEv
   };
   const onDown = (e: Event): void => {
     const k = e as Event & KeyLike & { repeat?: boolean; target?: unknown };
-    const pick = pickFor(opts.frame, k);
+    const pick = pickFor(opts.frame, k, opts.pickKind);
     if (pick == null) return;
     // A repeat of a key already taken; a keydown that is no repeat starts a new
     // press (a keyup lost to a focus change leaves no key held for good).
@@ -226,6 +228,8 @@ export const warmTiming = {
 
 export interface QuietWarmUpOptions {
   frame: Frame;
+  /** What the frame places when a wave unit's frame says (src/frames.ts framePickKind); absent: kindOf's rule. */
+  pickKind?: PickKind;
   mirror: PickerMirror;
   /** Stops the warm-up between steps (the shutdown op, pagehide). */
   signal: AbortSignal;
@@ -266,7 +270,7 @@ export async function quietWarmUp(opts: QuietWarmUpOptions): Promise<string[]> {
   if (signal.aborted) return warmed;
   await idle(warmTiming.idleMs);
   if (signal.aborted) return warmed;
-  const kind = kindOf(opts.frame);
+  const kind = kindOf(opts.frame, opts.pickKind);
   const t0 = Date.now();
   try { await mirror.getSearchIndex(kind, { priority: 'low' }); } catch { /* the host's lib.index asks again */ }
   const idOf = libIds(mirror);
