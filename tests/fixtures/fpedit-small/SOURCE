@@ -1,0 +1,23 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (C) 2026 Circuit Center Inc
+
+Written by hand for this repository on 2026-11-18 (the footprint editor's
+design, section 6.3; unit fp-i1), no third-party content: every drawing here
+is our own, named as KiCad names its kinds of part.
+- fpedit-small_parts.pretty/SOIC-8_3.9x4.9mm_P1.27mm.kicad_mod, the design's
+  own SOIC: eight SMD pads of 1.6 x 0.6 mm at x 2.6 mm either side of the
+  center, 1.27 mm apart, a body outline and a pin 1 mark on F.Fab, two
+  silkscreen lines and a courtyard.
+- fpedit-small.kicad_pcb places that SOIC as U1 (pins 8, 2 and 4 on VCC, SIG
+  and GND) and a 0603 resistor as R1 (its drawing our own, its lib id
+  Resistor_SMD:R_0603_1608Metric, on VCC and SIG) inside a 24 x 16 mm
+  outline; fpedit-small.kicad_pro and fp-lib-table make fpedit-small_parts
+  the project's footprint set; files.json lists what the harness opens.
+- CUSTOMPAD.kicad_mod: one custom pad of three primitives (a rectangle, a
+  circle and a triangle) and one through hole thermal pad with 45 degree
+  spokes.
+- CHECKME.kicad_mod, findings of KiCad's footprint checker on purpose: no
+  courtyard, a through hole pad with no hole, two pads touching (2 and 3),
+  and a silkscreen line over the pads.
+The KiCad files carry no comment (their formats have none), so this file
+holds their license.

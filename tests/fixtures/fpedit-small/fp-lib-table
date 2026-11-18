@@ -1,0 +1,4 @@
+(fp_lib_table
+	(version 7)
+	(lib (name "fpedit-small_parts")(type "KiCad")(uri "${KIPRJMOD}/fpedit-small_parts.pretty")(options "")(descr ""))
+)
