@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Circuit Center Inc
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { afterEach, describe, expect, it } from 'vitest';
-import { boardModelRefs, modelSource, noteOccLoading, occLoadingPercent, PROJECT_MODELS, projectRelative, stageBoardModels, stageModels } from './occModels';
+import { boardModelRefs, ensureWriting, MODELS_ROOT, modelSource, noteOccLoading, occLoadingPercent, PROJECT_MODELS, projectRelative, stageBoardModels, stageModels } from './occModels';
 
 /** A small MEMFS: files by absolute path, folders implied. */
 function memfs(files: Record<string, Uint8Array> = {}) {
@@ -122,6 +122,47 @@ describe('stageModels', () => {
     const { models, report } = await stageBoardModels(BOARD, { fs, projectDir: '/project', ensure: null });
     expect(models).toEqual([{ path: `${PROJECT_MODELS}/models/cube.step`, bytes: bytes(3) }]);
     expect(report.missing).toEqual(['models/part (1).wrl']);
+  });
+});
+
+describe('ensureWriting', () => {
+  const bytes = (n: number) => new Uint8Array(n).fill(3);
+
+  it('keeps a path the store wrote under the model root and refuses any other path', async () => {
+    const { fs } = memfs();
+    const answers: Record<string, unknown> = {
+      a: `${MODELS_ROOT}/L.3dshapes/N.step`,
+      b: '/elsewhere/N.step',
+      c: `${MODELS_ROOT}/../etc/x`,
+      d: null,
+      e: 42,
+    };
+    const ensure = ensureWriting(async (ref) => answers[ref], fs);
+    expect(await ensure('a')).toBe(`${MODELS_ROOT}/L.3dshapes/N.step`);
+    for (const ref of ['b', 'c', 'd', 'e']) expect(await ensure(ref)).toBeNull();
+  });
+
+  it('writes a store file answered as its path and bytes once, under the model root, and answers where', async () => {
+    const { fs, store } = memfs();
+    let calls = 0;
+    const ensure = ensureWriting(async (ref) => { calls++; return ref === 'x' ? { path: 'L.3dshapes/N.step', bytes: bytes(6) } : { path: '../up.step', bytes: bytes(1) }; }, fs);
+    expect(await ensure('x')).toBe(`${MODELS_ROOT}/L.3dshapes/N.step`);
+    expect(store.get(`${MODELS_ROOT}/L.3dshapes/N.step`)).toEqual(bytes(6));
+    store.set(`${MODELS_ROOT}/L.3dshapes/N.step`, bytes(2));
+    expect(await ensure('x')).toBe(`${MODELS_ROOT}/L.3dshapes/N.step`);
+    expect(store.get(`${MODELS_ROOT}/L.3dshapes/N.step`)).toEqual(bytes(2));
+    expect(await ensure('y')).toBeNull();
+    expect(calls).toBe(3);
+  });
+
+  it('reads a throw or a malformed answer as not found, and stages the written body', async () => {
+    const { fs } = memfs();
+    expect(await ensureWriting(async () => { throw new Error('offline'); }, fs)('z')).toBeNull();
+    expect(await ensureWriting(async () => ({ path: 'a.step', bytes: 'no' }), fs)('z')).toBeNull();
+    const report = await stageModels(['${KICAD8_3DMODEL_DIR}/L.3dshapes/N.wrl'], {
+      fs, projectDir: '/project', ensure: ensureWriting(async () => ({ path: 'L.3dshapes/N.step', bytes: bytes(9) }), fs),
+    });
+    expect(report).toEqual({ staged: [`${MODELS_ROOT}/L.3dshapes/N.step`], skipped: [], missing: [], bytes: 9 });
   });
 });
 

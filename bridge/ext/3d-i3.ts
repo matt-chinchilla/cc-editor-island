@@ -12,7 +12,7 @@
 // its 3D viewer's image actions are held: the host's Outputs page opens in
 // their place.
 import { EXPORT_LINES, exportMsFor, renderPercent } from '../export';
-import { boardModelRefs, MAX_STAGED_BYTES, MAX_STAGED_FILES, noteOccLoading, occLoadingPercent, stageBoardModels, stageModels, type StageReport } from '../occModels';
+import { boardModelRefs, ensureWriting, MAX_STAGED_BYTES, MAX_STAGED_FILES, noteOccLoading, occLoadingPercent, stageBoardModels, stageModels, type StageReport } from '../occModels';
 import { hasAll, isObj, type ExportHooks, type ExportRun, type ExtUnit, type ResponderCtx } from './contract';
 
 export const UNIT = '3d-i3';
@@ -31,18 +31,6 @@ export function renderListed(mod: Record<string, unknown>): boolean {
   let jobs: unknown;
   try { jobs = JSON.parse(String((mod.kicadOutputJobs as () => unknown)())); } catch { return false; }
   return isObj(jobs) && isObj(jobs.board) && Object.prototype.hasOwnProperty.call(jobs.board, 'pcb_render');
-}
-
-/**
- * Whether the engine's pcb_export_3d takes the key cc_occ (engine run 15,
- * P3D-2: kicadOutputJobs() lists it among the job's keys). An engine without
- * it would drop the key and name it in the answer, so it is sent only then.
- */
-export function occFlagKnown(mod: Record<string, unknown> | null): boolean {
-  if (mod == null || !hasAll(mod, ['kicadOutputJobs'])) return false;
-  let jobs: unknown;
-  try { jobs = JSON.parse(String((mod.kicadOutputJobs as () => unknown)())); } catch { return false; }
-  return isObj(jobs) && isObj(jobs.board) && isObj(jobs.board.pcb_export_3d) && Object.prototype.hasOwnProperty.call(jobs.board.pcb_export_3d, 'cc_occ');
 }
 
 /**
@@ -79,18 +67,23 @@ export class ExportProgress {
 }
 
 export interface HookDeps {
-  /** The model store's ensure (3d-i2), null while this island has none. */
-  ensure: () => ((ref: string) => Promise<string | null>) | null;
+  /** The model store's ensure (3d-i2) writing into `fs`, as stageModels reads it; null while this island has none. */
+  ensure: (fs: EmscriptenFS) => ((ref: string) => Promise<string | null>) | null;
   /** The 3D service's loading percent (bridge/occModels.ts). */
   loading: () => number | null;
   now: () => number;
 }
 
-/** The model store's ensure (3d-i2), found by glob: absent on an island without the model store. */
-const MODEL_STORE = import.meta.glob<{ ensureModel?: unknown }>('../../loader/src/wasm/libs/model-store.ts', { eager: true });
-function ensureOfStore(): ((ref: string) => Promise<string | null>) | null {
-  const mod = Object.values(MODEL_STORE)[0];
-  return mod != null && typeof mod.ensureModel === 'function' ? (mod.ensureModel as (ref: string) => Promise<string | null>) : null;
+/** The model store's module (3d-i2), found by glob: absent on an island without the model store. */
+export const MODEL_STORE = import.meta.glob<{ ensureModel?: unknown }>('../../loader/src/wasm/libs/model-store.ts', { eager: true });
+/**
+ * The model store's ensureModel(ref) as stageModels reads it: its answer is
+ * either the body's absolute path under MODELS_ROOT or the store file's path
+ * and bytes, which ensureWriting writes into the engine's file system.
+ */
+export function ensureOfStore(fs: EmscriptenFS, store: Record<string, { ensureModel?: unknown }> = MODEL_STORE): ((ref: string) => Promise<string | null>) | null {
+  const mod = Object.values(store)[0];
+  return mod != null && typeof mod.ensureModel === 'function' ? ensureWriting(mod.ensureModel as (ref: string) => Promise<unknown>, fs) : null;
 }
 
 /** What this unit reads of the 3D service's handle (src/occ-service.ts, 3d-i1). */
@@ -100,7 +93,7 @@ export interface OccHandleView {
 }
 
 /** The 3D service's handle (3d-i1), found by glob: absent on an island without the 3D service. */
-const OCC_SERVICE = import.meta.glob<{ occService?: unknown }>('../../src/occ-service.ts', { eager: true });
+export const OCC_SERVICE = import.meta.glob<{ occService?: unknown }>('../../src/occ-service.ts', { eager: true });
 function occHandle(): OccHandleView | null {
   const mod = Object.values(OCC_SERVICE)[0];
   if (mod == null || typeof mod.occService !== 'function') return null;
@@ -127,7 +120,7 @@ export function installOcc(ctx: ResponderCtx, handle: OccHandleView | null, ensu
     const opened = ctx.opened();
     if (fs == null) return { models: [] };
     const projectDir = opened != null && opened.includes('/') ? opened.slice(0, opened.lastIndexOf('/')) : ctx.root;
-    const { models, report } = await stageBoardModels(new TextDecoder().decode(board), { fs, projectDir, ensure: ensure() });
+    const { models, report } = await stageBoardModels(new TextDecoder().decode(board), { fs, projectDir, ensure: ensure(fs) });
     const note = stageNote(report);
     return note == null ? { models } : { models, report: note };
   });
@@ -163,7 +156,7 @@ export function exportHooksOf(deps: HookDeps): ExportHooks {
             const report = await stageModels(boardModelRefs(new TextDecoder().decode(bytes)), {
               fs,
               projectDir: board.slice(0, board.lastIndexOf('/')) || ctx.root,
-              ensure: deps.ensure(),
+              ensure: deps.ensure(fs),
               onFile: (done, total) => progress.push('models', pct(done, total)),
             });
             if (report.skipped.length > 0 || report.missing.length > 0) ctx.log('[3d-i3]', `${report.staged.length} staged`, `${report.skipped.length} past the bounds`, `${report.missing.length} not found`);
@@ -172,7 +165,8 @@ export function exportHooksOf(deps: HookDeps): ExportHooks {
           }
         }
       }
-      if (run.job === 'pcb_export_3d' && !ctx.caps().includes(OCC_CAP) && occFlagKnown(ctx.mod())) return { settings: { ...run.settings, cc_occ: false } };
+      // Engine run 15 (P3D-2) takes cc_occ and never names it dropped; the island is pinned to that engine.
+      if (run.job === 'pcb_export_3d' && !ctx.caps().includes(OCC_CAP)) return { settings: { ...run.settings, cc_occ: false } };
       return null;
     },
 

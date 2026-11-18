@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Circuit Center Inc
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import unit, { ExportProgress, exportHooksOf, installOcc, occFlagKnown, PROGRESS_MS, renderListed, stageNote, type OccHandleView } from './3d-i3';
+import unit, { ensureOfStore, ExportProgress, exportHooksOf, installOcc, MODEL_STORE, OCC_SERVICE, PROGRESS_MS, renderListed, stageNote, type OccHandleView } from './3d-i3';
 import { occLoadingPercent } from '../occModels';
 import { buildRegistry, heldActions } from './registry';
 import { HELD_ACTIONS } from '../held';
@@ -37,10 +37,35 @@ describe('the unit in the registry', () => {
     expect(renderListed({ kicadOutputJobs: () => 'not json' })).toBe(false);
   });
 
-  it('names the cc_occ key only for an engine whose pcb_export_3d takes it', () => {
-    expect(occFlagKnown(jobsOf({ pcb_export_3d: { format: 'step', cc_occ: true } }))).toBe(true);
-    expect(occFlagKnown(jobsOf({ pcb_export_3d: { format: 'step' } }))).toBe(false);
-    expect(occFlagKnown(null)).toBe(false);
+  // The units this one reads by glob (3d-i2's model store, 3d-i1's 3D service): a
+  // rename in either would leave the wiring silently empty, so once a file is
+  // in the island its names are asserted here.
+  it('finds the model store\'s ensureModel once the model store is in the island', () => {
+    for (const mod of Object.values(MODEL_STORE)) expect(typeof mod.ensureModel).toBe('function');
+  });
+
+  it('finds the 3D service\'s occService, setStage and onProgress once the 3D service is in the island', () => {
+    for (const mod of Object.values(OCC_SERVICE)) expect(typeof mod.occService).toBe('function');
+    const sources = import.meta.glob<string>('../../loader/src/wasm/occ-service.ts', { query: '?raw', import: 'default', eager: true });
+    for (const text of Object.values(sources)) {
+      expect(text).toMatch(/\bsetStage\(fn\b/);
+      expect(text).toMatch(/\bonProgress\(fn\b/);
+    }
+  });
+
+  it('reads the model store\'s answer as a path or as a store path and its bytes, written under the model root', async () => {
+    const files = new Map<string, Uint8Array>();
+    const fs = {
+      analyzePath: (p: string) => ({ exists: files.has(p) }), mkdirTree: () => {},
+      writeFile: (p: string, d: Uint8Array) => { files.set(p, d); },
+    } as unknown as EmscriptenFS;
+    expect(ensureOfStore(fs, {})).toBeNull();
+    expect(ensureOfStore(fs, { './m.ts': {} })).toBeNull();
+    const asPath = ensureOfStore(fs, { './m.ts': { ensureModel: async () => '/pcbjam/3dmodels/L.3dshapes/N.step' } });
+    expect(await asPath!('${KICAD9_3DMODEL_DIR}/L.3dshapes/N.step')).toBe('/pcbjam/3dmodels/L.3dshapes/N.step');
+    const asBytes = ensureOfStore(fs, { './m.ts': { ensureModel: async () => ({ path: 'L.3dshapes/M.step', bytes: new Uint8Array([1]) }) } });
+    expect(await asBytes!('${KICAD9_3DMODEL_DIR}/L.3dshapes/M.step')).toBe('/pcbjam/3dmodels/L.3dshapes/M.step');
+    expect(files.get('/pcbjam/3dmodels/L.3dshapes/M.step')).toEqual(new Uint8Array([1]));
   });
 });
 
@@ -116,14 +141,15 @@ describe('the export hooks', () => {
     hooks.after?.(run('pcb_render'), ctx);
   });
 
-  it('send cc_occ false with a 3D export only when the 3D service is not listed and the engine takes the key', async () => {
+  it('send cc_occ false with every 3D export while the 3D service is not listed, and never with a render', async () => {
     const hooks = exportHooksOf({ ensure: () => null, loading: () => null, now: () => 0 });
-    const takes = jobsOf({ pcb_export_3d: { cc_occ: true } });
-    expect(await hooks.before?.(run('pcb_export_3d', { format: 'step' }), fakeCtx({ mod: takes }).ctx)).toEqual({ settings: { format: 'step', cc_occ: false } });
-    expect(await hooks.before?.(run('pcb_export_3d', { format: 'step' }), fakeCtx({ mod: takes, caps: ['occ'] }).ctx)).toBeNull();
-    expect(await hooks.before?.(run('pcb_export_3d', { format: 'vrml' }), fakeCtx({ mod: jobsOf({ pcb_export_3d: {} }) }).ctx)).toBeNull();
-    expect(await hooks.before?.(run('pcb_render'), fakeCtx({ mod: takes }).ctx)).toBeNull();
-    expect(await hooks.before?.(run('pcb_export_3d'), fakeCtx({ opened: null }).ctx)).toBeNull();
+    const mod = jobsOf({ pcb_export_3d: { format: 'step' }, pcb_render: {} });
+    expect(await hooks.before?.(run('pcb_export_3d', { format: 'step' }), fakeCtx({ mod }).ctx)).toEqual({ settings: { format: 'step', cc_occ: false } });
+    expect(await hooks.before?.(run('pcb_export_3d', { format: 'vrml', cc_occ: true }), fakeCtx({ mod }).ctx)).toEqual({ settings: { format: 'vrml', cc_occ: false } });
+    expect(await hooks.before?.(run('pcb_export_3d', { format: 'step' }), fakeCtx({ mod, caps: ['occ'] }).ctx)).toBeNull();
+    expect(await hooks.before?.(run('pcb_render'), fakeCtx({ mod }).ctx)).toBeNull();
+    expect(await hooks.before?.(run('pcb_export_3d'), fakeCtx({ opened: null }).ctx)).toEqual({ settings: { cc_occ: false } });
+    expect(await hooks.before?.(run('pcb_export_gerbers'), fakeCtx({ mod }).ctx)).toBeNull();
   });
 
   it('report loading from the 3D service and running from the render\'s lines on each tick', () => {

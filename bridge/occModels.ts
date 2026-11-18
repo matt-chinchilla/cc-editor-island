@@ -113,6 +113,40 @@ export function modelSource(ref: string): ModelSource {
   return rel == null ? { kind: 'none', ref } : { kind: 'project', ref, rel };
 }
 
+/**
+ * A model store's ensure as stageModels reads it: the body's absolute path in
+ * the engine's file system, or null. The store may answer that path itself
+ * (it wrote the body under MODELS_ROOT), or the store file's path relative to
+ * MODELS_ROOT with its bytes (`{ path, bytes }`, written here at
+ * MODELS_ROOT/<path> when not there yet). Any other answer, a path outside
+ * MODELS_ROOT or one with a `..` part, and a throw read as null.
+ */
+export function ensureWriting(ensure: (ref: string) => Promise<unknown>, fs: EmscriptenFS): (ref: string) => Promise<string | null> {
+  return async (ref) => {
+    let got: unknown;
+    try { got = await ensure(ref); } catch { return null; }
+    if (typeof got === 'string') {
+      const rel = got.startsWith(`${MODELS_ROOT}/`) ? projectRelative(got.slice(MODELS_ROOT.length + 1)) : null;
+      return rel != null && `${MODELS_ROOT}/${rel}` === got ? got : null;
+    }
+    if (got == null || typeof got !== 'object') return null;
+    const { path, bytes } = got as { path?: unknown; bytes?: unknown };
+    if (typeof path !== 'string' || !(bytes instanceof Uint8Array)) return null;
+    const rel = projectRelative(path);
+    if (rel == null || rel !== path) return null;
+    const at = `${MODELS_ROOT}/${rel}`;
+    try {
+      if (!fs.analyzePath(at).exists) {
+        fs.mkdirTree(dirOf(at));
+        fs.writeFile(at, bytes);
+      }
+    } catch {
+      return null;
+    }
+    return at;
+  };
+}
+
 /** What a staging did: the files written (absolute), the lines past the bounds, the lines whose body was not found, the bytes written. */
 export interface StageReport { staged: string[]; skipped: string[]; missing: string[]; bytes: number }
 
