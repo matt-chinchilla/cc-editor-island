@@ -1,0 +1,16 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (C) 2026 Circuit Center Inc
+
+Written by hand for this repository on 2026-11-18 (the footprint editor's
+design, section 6.3; unit fp-i4), no third-party content: each footprint here
+is our own, named as KiCad names its kinds of part.
+- legacy.mod, one footprint in KiCad 5's legacy footprint format
+  (PCBNEW-LibModule-V1, units mm): LEGACY_R0805, two SMD pads, silkscreen
+  lines and an outline on the user drawing layer. KiCad's Legacy reader
+  takes it as a set of one.
+- package.lbr, one Eagle package in Eagle's library XML: EAGLE_R0603, two SMD
+  pads on Top, tPlace lines, a tDocu body and the >NAME and >VALUE texts.
+  KiCad's Eagle reader takes it as a set of one.
+Both are read by footprint.convert in tests/e2e/footprint-edit.spec.ts.
+The files carry no comment (their formats have none we may add), so this file
+holds their license.

@@ -1,0 +1,39 @@
+PCBNEW-LibModule-V1  2026-11-18 00:00:00
+# encoding utf-8
+Units mm
+$INDEX
+LEGACY_R0805
+$EndINDEX
+$MODULE LEGACY_R0805
+Po 0 0 0 15 00000000 00000000 ~~
+Li LEGACY_R0805
+Cd A chip resistor, 0805 (2012 metric), written by hand
+Kw resistor
+Sc 0
+AR 
+Op 0 0 0
+At SMD
+T0 0 -1.65 1 1 0 0.15 N V 21 N "REF**"
+T1 0 1.65 1 1 0 0.15 N V 21 N "LEGACY_R0805"
+DS -0.25 -0.75 0.25 -0.75 0.12 21
+DS -0.25 0.75 0.25 0.75 0.12 21
+DS -1.7 -0.95 1.7 -0.95 0.05 24
+DS 1.7 -0.95 1.7 0.95 0.05 24
+DS 1.7 0.95 -1.7 0.95 0.05 24
+DS -1.7 0.95 -1.7 -0.95 0.05 24
+$PAD
+Sh "1" R 1 1.4 0 0 0
+Dr 0 0 0
+At SMD N 00888000
+Ne 0 ""
+Po -0.95 0
+$EndPAD
+$PAD
+Sh "2" R 1 1.4 0 0 0
+Dr 0 0 0
+At SMD N 00888000
+Ne 0 ""
+Po 0.95 0
+$EndPAD
+$EndMODULE LEGACY_R0805
+$EndLIBRARY
