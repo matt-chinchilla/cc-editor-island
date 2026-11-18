@@ -41,7 +41,8 @@ export default {
   defineFrames: {
     ds: {
       token: 'ds',
-      tool: { name: 'pl_editor', bundle: 'kicad_editor', argv0: '/usr/bin/pl_editor', needsConfigSeed: true, libKind: null },
+      // pl_editor reads its own pl_editor.json: seeded with the viewer's appearance, the frame draws in the viewer's palette.
+      tool: { name: 'pl_editor', bundle: 'kicad_editor', argv0: '/usr/bin/pl_editor', needsConfigSeed: true, libKind: null, appearanceFiles: ['pl_editor.json'] },
       // A drawing sheet holds no document: project.write is refused whole (below), so no kind of its own.
       document: null,
       extension: '.kicad_wks',

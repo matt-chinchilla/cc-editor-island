@@ -14,6 +14,7 @@ import { buildRegistry, heldActions, REGISTRY } from './registry';
 import { bootFrame, documentExtension, extTool, framePicks, frameToken, frameTool, ownDocument, unitsPerMm } from '../../src/frames';
 import { DS_HELD, DS_REFUSAL, DS_WORKS, DSEDIT_EXPORTS } from '../dsedit';
 import unit from './ds-i1';
+import { toolAppearanceFiles, toolNeedsConfigSeed } from '../../loader/src/wasm/constants';
 
 const PARENT = 'http://localhost';
 const U1 = '33333333-0000-4000-8000-000000000001';
@@ -148,8 +149,13 @@ describe('the ds frame in the registry', () => {
     expect(bootFrame('ds', reg)).toBe('ds');
     expect(frameToken('ds' as never, reg)).toBe('ds');
     expect(frameTool('ds' as never, reg)).toBe('pl_editor');
-    expect(extTool('pl_editor', reg)).toEqual({ name: 'pl_editor', bundle: 'kicad_editor', argv0: '/usr/bin/pl_editor', needsConfigSeed: true, libKind: null });
+    expect(extTool('pl_editor', reg)).toEqual({ name: 'pl_editor', bundle: 'kicad_editor', argv0: '/usr/bin/pl_editor', needsConfigSeed: true, libKind: null, appearanceFiles: ['pl_editor.json'] });
     expect([ownDocument('ds' as never, reg), documentExtension('ds' as never, reg), unitsPerMm('ds' as never, reg), framePicks('ds' as never, reg)]).toEqual([null, '.kicad_wks', 1e3, false]);
+  });
+
+  it('seeds pl_editor.json with the viewer\'s appearance, and no other tool gains a file', () => {
+    expect([toolNeedsConfigSeed('pl_editor'), toolAppearanceFiles('pl_editor')]).toEqual([true, ['pl_editor.json']]);
+    expect([toolAppearanceFiles('pcbnew'), toolAppearanceFiles('eeschema')]).toEqual([[], []]);
   });
 
   it('holds the frame\'s twelve actions in a ds frame under dsedit, and nothing in another frame', () => {
@@ -192,6 +198,10 @@ describe('a ds frame refuses what reads, saves or edits a document', () => {
   it('answers every built in op but its own six unsupported, whatever the args', async () => {
     const t = await boot('ds', fakeDs().exports);
     for (const op of ['project.open', 'project.write', 'project.libs', 'project.forget', 'project.save', 'symedit.open', 'symedit.state', 'place', 'settings.get', 'sheet.check', 'readonly']) {
+      expect(await t.ask(op, {}), op).toEqual(err('unsupported', DS_REFUSAL));
+    }
+    // The library reads and the simulator's stop and release are answered off the queue: refused the same way.
+    for (const op of ['lib.index', 'lib.item', 'lib.prefetch', 'sim.stop', 'sim.release']) {
       expect(await t.ask(op, {}), op).toEqual(err('unsupported', DS_REFUSAL));
     }
     expect(BUILTIN_OPS.filter((op) => !REGISTRY.frames.get('ds')?.kind.refuses.includes(op))).toEqual([...DS_WORKS].sort((a, b) => BUILTIN_OPS.indexOf(a) - BUILTIN_OPS.indexOf(b)));
