@@ -1,0 +1,44 @@
+(session "business-card.ses"
+  (base_design "business-card.dsn")
+  (placement
+    (resolution um 10)
+    (component "Package_DFN_QFN:DFN-8-1EP_3x2mm_P0.5mm_EP1.36x1.46mm"
+      (place U1 1509000 -1004300 front 0)
+    )
+  )
+  (was_is
+  )
+  (routes
+    (resolution um 10)
+    (parser
+      (host_cad "KiCad's Pcbnew")
+      (host_version "10.0")
+    )
+    (library_out
+      (padstack "Via[0-1]_600:300_um"
+        (shape
+          (circle F.Cu 6000 0 0)
+        )
+        (shape
+          (circle B.Cu 6000 0 0)
+        )
+        (attach off)
+      )
+    )
+    (network_out
+      (net "unconnected-(U1-VSS-Pad4)"
+        (wire
+          (path F.Cu 2500
+            1494000 -1011800
+            1450000 -1011800
+            1450000 -1050000
+          )
+        )
+        (wire
+          (path B.Cu 2500
+            1450000 -1050000
+            1400000 -1050000
+          )
+        )
+        (via
+      

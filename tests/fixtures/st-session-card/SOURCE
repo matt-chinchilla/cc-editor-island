@@ -1,0 +1,28 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (C) 2026 Circuit Center Inc
+
+The session files are written by hand for this repository on 2026-11-18 (CC0
+1.0: no rights reserved; unit st-ses-i), in the Specctra session grammar that
+KiCad's specctra_import.cpp reads, against the business card board's own part
+and net names:
+- business-card.ses: U1 placed where the board has it (150.9, 100.43, front,
+  angle 0, resolution um 10, y negated as Specctra writes it); a through via
+  padstack "Via[0-1]_600:300_um"; three nets: "unconnected-(U1-VSS-Pad4)"
+  (three tracks from pad 4, F.Cu then B.Cu, and one via),
+  "unconnected-(U1-VCC-Pad8)" (one track from pad 8) and "/NFC_ANT" (one
+  track), the last a net the board lacks. KiCad counts 5 tracks, 1 via,
+  3 nets, missing nets ["/NFC_ANT"].
+- corrupt.ses: the first 900 bytes of business-card.ses, so KiCad's parser
+  stops at its end.
+
+business-card.kicad_pcb and business-card.kicad_pro are copies of the site
+repository's frontend/src/public/services/kicad/fixtures/business-card/
+(the owner's NFC business card; the SOURCE file there tells whose design it
+is and where it comes from, and its terms, not CC0, hold for these two copies),
+carried here so the island's e2e opens the same board:
+business-card.kicad_pcb sha256 88c1bca11abfaabf22a14d0db6a02ff537822b62dc6b25a0f2c3175ddb7207c8
+business-card.kicad_pro sha256 78ef903479c09c57e0f0f7e74916afeb748a5d884ca7e7927ba4e01fba182f64
+
+files.json lists the files the e2e harness opens. Read by
+tests/e2e/st/st-ses-i.spec.ts. The files carry no comment, so this file holds
+their license.
