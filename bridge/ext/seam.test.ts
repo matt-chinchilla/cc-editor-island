@@ -424,3 +424,20 @@ describe('the seam join fixes', () => {
     ]);
   });
 });
+
+// The default run's include, read from vite.config.ts as text (the config imports
+// node modules the type check does not know), and every test file of the checkout.
+const viteConfigText = Object.values(import.meta.glob('../../vite.config.ts', { query: '?raw', import: 'default', eager: true }))[0] as string;
+const testFiles = Object.keys(import.meta.glob(['/**/*.test.ts', '!/**/node_modules/**', '!/dist/**'])).map((f) => f.slice(1));
+const globRe = (g: string) => new RegExp('^' + g.split('**/').map((p) => p.split('*').map((q) => q.replace(/[.+?^$|()[\]{}\\]/g, '\\$&')).join('[^/]*')).join('(?:.*/)?') + '$');
+
+describe('the default test run', () => {
+  it('takes every test file of the checkout, wherever the manifest put it, but the join test', () => {
+    const list = /include:\s*\[([^\]]*)\]/.exec(viteConfigText)?.[1] ?? '';
+    const include = [...list.matchAll(/'([^']+)'/g)].map((m) => globRe(m[1]));
+    const inRun = (f: string) => include.some((re) => re.test(f));
+    expect(testFiles.filter((f) => !inRun(f))).toEqual(['scripts/ext/join.test.ts']);
+    for (const f of ['loader/src/wasm/libs/model-store.test.ts', 'scripts/build-models.test.ts', 'bridge/ext/3d-i3/export.test.ts', 'src/new-files.test.ts']) expect(inRun(f)).toBe(true);
+    expect(inRun('scripts/ext/join.test.ts')).toBe(false);
+  });
+});

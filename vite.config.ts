@@ -17,5 +17,10 @@ export default defineConfig({
     __OCC_WASM_BYTES__: JSON.stringify(pin.engine.files?.['occ_service.wasm']?.bytes ?? 0),
   },
   build: { outDir: `dist/r/${pin.islandId}`, emptyOutDir: false, target: 'es2022', sourcemap: false },
-  test: { environment: 'node', include: ['src/**/*.test.ts', 'bridge/**/*.test.ts', 'theme/**/*.test.ts'] },
+  // Every unit test of the checkout runs here (bridge/ext/seam.test.ts checks it), but
+  // scripts/ext/join.test.ts, which runs alone under vitest.join.config.ts at the join.
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts', 'bridge/**/*.test.ts', 'theme/**/*.test.ts', 'loader/**/*.test.ts', 'scripts/*.test.ts'],
+  },
 });

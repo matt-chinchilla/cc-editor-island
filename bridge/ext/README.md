@@ -9,7 +9,7 @@ Every wave 2 island unit adds ONLY new files, each named by its unit id (RULINGS
 | the unit's | the file | read by |
 |---|---|---|
 | ops, widened ops, caps, held rows, events, asks, export jobs, frames, install | `bridge/ext/<unit>.ts`, its default export one `ExtUnit` (`bridge/ext/contract.ts`) | `bridge/ext/registry.ts` by glob, then the responder, `src/frames.ts`, the generator |
-| unit tests | `bridge/ext/<unit>.test.ts` (and more as `bridge/ext/<unit>/*.test.ts`) | `npx vitest run bridge/ext/<unit>.test.ts` |
+| unit tests | `bridge/ext/<unit>.test.ts` (and more as `bridge/ext/<unit>/*.test.ts`), or the path the manifest's owned list names under `src/`, `loader/` or `scripts/` (top level) | `npx vitest run <the file>`; `npm test` runs them all (`vite.config.ts` `test.include`: `src`, `bridge`, `theme`, `loader` and the top of `scripts`), and `bridge/ext/seam.test.ts` fails on a test file outside it, the join test alone excepted |
 | helper modules | `bridge/ext/<unit>/*.ts` (a folder of the unit's own; the glob reads only `bridge/ext/*.ts`) | the unit's file |
 | its PROTOCOL.md part | `bridge/ext/<unit>.md` (below) | `node scripts/ext/gen.mjs` at the join |
 | its e2e spec | the path the manifest's `e2e` names (`mq.py field e2e`) | Playwright, on its own port pair |
