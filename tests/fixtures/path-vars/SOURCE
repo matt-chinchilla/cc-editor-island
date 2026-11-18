@@ -11,7 +11,9 @@ hold ONE row, MyLib, of uri ${MYLIB}/x.kicad_sym and ${MYLIB}/x.pretty, so
 nothing of them loads until MYLIB names the folder mylib. mylib/x.kicad_sym
 holds one symbol, R_MyLib (two pins), whose footprint is MyLib:R_MyLib;
 mylib/x.pretty/R_MyLib.kicad_mod is a two pad footprint whose model line
-names ${MYLIB}/x.step.
+names ${MYLIB}/x.step. design-block-lib-table holds ONE row, pv_blocks, of
+uri ${KIPRJMOD}/pv_blocks.kicad_blocks, a design block library with one
+block, RC (an empty schematic and its RC.json), in KiCad's block folder form.
 
 mylib/x.step is R_0402_1005Metric.step copied unchanged from
 kicad-packages3D at KiCad's tag 10.0.4 (Resistor_SMD.3dshapes, one resistor

@@ -1,1 +1,1 @@
-["path-vars.kicad_pro", "path-vars.kicad_sch", "path-vars.kicad_pcb", "sym-lib-table", "fp-lib-table", "mylib/x.kicad_sym", "mylib/x.pretty/R_MyLib.kicad_mod", "mylib/x.step"]
+["path-vars.kicad_pro", "path-vars.kicad_sch", "path-vars.kicad_pcb", "sym-lib-table", "fp-lib-table", "design-block-lib-table", "mylib/x.kicad_sym", "mylib/x.pretty/R_MyLib.kicad_mod", "mylib/x.step", "pv_blocks.kicad_blocks/RC.kicad_block/RC.kicad_sch", "pv_blocks.kicad_blocks/RC.kicad_block/RC.json"]

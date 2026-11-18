@@ -1,13 +1,13 @@
 // Copyright (C) 2026 Circuit Center Inc
 // SPDX-License-Identifier: GPL-3.0-or-later
 // i-librows over the local pair, on the fixture path-vars (a design whose own
-// library sits under its path variable MYLIB): project.libs with vars serves
-// the library from mylib/ on any engine; libs.remove and paths.set, and a
-// design block row under project.libs, are engine run 15's (caps libRows and
-// pathVars). On an engine without them each answers unsupported naming its
-// export and neither cap is listed; on run 15 a symbol row is added, removed
-// and added again, a block row answers under block, and paths.set refuses a
-// built in name.
+// library sits under its path variable MYLIB, and whose block library is
+// pv_blocks): project.libs with vars serves the library from mylib/ on any
+// engine; libs.remove and paths.set, and a design block row under
+// project.libs, are engine run 15's (caps libRows and pathVars). On an engine
+// without them each answers unsupported naming its export and neither cap is
+// listed; on run 15 a symbol row is added, removed and added again, a block
+// row answers under block, and paths.set refuses a built in name.
 import { expect, test, type Page } from '@playwright/test';
 
 interface Ev { type: string; phase?: string; caps?: string[] }
@@ -33,13 +33,6 @@ async function boot(page: Page, frame: 'sch' | 'pcb'): Promise<string[]> {
   return (await events(page)).find((e) => e.type === 'ev.ready')?.caps ?? [];
 }
 
-// A design block library of the design's own, written into the running frame (KiCad's block folder form).
-const BLOCKS = [
-  { path: 'design-block-lib-table', text: '(design_block_lib_table\n  (version 7)\n  (lib (name "pv_blocks")(type "KiCad")(uri "${KIPRJMOD}/pv_blocks.kicad_blocks")(options "")(descr ""))\n)\n' },
-  { path: 'pv_blocks.kicad_blocks/RC.kicad_block/RC.kicad_sch', text: '(kicad_sch\n\t(version 20231120)\n\t(generator "eeschema")\n\t(generator_version "8.0")\n\t(uuid "0b8c2f4e-6a1d-4e3b-8c5f-1d2e3f4a5b6c")\n\t(paper "A4")\n\t(lib_symbols)\n\t(sheet_instances\n\t\t(path "/"\n\t\t\t(page "1")\n\t\t)\n\t)\n)\n' },
-  { path: 'pv_blocks.kicad_blocks/RC.kicad_block/RC.json', text: '{\n  "description": "An empty block",\n  "keywords": "",\n  "fields": {}\n}\n' },
-];
-
 for (const frame of ['sch', 'pcb'] as const) {
   test(`lib rows in a ${frame} frame: project.libs vars serve the library under MYLIB; libs.remove, paths.set and block rows by the engine's exports`, async ({ page }) => {
     try {
@@ -61,8 +54,6 @@ for (const frame of ['sch', 'pcb'] as const) {
         const item = await request(page, 'lib.item', { kind: 'footprint', lib: 'MyLib', name: 'R_MyLib' });
         expect(String(item.body)).toContain('(footprint "R_MyLib"');
       }
-
-      expect(await request(page, 'project.write', { files: BLOCKS })).toMatchObject({ written: BLOCKS.map((f) => f.path) });
 
       if (!run15) {
         expect(await refusal(page, 'libs.remove', { kind: 'symbol', nickname: 'MyLib' })).toBe('unsupported: kicadLibsRemoveEntry');
