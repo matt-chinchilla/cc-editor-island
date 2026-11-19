@@ -244,6 +244,8 @@ const isText = (buf) => !buf.subarray(0, 8192).includes(0);
  *   - restored from PCBJam under loader/src/: its own header, a GPL SPDX
  *     line and our dated "Modified by Circuit Center on" notice, in place of
  *     our copyright line.
+ *   - PCBJam's unmodified copy of such a file, under loader/pristine/ beside
+ *     it: PCBJam's text as it is.
  * Answers the problems, one line each; [] outside a git checkout (a release's
  * source tarball holds the files the census passed already).
  */
@@ -264,6 +266,11 @@ export function censusNewFiles(root = '.') {
     if (text != null && AGENT_RE.test(text)) problems.push(`${f} names an agent, a tool, a model or a session`);
     if (f.endsWith('.license')) continue;
     if (FIXTURE_DIRS.some((d) => f.startsWith(d))) continue;
+    // PCBJam's unmodified copy of a file restored under loader/src/ (3d-i1's
+    // occ-service.ts and occ-worker.js) is PCBJam's, byte for byte: it keeps
+    // PCBJam's own text and never takes our notice (the census of loader/src
+    // below compares the restored file with it).
+    if (f.startsWith('loader/pristine/') && present.has(`loader/src/${f.slice('loader/pristine/'.length)}`)) continue;
     // A file restored from PCBJam under loader/src/ (3d-i1's occ-service.ts and
     // occ-worker.js) keeps PCBJam's own header and gains our dated "Modified by
     // Circuit Center on YYYY-MM-DD:" notice (the census of loader/src below reads it); it never takes our copyright line.

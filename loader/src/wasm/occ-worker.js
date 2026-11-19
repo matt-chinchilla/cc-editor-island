@@ -12,20 +12,23 @@
 // Modified by Circuit Center on 2026-11-18: an export answers its bytes to the
 // host, which writes them where the engine asked (outPath); nothing else of the
 // answer changes.
+// Modified by Circuit Center on 2026-11-19: PCBJam's leading comment below is
+// kept as PCBJam wrote it. In this copy the provider alone reads this file
+// (there is no e2e harness stub), the prelude also names OCC_LIFE_LOCK, and the
+// host posts { wasmModule } before any request, as the notices above say.
 
 /*
- * Worker-side wrapper for the occ_service MODULARIZE module, the SINGLE
- * source of truth for the worker boot, read by the provider
- * (occ-service.ts, vite `?raw` import).
+ * Worker-side wrapper for the occ_service MODULARIZE module — the SINGLE
+ * source of truth for the worker boot, shared verbatim by:
+ *   - the standalone app provider (occ-service.ts, vite `?raw` import), and
+ *   - the e2e harness stub (tests/kicad/utils/occ-service.ts, read off disk).
  *
- * The host prepends its prelude lines to the blob before this file's content:
+ * The host prepends one prelude line to the blob before this file's content:
  *   self.OCC_GLUE_URL = "<absolute URL of occ_service.js>";
- *   self.OCC_LIFE_LOCK = "<the Web Lock name this worker holds while it lives>";
  *
- * Protocol: the host posts { wasmModule } once, then { id, req } (req = { kind:
- * "export" | "loadModel", ... }); the worker answers { id, res } with the result
- * bytes transferred. A one-shot { ready: true } / { bootError } message reports
- * module boot, and { alive: true } that the life lock is held.
+ * Protocol: the host posts { id, req } (req = { kind: "export" | "loadModel",
+ * … }); the worker answers { id, res } with the result bytes transferred. A
+ * one-shot { ready: true } / { bootError } message reports module boot.
  */
 const GLUE = self.OCC_GLUE_URL;
 
