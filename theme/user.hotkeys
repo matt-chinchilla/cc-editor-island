@@ -93,3 +93,5 @@ plEditor.InteractiveDrawing.drawLine	Ctrl+Alt+0
 plEditor.InteractiveDrawing.drawRectangle	Ctrl+Alt+3	
 plEditor.InteractiveDrawing.placeText	Ctrl+Alt+4	
 plEditor.InteractiveDrawing.placeImage	Ctrl+Alt+5	
+pcbnew.InteractiveDrawing.circle	Ctrl+Alt+Shift+3	Ctrl+Shift+C
+pcbnew.InteractiveDrawing.arc	Ctrl+Alt+Shift+4	Ctrl+Shift+A

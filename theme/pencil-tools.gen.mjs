@@ -182,6 +182,16 @@ export const POOL = [
 export const BANNED = ['Ctrl+Alt+F', 'Ctrl+Alt+W', 'Ctrl+Alt+Shift+F', 'Ctrl+Alt+Shift+W'];
 
 /**
+ * Actions whose KiCad default a common action takes first in every frame that
+ * holds them, so a press of the default never runs them: each takes a chord of
+ * its own (KiCad's default kept as its second key). Measured on engine build T4
+ * (run 15) through key.press, in a pcb frame on Glasgow and in an fpedit frame with
+ * a footprint open: Ctrl+Shift+C tries common.Interactive.copyAsText alone (the circle
+ * tool never tried), Ctrl+Shift+A common.Interactive.unselectAll alone (the arc tool).
+ */
+export const SHADOWED_DEFAULTS = ['pcbnew.InteractiveDrawing.circle', 'pcbnew.InteractiveDrawing.arc'];
+
+/**
  * A default key.press can send: modifiers Ctrl, Alt and Shift, and a key its code
  * grammar holds (src/keys.ts KEY_CODE_RE: KiCad's Alt+` and the opacity keys { and }
  * have none). A Shift and a letter alone is not one either: a host's key.press of it
@@ -242,9 +252,10 @@ function parseExtra(text) {
  * The table and the hotkeys file from their inputs, all as text. `extraHotkeys` is
  * what the engine is seeded with after the ledger (the symbol editor's chords and the
  * units' own): their chords are taken in their pools and never handed out again.
+ * `shadowed` lists the actions whose KiCad default never runs them (SHADOWED_DEFAULTS).
  * @returns {{ table: string, hotkeys: string, rows: object[], added: string[] }}
  */
-export function generate({ defaultsJson, layouts, ledger, unitRows = [], extraHotkeys = '' }) {
+export function generate({ defaultsJson, layouts, ledger, unitRows = [], extraHotkeys = '', shadowed = SHADOWED_DEFAULTS }) {
   const defaults = JSON.parse(defaultsJson);
   const { lines, keys } = parseLedger(ledger);
   const extra = parseExtra(extraHotkeys);
@@ -271,7 +282,7 @@ export function generate({ defaultsJson, layouts, ledger, unitRows = [], extraHo
   };
   const rowOf = (editor, strip, action, group, section, press) => {
     const known = action in defaults ? defaults[action] : null;
-    const defaultKey = pressable(known) ? known : null;
+    const defaultKey = pressable(known) && !shadowed.includes(action) ? known : null;
     const seededKey = press === 'run' ? '' : defaultKey == null ? chordFor(action) : null;
     const row = { editor, strip, action, group, section, defaultKey, seededKey, label: '' };
     return press === 'run' ? { ...row, press: 'run' } : row;
@@ -310,7 +321,7 @@ export function generate({ defaultsJson, layouts, ledger, unitRows = [], extraHo
       if (unitKeys.has(`${r.editor} ${r.action}`)) throw new Error(`${UNIT_ROWS_DIR}/${unit}.json: ${r.action} is in the ${r.editor} table already`);
       unitKeys.add(`${r.editor} ${r.action}`);
       const known = r.action in defaults ? defaults[r.action] : (r.defaultKey ?? null);
-      const defaultKey = pressable(known) ? known : null;
+      const defaultKey = pressable(known) && !shadowed.includes(r.action) ? known : null;
       const seededKey = r.press === 'run' ? '' : defaultKey == null ? chordFor(r.action) : null;
       const row = { editor: r.editor, strip: r.strip, action: r.action, group: r.group ?? null, section: r.section ?? 0, defaultKey, seededKey, label: r.label ?? '' };
       rows.push(r.press === 'run' ? { ...row, press: 'run' } : row);

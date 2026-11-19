@@ -146,8 +146,11 @@ async function pressAll(page: Page, frame: Frame, editor: string, rows: Row[]): 
     // Gate 0.2: a window only where the spec expects one (every press is reported before the first finding).
     if (o.windows.length > 0) expect.soft(MAY_OPEN.has(o.action), `${o.action} opened ${o.windows.join(', ')}`).toBe(true);
     // Gate 0.1: the frame's own action is the last one tried, every foreign one before it; a display toggle always runs.
-    const at = o.asked.indexOf(o.action);
-    if (ALWAYS_ON.has(o.action)) expect.soft(at, `${o.action} ran on ${o.chord}`).toBe(o.asked.length - 1);
+    // Rows of this frame that share KiCad's one default chord are a context pair (Explode Pad and Recombine Pad on
+    // Ctrl+E: KiCad runs the one its state allows), so either of them may be the frame's own action tried.
+    const pair = new Set([o.action, ...rows.filter((r) => keyOf(r) === o.chord).map((r) => r.action)]);
+    const at = Math.max(...[...pair].map((a) => o.asked.lastIndexOf(a)));
+    if (ALWAYS_ON.has(o.action)) expect.soft(o.asked.indexOf(o.action), `${o.action} ran on ${o.chord}`).toBe(o.asked.length - 1);
     if (o.asked.length > 0 && at < 0) expect.soft(o.asked.every((a) => !poolsOf(a).includes(poolOf(editor))), `${o.chord} ran another ${editor} action: ${o.asked.join(', ')}`).toBe(true);
   }
 }
@@ -241,6 +244,11 @@ test.describe('the wave 2 chord ledger', () => {
       const frame = await boot(page, `frame=${editor}`, null);
       // An island without this frame boots a schematic frame in its place: nothing of this editor to press yet.
       test.skip(!((await of(page, 'ev.ready'))[0]?.caps ?? []).includes(cap), `no ${editor} frame on this island (its unit lands with engine run 15)`);
+      // A footprint open, as the board and the schematic halves open Glasgow: with none, KiCad tries no edit tool (rotate, explode).
+      if (editor === 'fpedit') {
+        const soic = await page.evaluate(async (p) => (await fetch(p)).text(), '/fixtures/fpedit-small/fpedit-small_parts.pretty/SOIC-8_3.9x4.9mm_P1.27mm.kicad_mod');
+        expect(await request(page, 'fpedit.open', { text: soic, name: 'SOIC-8_3.9x4.9mm_P1.27mm', lib: 'fpedit-small_parts', mode: 'library', discard: true })).toMatchObject({ open: true });
+      }
       const rows = waveRows(editor);
       expect(rows.length).toBe(editor === 'fpedit' ? 38 : 8);
       await pressAll(page, frame, editor, rows);

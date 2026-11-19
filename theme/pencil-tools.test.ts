@@ -256,8 +256,9 @@ describe('the pencil-tools table', () => {
       if (rest.length > 0) shared++;
     }
     // The rows whose KiCad default KiCad itself gives a second action too: Ctrl+L, H, P and Ctrl+S in the
-    // schematic, Ctrl+Shift+A and Ctrl+Shift+C in the board and the footprint editor, Ctrl+E twice in the footprint editor.
-    expect(shared).toBe(10);
+    // schematic, Ctrl+E twice in the footprint editor. The circle and arc tools' Ctrl+Shift+C and Ctrl+Shift+A are
+    // no longer pressed: KiCad's common copy as text and unselect all take them first (SHADOWED_DEFAULTS).
+    expect(shared).toBe(6);
   });
 
   it('presses no chord that a held action of the same frame is bound to', () => {
