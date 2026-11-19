@@ -13,7 +13,8 @@
 // in unit id order. A `codes` row whose code the table has already (a built
 // in code, or an earlier unit's) is not added again: the first row stands.
 // A `notes <op>` part's list items go at the end of the section of an op
-// that ships (the `### ` heading naming it), each tagged with the unit. scripts/build.mjs reads the ops and the jobs through
+// that ships (the `### ` heading naming it, else its family's: `<family>.*`
+// or the `<family> ops`), each tagged with the unit. scripts/build.mjs reads the ops and the jobs through
 // collect() as well, so island.json lists every landed unit's ops even before
 // the files here are regenerated.
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -121,11 +122,15 @@ export function assembleProtocol(text, fragments) {
   for (const f of fragments) {
     for (const [op, list] of Object.entries(f.notes ?? {})) {
       if (list.length === 0) continue;
-      // The op's own heading, else its family's (`sim.run` is under "The simulator: sim.*").
+      // The op's own heading, else its family's: one naming `<family>.*` (`sim.run`
+      // is under "The simulator: sim.*"), else one naming the `<family> ops`
+      // (`symedit.new` is under "The symbol editor: a symedit frame and the symedit ops").
       const named = (name) => new RegExp(`(^|[\\s\`(])${name.replace(/[.*]/g, (c) => `\\${c}`)}($|[\\s\`),:])`);
       const find = (re) => lines.findIndex((l) => l.startsWith('### ') && re.test(l.slice(4)));
       let head = find(named(op));
-      if (head < 0 && op.includes('.')) head = find(named(`${op.slice(0, op.indexOf('.'))}.*`));
+      const family = op.includes('.') ? op.slice(0, op.indexOf('.')) : null;
+      if (head < 0 && family != null) head = find(named(`${family}.*`));
+      if (head < 0 && family != null) head = find(named(`${family} ops`));
       if (head < 0) throw new Error(`bridge/ext/${f.unit}.md: notes ${op}: PROTOCOL.md has no section for ${op}`);
       let next = head + 1;
       while (next < lines.length && !/^#{1,3} /.test(lines[next]) && lines[next] !== SECTIONS_BEGIN) next++;

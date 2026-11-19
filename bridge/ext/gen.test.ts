@@ -88,6 +88,20 @@ describe('the generator at the join', () => {
     expect(() => assembleProtocol(protocol, [frag('n-i', '<!-- part: notes no.such -->\n- x')])).toThrow(/no section/);
   });
 
+  it('puts a note of an op with no heading of its own under the heading naming its family\'s ops', () => {
+    const out = assembleProtocol(protocol, [frag('n-i', '<!-- part: notes symedit.new -->\n- a new symbol note')]) as string;
+    const lines = out.split('\n');
+    const head = lines.findIndex((l) => l === '### The symbol editor: a symedit frame and the symedit ops');
+    const note = lines.findIndex((l) => l === '- a new symbol note <!-- ext:n-i -->');
+    expect(head).toBeGreaterThan(-1);
+    expect(note).toBeGreaterThan(head);
+    expect(lines.slice(head + 1, note).some((l) => l.startsWith('### '))).toBe(false);
+    expect(lines[note + 1]).toBe('');
+    expect(lines[note + 2].startsWith('### ')).toBe(true);
+    expect(assembleProtocol(out, [])).toBe(protocol);
+    expect(() => assembleProtocol(protocol, [frag('n-i', '<!-- part: notes nosuch.op -->\n- x')])).toThrow(/no section/);
+  });
+
   it('reads a fixture entry with or without the island prefix as a path of this repository', () => {
     expect(fixturePath('island:tests/fixtures/fpedit-small/')).toBe('tests/fixtures/fpedit-small/');
     expect(fixturePath('tests/fixtures/sheet-pins/ (two sheets)')).toBe('tests/fixtures/sheet-pins/');
