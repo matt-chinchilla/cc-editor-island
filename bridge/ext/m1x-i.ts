@@ -225,6 +225,8 @@ export default {
         if ('ok' in r) return r;
         // A modal prompt resumes on an accepted answer; a modeless one may stay open (KiCad's Apply), so it is kept until the engine says otherwise.
         if (r.accepted && c.p.modal) forget(ctx, c.st, c.p.token);
+        // The answer may change the selection inside the engine (Filter Selected Items) with no canvas event: read it.
+        if (r.accepted) ctx.nudgeSelection();
         return ok(r);
       },
     },

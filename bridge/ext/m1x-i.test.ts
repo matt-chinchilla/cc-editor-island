@@ -62,6 +62,7 @@ function fakeCtx(frame: string, mod: Record<string, unknown>, state: Partial<{ c
   const s = { caps: [PROMPTS_CAP, 'rules'], doc: true, importing: false, ready: true, closed: false, ...state };
   const emitted: Array<{ type: string } & Record<string, unknown>> = [];
   let held = 0;
+  let nudged = 0;
   const ctx = {
     frame, root: '/p', timing: {},
     win: () => w, mod: () => w.Module, fs: () => null, has: (n: readonly string[]) => n.every((x) => typeof w.Module[x] === 'function'),
@@ -72,12 +73,13 @@ function fakeCtx(frame: string, mod: Record<string, unknown>, state: Partial<{ c
     readAsk: (ask: string, record: unknown) => REGISTRY.askReaders.get(ask)?.read(record) ?? null,
     inFlight: () => 0,
     holdMenus: (on: boolean) => { held = Math.max(0, held + (on ? 1 : -1)); },
+    nudgeSelection: () => { nudged += 1; },
     emitExt: (type: string, payload: Record<string, unknown>) => { emitted.push({ type, ...payload }); },
     emit: (ev: { type: string }) => { emitted.push(ev); },
     log: () => {},
   } as unknown as ResponderCtx;
   const stop = unit.install!(ctx) as () => void;
-  return { ctx, w, s, emitted, stop, held: () => held, slot: () => w.kicadHostPrompt as Slot };
+  return { ctx, w, s, emitted, stop, held: () => held, nudged: () => nudged, slot: () => w.kicadHostPrompt as Slot };
 }
 
 const FILLET = { title: 'Fillet Tracks', fields: [{ key: 'value', label: 'Radius:', kind: 'length', value: 0.5, tip: '' }] };
@@ -338,6 +340,26 @@ describe('prompt.answer, prompt.cancel and prompt.pick', () => {
     mod.kicadPromptAnswer.mockReturnValueOnce('{"stale":true}');
     expect(await run('prompt.answer', { token: 10, x: 1 }, f.ctx)).toEqual({ ok: false, code: 'stale', message: 'prompt.answer' });
     expect(await run('prompt.answer', { token: 10, x: 1 }, f.ctx)).toEqual({ ok: false, code: 'stale', message: 'prompt.answer' });
+  });
+
+  it('an accepted answer has the selection read again; a refusal, a stale answer and a cancel do not', async () => {
+    // Filter Selected Items drops kinds from the selection inside the engine once its prompt resumes: no canvas
+    // event follows, so the frame reads the selection itself and ev.selected reaches the host.
+    const mod = RUN15();
+    const f = fakeCtx('pcb', mod);
+    (f.ctx as unknown as { readAsk: unknown }).readAsk = () => ({});
+    f.slot().onAsk!(ASK(21, 'filterSelection', {}, true));
+    expect(f.nudged()).toBe(0);
+    expect(await run('prompt.answer', { token: 21, includeTracks: false }, f.ctx)).toEqual({ ok: true, result: { accepted: true } });
+    expect(f.nudged()).toBe(1);
+    mod.kicadPromptAnswer.mockReturnValueOnce('{"accepted":false,"field":"","message":"No."}');
+    f.slot().onAsk!(ASK(22, 'filterSelection', {}, true));
+    expect(await run('prompt.answer', { token: 22, includeTracks: false }, f.ctx)).toMatchObject({ ok: true, result: { accepted: false } });
+    mod.kicadPromptAnswer.mockReturnValueOnce('{"stale":true}');
+    expect(await run('prompt.answer', { token: 22, includeTracks: true }, f.ctx)).toEqual({ ok: false, code: 'stale', message: 'prompt.answer' });
+    f.slot().onAsk!(ASK(23, 'filterSelection', {}, true));
+    expect(await run('prompt.cancel', { token: 23 }, f.ctx)).toEqual({ ok: true, result: {} });
+    expect(f.nudged()).toBe(1);
   });
 
   it('reads the engine\'s answer closed', async () => {

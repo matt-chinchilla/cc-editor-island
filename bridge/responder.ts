@@ -4183,6 +4183,7 @@ export function startResponder(opts: {
     placeStart: (uuid) => { placeWatch?.start(uuid); },
     placeCancel: async () => (placeWatch == null ? true : placeWatch.cancel()),
     holdMenus: (on) => { menusHeld = Math.max(0, menusHeld + (on ? 1 : -1)); },
+    nudgeSelection: () => { selectionFeed?.nudge(); },
     pressKey: (k) => { if (win != null) pressKey(win, k); },
     emit: (ev) => {
       if (!BUILTIN_EVENTS.includes(ev.type)) throw new Error(`${ev.type} is no built in event (a unit's own goes through emitExt)`);

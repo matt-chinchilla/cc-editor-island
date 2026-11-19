@@ -111,6 +111,13 @@ export interface ResponderCtx {
    * menu of KiCad's under a menu of its own (m1-i).
    */
   holdMenus(on: boolean): void;
+  /**
+   * Reads the selection as a pointer release in the frame does, and sends
+   * ev.selected when it changed: for an op that changes the selection inside
+   * the engine with no canvas event (an accepted prompt answer: Filter
+   * Selected Items drops kinds from it).
+   */
+  nudgeSelection(): void;
   /** Presses one key in the engine as a reader would (bridge/keys.ts). */
   pressKey(k: KeyPress): void;
   /** Sends a built in event (bridge/responder.ts IslandEvent), with exactly its protocol keys. */

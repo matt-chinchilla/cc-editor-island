@@ -395,6 +395,22 @@ describe('the seam join fixes', () => {
     expect(buildRegistry(mods({ unit: 'bad-i', askReaders: { vertex: reader } })).problems).toEqual(["bad-i: askReaders 'vertex' is no ask the unit declares"]);
   });
 
+  it('gives a unit the selection read through ctx: a nudge reads the engine\'s selection with no gesture in the frame', async () => {
+    let ctxSeen: ResponderCtx | null = null;
+    const unit: ExtUnit = { unit: 'nudge-i', install: (ctx) => { ctxSeen = ctx; } };
+    const read = vi.fn(() => '{"uuids":[],"fpPaths":[]}');
+    await boot([unit], { frame: 'pcb', exports: { kicadCollabPresenceStart: () => undefined, kicadCollabGetSelectionFull: read, kicadCollabGetSelection: () => '[]' } });
+    const ctx = ctxSeen as unknown as ResponderCtx;
+    const before = read.mock.calls.length;
+    ctx.nudgeSelection();
+    await settle();
+    expect(read.mock.calls.length).toBeGreaterThan(before);
+    // Without the engine's selection hook there is no feed: the nudge does nothing and never throws.
+    let bare: ResponderCtx | null = null;
+    await boot([{ unit: 'bare-i', install: (c) => { bare = c; } }]);
+    expect(() => (bare as unknown as ResponderCtx).nudgeSelection()).not.toThrow();
+  });
+
   it('takes a unit settings section in settings.get and settings.set, in its frames only', async () => {
     const unit: ExtUnit = { unit: 'st-i', settingsSections: { router: { frames: ['pcb'], check: (v) => typeof v.mode === 'string' }, annotation: { frames: ['sch'], projectFile: true } } };
     const reg = buildRegistry(mods(unit));
