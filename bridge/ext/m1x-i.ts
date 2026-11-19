@@ -249,13 +249,20 @@ export default {
     'prompt.pick': {
       now: true,
       passesCheck: true,
-      run(args, ctx) {
+      async run(args, ctx) {
         const op = 'prompt.pick';
         if (!isObj(args) || !exact(args, ['token', 'kind']) || !(PICK_KINDS as readonly unknown[]).includes(args.kind)) return fail('bad_args', op);
         const c = parkedFor(op, 'kicadPromptPick', args.token, ctx);
         if ('ok' in c) return c;
         let r: number;
-        try { r = code(engineCall(ctx, 'kicadPromptPick', c.p.token, args.kind)); } catch { return fail('island_error', op); }
+        // The picker is a tool of KiCad's, and starting a tool parks: an engine that starts it inside the call
+        // answers through a Promise (the export registered to park), one that queues it answers the code at once.
+        // A throw says why (the browser's own message when the call could not wait).
+        try {
+          r = code(await engineCall(ctx, 'kicadPromptPick', c.p.token, args.kind));
+        } catch (err) {
+          return fail('island_error', `${op}: ${err instanceof Error ? err.message : String(err)}`);
+        }
         switch (r) {
           case 0: return ok();
           case 1: forget(ctx, c.st, c.p.token); return fail('stale', op);

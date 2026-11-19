@@ -402,6 +402,25 @@ describe('prompt.answer, prompt.cancel and prompt.pick', () => {
     mod.kicadPromptPick.mockReturnValueOnce(1);
     expect(await run('prompt.pick', { token: 12, kind: 'point' }, f.ctx)).toEqual({ ok: false, code: 'stale', message: 'prompt.pick' });
   });
+
+  it('prompt.pick: an engine that starts its picker inside the call answers through a Promise, and a throw says why', async () => {
+    const mod = RUN15();
+    const f = fakeCtx('pcb', mod);
+    (f.ctx as unknown as { readAsk: unknown }).readAsk = () => ({});
+    f.slot().onAsk!(ASK(13, 'array', {}, false));
+    // The export registered to park: the code arrives once the picker's tool has started.
+    mod.kicadPromptPick.mockReturnValueOnce(new Promise((r) => setTimeout(() => r(0), 5)));
+    expect(await run('prompt.pick', { token: 13, kind: 'point' }, f.ctx)).toEqual({ ok: true, result: {} });
+    mod.kicadPromptPick.mockReturnValueOnce(Promise.resolve(2));
+    expect(await run('prompt.pick', { token: 13, kind: 'item' }, f.ctx)).toEqual({ ok: false, code: 'no_picker', message: 'array has no item picker' });
+    mod.kicadPromptPick.mockReturnValueOnce(Promise.reject(new Error('the island was shut down')));
+    expect(await run('prompt.pick', { token: 13, kind: 'item' }, f.ctx)).toEqual({ ok: false, code: 'island_error', message: 'prompt.pick: the island was shut down' });
+    // Engine run 15 build T16b: the picker's tool starts inside a call that cannot wait, and the browser refuses it.
+    mod.kicadPromptPick.mockImplementationOnce(() => { throw new Error('trying to suspend without WebAssembly.promising'); });
+    expect(await run('prompt.pick', { token: 13, kind: 'item' }, f.ctx)).toEqual({ ok: false, code: 'island_error', message: 'prompt.pick: trying to suspend without WebAssembly.promising' });
+    // The prompt is still parked: a later pick is asked of the engine again.
+    expect(await run('prompt.pick', { token: 13, kind: 'point' }, f.ctx)).toEqual({ ok: true, result: {} });
+  });
 });
 
 describe('the engine\'s updates and ends', () => {
