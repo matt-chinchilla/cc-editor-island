@@ -276,6 +276,19 @@ describe('embedded.set', () => {
     expect(parseEmbeddedSetArgs({ op: 'add', name: 'x'.repeat(255), type: 'other', bytes: new Uint8Array(EMBED_MAX_BYTES) })).not.toBeNull();
   });
 
+  it('refuses to add a file under a name the engine\'s own records use (RULINGS 33d): embedded.json and .cc-embed-out.json answer bad_args, nothing staged', async () => {
+    const bytes = enc('x');
+    for (const name of [SET_RECORD, EXTRACT_RECORD]) {
+      expect(parseEmbeddedSetArgs({ op: 'add', name, type: 'other', bytes }), name).toBeNull();
+      const f = fakeCtx();
+      expect(await run('embedded.set', { op: 'add', name, type: 'other', bytes }, f.ctx), name).toEqual({ ok: false, code: 'bad_args', message: 'embedded.set' });
+      expect(f.made, name).toEqual([]);
+      expect(f.sets, name).toEqual([]);
+    }
+    // A design that already holds such a file may still take it out.
+    expect(parseEmbeddedSetArgs({ op: 'remove', name: SET_RECORD, alsoHeld: false })).toEqual({ op: 'remove', name: SET_RECORD, alsoHeld: false });
+  });
+
   it('add stages the file in one fresh /tmp/cc-embed/<n>/, queues ONE set with run and dir, and answers the read once it shows the file; the folder removed', async () => {
     const f = fakeCtx();
     const pdf = enc('%PDF-1.4 a datasheet');
@@ -370,5 +383,13 @@ describe('embedded.extract', () => {
     expect(await run('embedded.extract', { name: 'sheet.pdf' }, short.ctx)).toMatchObject({ ok: false, code: 'island_error' });
     expect(leftUnder(short.files)).toEqual([]);
     expect(await run('embedded.extract', { name: 'sheet.pdf', x: 1 }, f.ctx)).toEqual({ ok: false, code: 'bad_args', message: 'embedded.extract' });
+  });
+
+  it('refuses a name the extract\'s own record uses (RULINGS 33d): bad_args before the engine, even when the document holds a file of that name', async () => {
+    const f = fakeCtx();
+    f.state.read.files.push({ name: EXTRACT_RECORD, type: 'other', bytes: 4, heldBy: 0 });
+    expect(await run('embedded.extract', { name: EXTRACT_RECORD }, f.ctx)).toEqual({ ok: false, code: 'bad_args', message: 'embedded.extract' });
+    expect(f.extracts).toEqual([]);
+    expect(f.made).toEqual([]);
   });
 });

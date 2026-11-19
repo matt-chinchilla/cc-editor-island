@@ -58,6 +58,12 @@ const isType = (v: unknown): v is EmbedType => typeof v === 'string' && (EMBED_T
 /** A name a request may carry: 1 to 255 characters, no slash or backslash, never "." or "..". */
 export const isEmbedName = (v: unknown): v is string =>
   typeof v === 'string' && v.length >= 1 && v.length <= EMBED_NAME_MAX && v !== '.' && v !== '..' && !/[/\\]/.test(v);
+/**
+ * The names the engine's own records take in a run folder (the set's beside
+ * an added file, the extract's beside the file taken out): a file added under
+ * either would be written over by the record, so neither is ever taken.
+ */
+export const RESERVED_EMBED_NAMES: readonly string[] = [SET_RECORD, EXTRACT_RECORD];
 
 /** The engine's read, closed: exactly the four keys, each file and font of its shape, at most 1,024 of each. Null for anything else. */
 export function readEmbedded(text: string): EmbeddedRead | null {
@@ -82,15 +88,16 @@ export function readEmbedded(text: string): EmbeddedRead | null {
 
 /**
  * embedded.set's args, closed: exactly `{ op: "add", name, type, bytes }` (a
- * name of 1 to 255 characters, no slash or backslash, never "." or ".."; one of
- * KiCad's five kinds; the file's bytes, a Uint8Array of 1 byte to 25 MiB),
+ * name of 1 to 255 characters, no slash or backslash, never "." or "..", never
+ * one of RESERVED_EMBED_NAMES; one of KiCad's five kinds; the file's bytes, a
+ * Uint8Array of 1 byte to 25 MiB),
  * `{ op: "remove", name, alsoHeld }` or `{ op: "fonts", embed }` (booleans).
  * Null for anything else.
  */
 export function parseEmbeddedSetArgs(args: unknown): EmbeddedSetArgs | null {
   if (!isObj(args)) return null;
   if (args.op === 'add') {
-    if (!exactKeys(args, ['op', 'name', 'type', 'bytes']) || !isEmbedName(args.name) || !isType(args.type)) return null;
+    if (!exactKeys(args, ['op', 'name', 'type', 'bytes']) || !isEmbedName(args.name) || RESERVED_EMBED_NAMES.includes(args.name) || !isType(args.type)) return null;
     const { bytes } = args;
     if (!(bytes instanceof Uint8Array) || bytes.byteLength < 1 || bytes.byteLength > EMBED_MAX_BYTES) return null;
     return { op: 'add', name: args.name, type: args.type, bytes };
@@ -106,9 +113,9 @@ export function parseEmbeddedSetArgs(args: unknown): EmbeddedSetArgs | null {
   return null;
 }
 
-/** embedded.extract's args: exactly `{ name }`; null for anything else. */
+/** embedded.extract's args: exactly `{ name }`, never the extract's own record name; null for anything else. */
 export function parseExtractArgs(args: unknown): { name: string } | null {
-  return isObj(args) && exactKeys(args, ['name']) && isEmbedName(args.name) ? { name: args.name } : null;
+  return isObj(args) && exactKeys(args, ['name']) && isEmbedName(args.name) && args.name !== EXTRACT_RECORD ? { name: args.name } : null;
 }
 
 /** The set's record (embedded.json): `{ files, error }`, error "" or the engine's word. Null until it is whole. */
