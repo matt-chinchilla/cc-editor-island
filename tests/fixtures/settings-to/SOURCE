@@ -1,0 +1,16 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (C) 2026 Circuit Center Inc
+
+Written by hand for this repository on 2026-11-19 (CC0 1.0: no rights
+reserved), no third-party content, for unit m8-i (settings from another
+design, properties addendum 6.3 and 17; ledger row M8). A project file
+holding only its meta and sheet list, so KiCad reads every setting at its
+own default; a four copper layer board (F.Cu, In1.Cu, In2.Cu, B.Cu) with a
+40 by 30 mm outline and nothing else; an empty one-sheet schematic. The
+board and the schematic were written as KiCad s-expressions by hand, then
+loaded and saved by KiCad 10.0's own writers (kicad-cli pcb upgrade and sch
+upgrade); nothing was changed by hand after that save.
+tests/e2e/settings-read.spec.ts opens it in a pcb frame and in a sch frame,
+then reads settings-from's setup into it with settings.read. files.json
+lists the files the e2e harness opens. The KiCad files carry no comment, so
+this file holds their license.

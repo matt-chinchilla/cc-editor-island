@@ -1,0 +1,48 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (C) 2026 Circuit Center Inc
+
+Written by hand for this repository on 2026-11-19 (CC0 1.0: no rights
+reserved), for unit m8-i (settings from another design, properties
+addendum 6.3 and 17; ledger row M8). The design whose setup settings.read
+reads into settings-to; it is staged by the e2e, never opened.
+
+settings-from.kicad_pro differs from KiCad's defaults in every section that
+travels: a net class HV (0.5 mm clearance, 0.4 mm track, red, pattern HV*);
+a component class POWER on REFERENCE U* with sheet classes on; a tuning
+profile "USB 90R" (differential, 90 ohm, In2.Cu between In1.Cu and In3.Cu);
+board severities (silk_overlap and lib_footprint_mismatch ignored,
+track_dangling an error); ERC severities (pin_not_connected a warning,
+similar_labels ignored) and two pin map cells; text and graphics defaults
+(silk and copper text sizes, dimension precision 2); the apply-to-footprint
+switches of the formatting on; zone defaults hatched (0.5 mm bars, 0.8 mm
+gaps, 45 degrees, 0.6 mm clearance); constraints (0.15 mm clearance and
+track, 0.45 mm via, 0.3 mm hole clearance); predefined tracks, vias and
+diff pairs; teardrops on with a length ratio of 0.6 and on track ends;
+tuning pattern spacing 1.2 mm and diff pair amplitude 1.5 mm; text variable
+REV = C; bus alias ADDR (A0 to A3); BOM preset "Assembly" and format preset
+"Semicolons"; annotation by Y (sort order 1), first free after a number
+(method 1), from 100, designators reused; schematic formatting (dash ratio
+8, gap 4, line 8 mils, text 60 mils, label ratio 0.375, offset 0.15,
+intersheet references shown) and two field name templates, MPN and
+Supplier. The ERC tables start from KiCad's own default tables (no creative
+content) with those changes. Written as JSON in KiCad 10's own key names.
+
+settings-from.kicad_pcb: six copper layers (In1.Cu a power plane named GND1,
+In4.Cu a power plane), a stackup with ENIG finish, dielectric constraints,
+an edge connector and edge plating, black mask, mask expansion 0.05 mm,
+mask minimum width 0.1 mm, paste clearance -0.03 mm, soldermask bridges
+allowed in footprints, a hatch offset of 0.5, 0.5 mm on In1.Cu, a dashed
+line dash ratio of 6. Written by hand, loaded and saved by KiCad 10.0's own
+board writer (kicad-cli pcb upgrade), then the zone_defaults block put back
+by hand in the writer's own form: KiCad 10's parser reads a board file's
+zone_defaults into the default zone settings and its writer writes the
+board's own hatch offsets, so the save dropped it.
+
+settings-from.kicad_dru: one rule, "HV spacing", a 1.5 mm clearance on the
+net class HV.
+
+Checked with kicad/kicad:10.0 before commit: pcb drc read the board, the
+project and the rules with no error; sch erc and sch export bom with
+--preset Assembly --format-preset Semicolons read the project (three
+columns, semicolons). The KiCad files carry no comment, so this file holds
+their license.
