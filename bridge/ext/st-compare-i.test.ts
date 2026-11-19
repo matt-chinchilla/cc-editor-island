@@ -13,7 +13,7 @@ import { startResponder } from '../responder';
 import type { ExtUnit, ResponderCtx } from './contract';
 import { buildRegistry, heldActions, REGISTRY } from './registry';
 import unit, {
-  COMPARE_CAP, COMPARE_EXPORTS, COMPARE_ROWS, DIFF_CODES, DIFF_FOOTPRINT, DIFF_SYMBOL, FINDINGS_MAX, parseCompareArgs,
+  COMPARE_CAP, COMPARE_EXPORTS, COMPARE_MS, COMPARE_ROWS, DIFF_CODES, DIFF_FOOTPRINT, DIFF_SYMBOL, FINDINGS_MAX, parseCompareArgs,
   readCompareResult, readFinding, STATUSES,
 } from './st-compare-i';
 
@@ -85,7 +85,7 @@ async function boot(frame: string, exports: Record<string, unknown>) {
 }
 
 /** A ResponderCtx over a fake engine in `frame`: `engine` plays kicadCompareWithSource; `gate` makes the gate refuse busy. */
-function fakeCtx(opts: { frame?: 'sch' | 'pcb'; engine?: (a: Record<string, unknown>) => unknown; gate?: string } = {}) {
+function fakeCtx(opts: { frame?: 'sch' | 'pcb'; engine?: (a: Record<string, unknown>) => unknown; gate?: string; compareMs?: number } = {}) {
   const asked: Array<Record<string, unknown>> = [];
   const frame = opts.frame ?? 'sch';
   const mod: Record<string, unknown> = {
@@ -100,9 +100,10 @@ function fakeCtx(opts: { frame?: 'sch' | 'pcb'; engine?: (a: Record<string, unkn
   const ctx = {
     frame,
     root: '/project',
-    timing: {},
+    timing: opts.compareMs == null ? {} : { compareMs: opts.compareMs },
     mod: () => mod,
     closed: () => false,
+    withTimeout: <T>(value: T | Promise<T>, ms: number) => Promise.race([Promise.resolve(value), new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), ms))]),
     schematicGate: gated('sch'),
     boardGate: gated('pcb'),
     log: () => {},
@@ -267,5 +268,21 @@ describe('item.compare on an engine with the export', () => {
     expect(await run({ uuid: R4 }, shape.ctx)).toEqual({ ok: false, code: 'island_error', message: 'the engine answered a compare of another shape' });
     const thrown = fakeCtx({ engine: () => { throw new Error('engine fault'); } });
     expect(await run({ uuid: R4 }, thrown.ctx)).toEqual({ ok: false, code: 'island_error', message: 'engine fault' });
+  });
+  it('an engine that loads the source inside the call answers through a Promise: the op waits for its text', async () => {
+    // The source of R4 on Glasgow is a set of the hosted mirror the frame has not read yet: the engine parks for it.
+    const sch = fakeCtx({ engine: () => new Promise((r) => setTimeout(() => r(JSON.stringify(SAME)), 5)) });
+    expect(await run({ uuid: R4, sheetPath: '/' }, sch.ctx)).toEqual({ ok: true, result: SAME });
+    const pcb = fakeCtx({ frame: 'pcb', engine: () => Promise.resolve(JSON.stringify(DIFFERS)) });
+    expect(await run({ uuid: R48 }, pcb.ctx)).toEqual({ ok: true, result: DIFFERS });
+    const gone = fakeCtx({ engine: () => Promise.resolve('') });
+    expect(await run({ uuid: R4 }, gone.ctx)).toEqual({ ok: false, code: 'not_found', message: R4 });
+  });
+  it('a Promise that rejects is island_error with the engine\'s message; one that never settles is bounded', async () => {
+    const rejected = fakeCtx({ engine: () => Promise.reject(new Error('the island was shut down')) });
+    expect(await run({ uuid: R4 }, rejected.ctx)).toEqual({ ok: false, code: 'island_error', message: 'the island was shut down' });
+    expect(COMPARE_MS).toBe(25_000);
+    const never = fakeCtx({ engine: () => new Promise(() => undefined), compareMs: 10 });
+    expect(await run({ uuid: R4 }, never.ctx)).toEqual({ ok: false, code: 'island_error', message: 'the engine did not answer the compare within the time limit' });
   });
 });

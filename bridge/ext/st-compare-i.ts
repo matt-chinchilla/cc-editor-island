@@ -10,11 +10,20 @@
 // (ev.held) so the host opens its own Compare block. Feature detected: on an
 // engine without the export the cap is not listed and the op answers
 // unsupported naming the export.
+//
+// The source may not be in the frame yet (a set of the hosted mirror is
+// fetched on its first use), and the engine loads it inside the call. A load
+// parks, so an engine that can wait there registers the export to park and
+// answers through a Promise, as kicadSchRescue does; the op waits for it,
+// bounded. An engine whose export answers at once is read the same way.
 import { fail, hasAll, isObj, ok, refused, type Answer, type ExtUnit, type HeldRow, type ResponderCtx } from './contract';
 import { SHEET_PATH_RE, UUID_RE } from '../symbol';
 
-/** The engine export item.compare reads (a synchronous read in the frame's own editor). */
+/** The engine export item.compare reads (a read in the frame's own editor: its text, or a Promise of it while the source loads). */
 export const COMPARE_EXPORTS = ['kicadCompareWithSource'] as const;
+/** How long the engine may take over one compare (its source may be fetched first): under the host's own 30 s wait. */
+export const COMPARE_MS = 25_000;
+const TIMEOUT_REFUSAL = 'the engine did not answer the compare within the time limit';
 /** The cap a host gates its Compare block on. */
 export const COMPARE_CAP = 'compare';
 
@@ -113,21 +122,25 @@ const gateFor = (ctx: ResponderCtx, op: string) =>
  * then the gate (the engine's export, a document open, busy), then the
  * engine's own compare. The engine answers "" for an item the document does
  * not hold (or a placed symbol with no copy of its own): not_found. A source
- * absent, disabled or gone is the answer's status noSource. A read: answered
- * during a check.
+ * absent, disabled or gone is the answer's status noSource. The engine's
+ * answer is awaited (it parks while a source loads), at most COMPARE_MS; a
+ * throw, a rejection or no answer in that time is island_error. A read:
+ * answered during a check.
  */
-function compare(args: unknown, ctx: ResponderCtx): Answer {
+async function compare(args: unknown, ctx: ResponderCtx): Promise<Answer> {
   const op = 'item.compare';
   const a = parseCompareArgs(args, ctx.frame);
   if (a == null) return fail('bad_args', op);
   const g = gateFor(ctx, op);
   if (refused(g)) return g;
-  let raw: string;
+  let got: unknown;
   try {
-    raw = String((g.mod.kicadCompareWithSource as (json: string) => unknown)(JSON.stringify(a)) ?? '');
+    got = await ctx.withTimeout((g.mod.kicadCompareWithSource as (json: string) => unknown)(JSON.stringify(a)), ctx.timing.compareMs ?? COMPARE_MS);
   } catch (err) {
     return fail('island_error', err instanceof Error ? err.message : String(err));
   }
+  if (got === 'timeout') return fail('island_error', TIMEOUT_REFUSAL);
+  const raw = String(got ?? '');
   if (raw === '') return fail('not_found', a.sheetPath === undefined ? a.uuid : `${a.uuid} on ${a.sheetPath}`);
   const result = readCompareResult(raw);
   if (result == null) return fail('island_error', 'the engine answered a compare of another shape');
