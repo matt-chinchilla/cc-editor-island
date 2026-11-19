@@ -14,7 +14,7 @@ import unit, {
   installSchItemAsk, parseSchImagePlaceArgs, readSchItemAsk, schImagePlace, schItemGet, schItemSet, type SchItemAskWindow,
 } from './m5-i';
 import {
-  SCH_EDITABLE_KEYS, SCH_ITEM_KINDS, parseSchItemGetArgs, parseSchItemSetArgs, readSchItem, readSchItems, readSchItemsDone, schItemSetMisfit,
+  SCH_EDITABLE_KEYS, SCH_ITEM_KINDS, SCH_TEXT_READ_MAX, parseSchItemGetArgs, parseSchItemSetArgs, readSchItem, readSchItems, readSchItemsDone, schItemSetMisfit,
   type SchItemRecord,
 } from './m5-i/records';
 
@@ -281,6 +281,19 @@ describe('the records', () => {
     expect(readSchItem({ ...R('table'), cells: [['a', 'b']] })).toBeNull();
     expect(readSchItem({ ...R('sheet'), sheetPath: '' })).toBeNull();
     expect(readSchItem({ ...R('label'), uuid: id(1).toUpperCase() })).toBeNull();
+  });
+
+  it('reads a text, a text box and a table cell of any length KiCad holds, up to SCH_TEXT_READ_MAX characters (RULINGS 33f)', () => {
+    const long = 'x'.repeat(5000) + '\n' + '\u00e9'.repeat(SCH_TEXT_READ_MAX - 5001);
+    for (const kind of ['text', 'textbox', 'tableCell']) {
+      expect(readSchItem({ ...R(kind), text: long }), kind).toMatchObject({ kind, text: long });
+      expect(readSchItem({ ...R(kind), text: long + 'y' }), kind).toBeNull();
+    }
+    // The whole get answer is read with the long text in it.
+    expect(readSchItems(JSON.stringify({ items: [R('wire'), { ...R('text'), text: long }] }), 2)).toHaveLength(2);
+    // A set still takes the symbol editor's 1,024: the engine's own set bound.
+    expect(parseSchItemSetArgs({ items: [{ uuid: id(8), sheetPath: '' }], kind: 'text', set: { text: 'x'.repeat(1024) } })).not.toBeNull();
+    expect(parseSchItemSetArgs({ items: [{ uuid: id(8), sheetPath: '' }], kind: 'text', set: { text: 'x'.repeat(1025) } })).toBeNull();
   });
 
   it('reads the get answer whole, refusing it for one record of another shape or more records than asked', () => {

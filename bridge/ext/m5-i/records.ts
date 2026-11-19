@@ -35,6 +35,14 @@ export const FILE_MODES = ['useExisting', 'rename'] as const;
 export type FileMode = typeof FILE_MODES[number];
 type LineStyle = typeof LINE_STYLES[number];
 
+/**
+ * A text, text box or table cell's text read by sch.item.get, at most this
+ * many characters. KiCad sets no length on a schematic text (EDA_TEXT, its
+ * file reader and its dialogs take any), so the read takes the island's
+ * bound for a long KiCad text, fp-i3's FP_PROPS_LONG_MAX; a set still takes
+ * the engine's own 1,024 (TEXT_MAX).
+ */
+export const SCH_TEXT_READ_MAX = 16_384;
 /** Items of one get (the engine's GET_MAX) and of one set (SET_MAX). */
 export const GET_MAX = 512;
 export const SET_MAX = 4096;
@@ -165,8 +173,15 @@ function viaSymEdit(v: Record<string, unknown>, as: 'text' | 'textbox' | 'shape'
   const rest: Record<string, unknown> = {};
   for (const [k, value] of Object.entries(v)) if (k !== 'sheetPath' && !extra.includes(k)) rest[k] = value;
   rest.kind = as;
+  // The text itself is read here, to SCH_TEXT_READ_MAX: the symbol editor's reader bounds it to its set's 1,024.
+  const text = rest.text;
+  if (typeof text === 'string') {
+    if ([...text].length > SCH_TEXT_READ_MAX) return null;
+    rest.text = '';
+  }
   const item = readItem(rest);
-  return item != null && item.kind === as && item.unit === 0 && item.bodyStyle === 0 ? item : null;
+  if (item == null || item.kind !== as || item.unit !== 0 || item.bodyStyle !== 0) return null;
+  return typeof text === 'string' && 'text' in item ? { ...item, text } : item;
 }
 
 /** One record of kicadSchItemGet's answer read closed for its kind (spec 4.4 and the engine's added keys); null for any other shape. */
