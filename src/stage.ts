@@ -104,17 +104,75 @@ export function localSettingsPath(open: string): string | null {
 }
 
 /**
+ * The drawing sheet's entry in a `board.visible_items` list KiCad wrote at
+ * schema `version`: its name from schema 5 on (VisibilityLayerToString), the
+ * GAL layer offset before (24 from schema 3, 29 before it, as KiCad's own
+ * migrations at the pin read them, common/project/project_local_settings.cpp).
+ */
+function sheetEntry(version: number | null): string | number {
+  if (version == null || version >= LOCAL_SETTINGS_VERSION) return HIDDEN_ITEM;
+  return version >= 3 ? 24 : 29;
+}
+
+/**
+ * The host's own local settings `text` with the drawing sheet taken out of
+ * `board.visible_items`, every other key and entry kept as the user left it;
+ * null when the list does not show the sheet (nothing to change), or when the
+ * text is no settings file holding such a list (KiCad itself always writes
+ * one). A list left with no entry KiCad reads as an item would show every
+ * item again (KiCad restores an empty list), so it becomes KiCad's own
+ * marker for "nothing shown", `["none"]`, at schema 5 (KiCad's migrations
+ * before schema 5 touch `board.visible_items` alone, so the rest reads the
+ * same).
+ */
+export function withoutDrawingSheet(text: string): string | null {
+  let json: unknown;
+  try {
+    json = JSON.parse(text.replace(/^\uFEFF/, ''));
+  } catch {
+    return null;
+  }
+  if (!isRecord(json) || !isRecord(json.board) || !Array.isArray(json.board.visible_items)) return null;
+  const meta = isRecord(json.meta) ? json.meta : null;
+  const version = meta != null && Number.isInteger(meta.version) ? (meta.version as number) : null;
+  const sheet = sheetEntry(version);
+  const list = json.board.visible_items as unknown[];
+  if (!list.includes(sheet)) return null;
+  const kept = list.filter((e) => e !== sheet);
+  const readable = typeof sheet === 'string'
+    ? kept.some((e) => e === 'none' || (typeof e === 'string' && VISIBLE_ITEMS.includes(e)))
+    : kept.some((e) => Number.isInteger(e));
+  if (readable) json.board.visible_items = kept;
+  else {
+    json.board.visible_items = ['none'];
+    if (meta != null) meta.version = Math.max(version ?? LOCAL_SETTINGS_VERSION, LOCAL_SETTINGS_VERSION);
+    else json.meta = { version: LOCAL_SETTINGS_VERSION };
+  }
+  return `${JSON.stringify(json, null, 2)}\n`;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v != null && !Array.isArray(v);
+}
+
+/**
  * Writes the display settings KiCad reads for `open` (DISPLAY_OPACITY and
  * VISIBLE_ITEMS, with the schema's meta block; the schematic editor reads
- * neither board key) when the host sent none of that name: the user's
- * own settings always stand. Answers the path written, or null. The file is
- * the engine's local display state, not the design: it is not added to
- * `written`, and the island never reports it as saved.
+ * neither board key) when the host sent none of that name. The user's own
+ * settings always stand, but for the one item the viewer never shows: when
+ * the host's own file for a board shows the drawing sheet (KiCad writes it so
+ * beside every new project, and on an empty board KiCad then draws the whole
+ * page), the sheet is taken out of its list in place (withoutDrawingSheet)
+ * and its path answered, so its saves are not reported and the user's stored
+ * copy keeps every byte they gave. Answers the path written, or null. The
+ * file is the engine's local display state, not the design: it is not added
+ * to `written`, and the island never reports it as saved.
  */
 export function stageLocalSettings(win: ToolWindow, staged: StagedProject, open: string): string | null {
   const FS = win.FS;
   const path = localSettingsPath(open);
-  if (FS == null || path == null || staged.written.includes(path)) return null;
+  if (FS == null || path == null) return null;
+  if (staged.written.includes(path)) return hideHostSheet(FS, `${staged.root}/${path}`, open) ? path : null;
   const name = path.slice(path.lastIndexOf('/') + 1);
   const json = { board: { opacity: { ...DISPLAY_OPACITY }, visible_items: [...VISIBLE_ITEMS] }, meta: { filename: name, version: LOCAL_SETTINGS_VERSION } };
   try {
@@ -125,6 +183,22 @@ export function stageLocalSettings(win: ToolWindow, staged: StagedProject, open:
     return null;   // KiCad loads its defaults instead
   }
   return path;
+}
+
+/** The host's own local settings beside a board, rewritten by withoutDrawingSheet; true when it was. */
+function hideHostSheet(FS: EmscriptenFS, abs: string, open: string): boolean {
+  if (/\.kicad_sch$/i.test(open)) return false;   // the schematic editor reads no board key
+  try {
+    const bytes = FS.readFile(abs);
+    if (!(bytes instanceof Uint8Array)) return false;
+    const text = new TextDecoder().decode(bytes);
+    const next = withoutDrawingSheet(text);
+    if (next == null) return false;
+    FS.writeFile(abs, enc.encode(next));
+    return true;
+  } catch {
+    return false;   // left as the host sent it
+  }
 }
 
 /**

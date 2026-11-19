@@ -1,0 +1,10 @@
+SPDX-License-Identifier: CC0-1.0
+
+Written by hand for this repository on 2026-11-19 (CC0 1.0: no rights
+reserved): a project file and a two-layer board holding its header, its
+layers and its setup only, no item at all (no outline, no footprint, no
+track), on the default A4 paper. KiCad draws the page around an empty board
+when anything of its drawing sheet or page limits shows, so this is the board
+tests/e2e/empty-board.spec.ts opens in a pcb frame and reads for any pixel of
+the palette's drawing sheet color. files.json lists the files the e2e harness
+opens. The KiCad files carry no comment, so this file holds their license.
