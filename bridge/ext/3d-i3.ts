@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The 3D outputs' part in project.export (3D exports spec 8.3): no new op. A
 // pcb_export_3d or pcb_render run gets its own time bound (exportMsFor), the
-// bodies its board's model lines name staged before it runs
-// (bridge/occModels.ts), `cc_occ: false` when the 3D service is not listed,
+// bodies the live board's model lines name (kicadBoardModels, unsaved changes
+// included) staged before it runs (bridge/occModels.ts), `cc_occ: false` when the 3D service is not listed,
 // and ev.export { job, phase, percent } at most every 250 ms while it goes:
 // loading while the 3D service's files load, models while the bodies are
 // staged, running from the render's "Rendering <n> percent" lines. The job
@@ -13,6 +13,7 @@
 // their place.
 import { EXPORT_LINES, exportMsFor, renderPercent } from '../export';
 import { boardModelRefs, ensureWriting, MAX_STAGED_BYTES, MAX_STAGED_FILES, noteOccLoading, occLoadingPercent, stageBoardModels, stageModels, type StageReport } from '../occModels';
+import { readBoardModels } from '../boardModels';
 import { hasAll, isObj, type ExportHooks, type ExportRun, type ExtUnit, type ResponderCtx } from './contract';
 
 export const UNIT = '3d-i3';
@@ -128,6 +129,20 @@ export function installOcc(ctx: ResponderCtx, handle: OccHandleView | null, ensu
   return () => { off(); handle.setStage(null); noteOccLoading(0, 0); };
 }
 
+/**
+ * The live board's shown model lines (kicadBoardModels: the frame's board as
+ * it stands, unsaved changes included; a read, so nothing is saved and the
+ * board's modified state stays as it is), in footprint order; null when the
+ * engine has no such export, is busy ("") or answers another shape.
+ */
+export function liveModelRefs(mod: Record<string, unknown> | null): string[] | null {
+  if (mod == null || typeof mod.kicadBoardModels !== 'function') return null;
+  let text: unknown;
+  try { text = (mod.kicadBoardModels as () => unknown)(); } catch { return null; }
+  const read = readBoardModels(text);
+  return read == null ? null : read.footprints.flatMap((f) => f.models.filter((m) => m.show).map((m) => m.path));
+}
+
 const pct = (done: number, total: number): number => (total > 0 ? Math.max(0, Math.min(100, Math.floor((done / total) * 100))) : 100);
 
 /** The export hooks, their sources given (the tests give their own). */
@@ -150,10 +165,15 @@ export function exportHooksOf(deps: HookDeps): ExportHooks {
       const fs = ctx.fs();
       const board = ctx.opened();
       if (fs != null && board != null && board.endsWith('.kicad_pcb')) {
-        const bytes = ctx.readBytes(board);
-        if (bytes != null) {
+        // The live board's lines (a part or a body given since the last save included); the saved
+        // board's only on an engine that cannot read them now. A project line's file is read from the
+        // project folder, where the page's project.write puts a file it adds before any save.
+        const live = liveModelRefs(ctx.mod());
+        const bytes = live == null ? ctx.readBytes(board) : null;
+        const refs = live ?? (bytes == null ? null : boardModelRefs(new TextDecoder().decode(bytes)));
+        if (refs != null) {
           try {
-            const report = await stageModels(boardModelRefs(new TextDecoder().decode(bytes)), {
+            const report = await stageModels(refs, {
               fs,
               projectDir: board.slice(0, board.lastIndexOf('/')) || ctx.root,
               ensure: deps.ensure(fs),

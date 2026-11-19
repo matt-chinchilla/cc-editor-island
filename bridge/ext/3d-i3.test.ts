@@ -141,6 +141,39 @@ describe('the export hooks', () => {
     hooks.after?.(run('pcb_render'), ctx);
   });
 
+  it('stage the LIVE board\'s shown lines when the engine reads them (kicadBoardModels), unsaved changes and page written files included, and read nothing else of the engine', async () => {
+    const asked: string[] = [];
+    const hooks = exportHooksOf({ ensure: () => async (ref) => { asked.push(ref); return null; }, loading: () => null, now: () => 0 });
+    const line = (path: string, show = true) => ({ path, offset: [0, 0, 0], rotate: [0, 0, 0], scale: [1, 1, 1], opacity: 1, show, found: 'project' });
+    const live = JSON.stringify({
+      footprints: [
+        { uuid: 'u1', ref: 'U1', models: [line('${KIPRJMOD}/m/a.step'), line('${KIPRJMOD}/m/c.step'), line('${KIPRJMOD}/m/hidden.step', false)], kind: {} },
+        { uuid: 'u2', ref: 'C9', models: [line('${KICAD10_3DMODEL_DIR}/C.3dshapes/New.step')], kind: {} },
+      ],
+      embedded: [],
+    });
+    const called: string[] = [];
+    const mod = new Proxy({ kicadBoardModels: () => live }, { get: (t, k) => { called.push(String(k)); return (t as Record<string, unknown>)[k as string]; } });
+    // The saved board names a and b; the live one a and c (c written by the page, never saved) and a library body.
+    const { ctx, files } = fakeCtx({ mod, files: { '/project/b.kicad_pcb': BOARD, '/project/m/a.step': 'A', '/project/m/b.step': 'BB', '/project/m/c.step': 'CCC', '/project/m/hidden.step': 'H' } });
+    expect(await hooks.before?.(run('pcb_render'), ctx)).toBeNull();
+    expect(new TextDecoder().decode(files.get('/pcbjam/3dmodels/kiprjmod/m/a.step'))).toBe('A');
+    expect(new TextDecoder().decode(files.get('/pcbjam/3dmodels/kiprjmod/m/c.step'))).toBe('CCC');
+    expect(files.has('/pcbjam/3dmodels/kiprjmod/m/b.step')).toBe(false);
+    expect(files.has('/pcbjam/3dmodels/kiprjmod/m/hidden.step')).toBe(false);
+    expect(asked).toEqual(['${KICAD10_3DMODEL_DIR}/C.3dshapes/New.step']);
+    expect([...new Set(called.filter((k) => k.startsWith('kicad')))]).toEqual(['kicadBoardModels']);
+  });
+
+  it('stage the saved board\'s lines when the engine cannot read the live ones (no export, busy "", another shape)', async () => {
+    for (const mod of [null, { kicadBoardModels: () => '' }, { kicadBoardModels: () => '{"footprints":3}' }, { kicadBoardModels: () => { throw new Error('gone'); } }]) {
+      const hooks = exportHooksOf({ ensure: () => null, loading: () => null, now: () => 0 });
+      const { ctx, files } = fakeCtx({ mod, files: { '/project/b.kicad_pcb': BOARD, '/project/m/a.step': 'A', '/project/m/b.step': 'BB' } });
+      expect(await hooks.before?.(run('pcb_render'), ctx)).toBeNull();
+      expect(new TextDecoder().decode(files.get('/pcbjam/3dmodels/kiprjmod/m/b.step'))).toBe('BB');
+    }
+  });
+
   it('send cc_occ false with every 3D export while the 3D service is not listed, and never with a render', async () => {
     const hooks = exportHooksOf({ ensure: () => null, loading: () => null, now: () => 0 });
     const mod = jobsOf({ pcb_export_3d: { format: 'step' }, pcb_render: {} });

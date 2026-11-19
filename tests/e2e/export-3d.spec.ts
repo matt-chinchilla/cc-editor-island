@@ -124,3 +124,38 @@ test('the model fixture: its ${KIPRJMOD} body goes into the STEP', async ({ page
   expect((step?.text.match(/MANIFOLD_SOLID_BREP/g) ?? []).length).toBeGreaterThanOrEqual(3);
   checkProgress(await of(page, 'ev.export'));
 });
+
+test('a body given since the last save goes into the STEP: the live board\'s model lines are staged, nothing saved', async ({ page }) => {
+  test.setTimeout(900_000);
+  const listed = await page.request.get('/fixtures/models3d-small/files.json').catch(() => null);
+  test.skip(listed == null || !listed.ok(), 'the fixture models3d-small (unit 3d-i2) is not served here');
+  const caps = await boot(page, 'models3d-small');
+  test.skip(!caps.includes('occ') || !caps.includes('boardModels'), `engine run 15 (caps occ and boardModels) is not served here: caps ${caps.join(' ')}`);
+  const solids = async (): Promise<number> => {
+    const answer = await make(page, { job: 'pcb_export_3d', settings: { format: 'step' } });
+    expect(answer.ok, answer.ok ? '' : `${answer.code}: ${answer.message}`).toBe(true);
+    const step = answer.ok ? answer.files.find((f) => /\.step$/i.test(f.path)) : undefined;
+    return (step?.text.match(/MANIFOLD_SOLID_BREP/g) ?? []).length;
+  };
+  const before = await solids();
+  // The page writes a model file of the design's own (never saved), and gives R1 a second body naming it.
+  const cube = await page.evaluate(async () => (await fetch('/fixtures/models3d-small/cube.step')).text());
+  const request = (op: string, args?: unknown) => page.evaluate(([o, a]) => (window as unknown as Harness).__bridge.request(o as string, a), [op, args] as const);
+  expect(await request('project.write', { files: [{ path: 'added/extra.step', text: cube }] })).toEqual({ written: ['added/extra.step'] });
+  const read = await request('board.models') as { footprints: Array<{ uuid: string; ref: string; models: Array<Record<string, unknown>> }> };
+  const r1 = read.footprints.find((f) => f.ref === 'R1');
+  expect(r1, 'R1 is on the board').toBeDefined();
+  const lines = r1!.models.map(({ found: _f, ...line }) => { void _f; return line; });
+  const extra = { path: '${KIPRJMOD}/added/extra.step', offset: [0, 0, 0], rotate: [0, 0, 0], scale: [1, 1, 1], opacity: 1, show: true };
+  expect(await request('board.setModels', { label: 'Change models', items: [{ uuid: r1!.uuid, models: [...lines, extra] }] })).toEqual({ changed: 1 });
+  const saves = (await of(page, 'ev.saved')).length;
+  const edits = (await of(page, 'ev.edited')).length;
+  expect(await solids(), 'the new body is in the file').toBe(before + 1);
+  // The render and VRML read the bodies the island staged: no warning names the new one.
+  for (const args of [{ job: 'pcb_render', settings: { format: 'png', width: 800, height: 600, quality: 'basic' } }, { job: 'pcb_export_3d', settings: { format: 'vrml' } }]) {
+    const answer = await page.evaluate((a) => (window as unknown as Harness).__bridge.request('project.export', a), args) as { notes: string[] };
+    expect(answer.notes.filter((n) => n.includes('extra.step')), args.job).toEqual([]);
+  }
+  expect((await of(page, 'ev.saved')).length, 'nothing was saved').toBe(saves);
+  expect((await of(page, 'ev.edited')).length, 'the exports changed nothing of the board').toBe(edits);
+});
