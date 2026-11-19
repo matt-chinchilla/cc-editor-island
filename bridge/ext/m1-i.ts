@@ -56,15 +56,20 @@ const states = new WeakMap<ResponderCtx, State>();
 const engineCall = (ctx: ResponderCtx, name: string, ...args: unknown[]): unknown => (ctx.mod()?.[name] as (...a: unknown[]) => unknown)(...args);
 const code = (v: unknown): number => (typeof v === 'number' && Number.isInteger(v) ? v : -1);
 
-/** The menu's point in the frame document's CSS pixels: the engine's is the drawing canvas's own pixels. */
+/**
+ * The menu's point in the frame document's CSS pixels. The engine's point is
+ * the view's own screen point (KIGFX::VIEW::ToScreen), measured from the
+ * drawing canvas's corner in KiCad's logical pixels, which are CSS pixels at
+ * every screen density: it is never scaled by the canvas's backing store,
+ * which is twice the canvas's CSS size from density 1.5 up.
+ */
 export function cssPoint(doc: unknown, at: { x: number; y: number }): { x: number; y: number } {
-  const c = drawingSurface(doc) as (ReturnType<typeof drawingSurface> & { getBoundingClientRect?: () => { left: number; top: number; width: number } }) | null;
+  const c = drawingSurface(doc) as (ReturnType<typeof drawingSurface> & { getBoundingClientRect?: () => { left: number; top: number } }) | null;
   const round = (n: number): number => Math.round(n * 100) / 100;
   if (c == null || typeof c.getBoundingClientRect !== 'function') return at;
   try {
     const r = c.getBoundingClientRect();
-    const s = c.width > 0 && r.width > 0 ? r.width / c.width : 1;
-    return { x: round(r.left + at.x * s), y: round(r.top + at.y * s) };
+    return { x: round(r.left + at.x), y: round(r.top + at.y) };
   } catch { return at; }
 }
 

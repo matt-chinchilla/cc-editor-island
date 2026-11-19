@@ -297,9 +297,14 @@ describe('a right click on run 15: ev.contextMenu', () => {
     expect(t.held()).toBe(0);
   });
 
-  it('maps the canvas point through the drawing canvas\'s rect', () => {
-    const doc = { querySelectorAll: () => [{ width: 2000, height: 1000, getBoundingClientRect: () => ({ left: 10, top: 5, width: 1000 }) }] };
-    expect(cssPoint(doc, { x: 400, y: 100 })).toEqual({ x: 210, y: 55 });
+  it('stands the engine\'s point from the drawing canvas\'s corner, never scaled: it is in CSS pixels at every screen density', () => {
+    // Engine run 15, measured at densities 1, 1.5, 2 and 2.25: a right click at clientX 71, clientY 351 gives the point
+    // 69.82, 349.76 at each of them, while from density 1.5 up the canvas's backing store is twice its CSS size (1472 for
+    // 736). Scaled by that ratio the menu opened at half the pointer's distance into the frame.
+    const doc = { querySelectorAll: () => [{ width: 1472, height: 1898, getBoundingClientRect: () => ({ left: 1, top: 1, width: 736 }) }] };
+    expect(cssPoint(doc, { x: 69.82, y: 349.76 })).toEqual({ x: 70.82, y: 350.76 });
+    const one = { querySelectorAll: () => [{ width: 736, height: 949, getBoundingClientRect: () => ({ left: 1, top: 1, width: 736 }) }] };
+    expect(cssPoint(one, { x: 69.82, y: 349.76 })).toEqual({ x: 70.82, y: 350.76 });
     expect(cssPoint({ querySelectorAll: () => [] }, { x: 4, y: 1 })).toEqual({ x: 4, y: 1 });
   });
 
