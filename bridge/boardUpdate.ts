@@ -8,6 +8,10 @@
 // before it runs; the run writes its report (report.json, the changes as
 // records) when it reached the updater, then .cc-update.json LAST, so the
 // answer waits for the apply queue to empty and for that file.
+// Island v0.2.3-cc25 (unit i-block-layout, engine run 15): the args take
+// KiCad's two group boxes, Keep groups (`transferGroups`) and Apply block
+// layouts (`applyBlockLayouts`, only with the first), and the report then
+// carries the layouts' records; these readers read both forms.
 
 import { readLines, type RunLine } from './annotate';
 import { TEXT_MAX } from './symbol';
@@ -26,8 +30,14 @@ export const MAX_PINS = 4096;
 export const MAX_UPDATE_SHEETS = 4096;
 /** A token is 1 to this many characters. */
 export const TOKEN_MAX = 128;
+/** At most this many layout failures listed in one answer (past it the rest are left out; `applied` is the engine's). */
+export const MAX_LAYOUT_FAILURES = 4096;
 
-export interface BoardOptions { replaceFootprints: boolean; deleteExtra: boolean; relinkByReference: boolean }
+/** KiCad's two group boxes (unit i-block-layout), present only when Keep groups is on. */
+export interface GroupOptions { transferGroups: true; applyBlockLayouts: boolean }
+export interface BoardOptions { replaceFootprints: boolean; deleteExtra: boolean; relinkByReference: boolean; groups?: GroupOptions }
+/** The layouts' records of a run that kept groups: how many groups took their block's layout, and each that did not. */
+export interface BoardLayouts { applied: number; failures: Array<{ uuid: string; reason: string }> }
 export interface BoardUpdateArgs extends BoardOptions { token: string }
 export type UpdateError = '' | 'schematic_unreadable' | 'stale' | 'not_annotated' | 'island_error';
 export interface BoardUpdateDone { error: UpdateError; message: string; lines: RunLine[] }
@@ -57,6 +67,8 @@ export type BoardChange =
 export interface BoardReport {
   run: number; ok: boolean; token: string; blocked: '' | 'not_annotated'; sheets: string[];
   changes: BoardChange[]; added: string[]; warnings: number; errors: number; truncated: boolean; unmapped: number;
+  /** Only in the report of a run that kept groups. */
+  layouts?: BoardLayouts;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -72,27 +84,53 @@ const parseJson = (bytes: Uint8Array): unknown => {
 };
 
 const OPTION_KEYS = ['replaceFootprints', 'deleteExtra', 'relinkByReference'] as const;
-const optionsOf = (o: Record<string, unknown>): BoardOptions | null =>
-  OPTION_KEYS.every((k) => typeof o[k] === 'boolean')
-    ? { replaceFootprints: o.replaceFootprints as boolean, deleteExtra: o.deleteExtra as boolean, relinkByReference: o.relinkByReference as boolean }
-    : null;
-
-/** board.preview's args: exactly the three options, each a boolean; null for anything else. */
-export function parseBoardPreviewArgs(args: unknown): BoardOptions | null {
-  return isObj(args) && exactKeys(args, OPTION_KEYS) ? optionsOf(args) : null;
+const GROUP_KEYS = ['transferGroups', 'applyBlockLayouts'] as const;
+/**
+ * The options read closed: the three, each a boolean, and the group boxes
+ * when sent. `transferGroups` alone or with `applyBlockLayouts`, both
+ * booleans; `applyBlockLayouts` without `transferGroups`, or true beside
+ * `transferGroups` false, is refused (null). Keep groups off leaves no
+ * `groups` (the run is today's, byte for byte). `extra` names the keys
+ * besides these the args must hold exactly.
+ */
+function optionsOf(o: Record<string, unknown>, extra: readonly string[]): BoardOptions | null {
+  const groupKeys = GROUP_KEYS.filter((k) => Object.prototype.hasOwnProperty.call(o, k));
+  if (groupKeys.length === 1 && groupKeys[0] === 'applyBlockLayouts') return null;
+  if (!exactKeys(o, [...OPTION_KEYS, ...groupKeys, ...extra])) return null;
+  if (![...OPTION_KEYS, ...groupKeys].every((k) => typeof o[k] === 'boolean')) return null;
+  const base: BoardOptions = { replaceFootprints: o.replaceFootprints as boolean, deleteExtra: o.deleteExtra as boolean, relinkByReference: o.relinkByReference as boolean };
+  const keep = o.transferGroups === true;
+  const apply = o.applyBlockLayouts === true;
+  if (apply && !keep) return null;
+  return keep ? { ...base, groups: { transferGroups: true, applyBlockLayouts: apply } } : base;
 }
 
-/** board.update's args: the three options and the preview's token (1 to TOKEN_MAX characters); null for anything else. */
+/** Whether the args send either group box (unit i-block-layout's form, gated on the engine's marker). */
+export const sendsGroupKeys = (args: unknown): boolean => isObj(args) && GROUP_KEYS.some((k) => Object.prototype.hasOwnProperty.call(args, k));
+
+/** board.preview's args: exactly the three options, each a boolean, and the group boxes when sent; null for anything else. */
+export function parseBoardPreviewArgs(args: unknown): BoardOptions | null {
+  return isObj(args) ? optionsOf(args, []) : null;
+}
+
+/** board.update's args: the three options, the group boxes when sent, and the preview's token (1 to TOKEN_MAX characters); null for anything else. */
 export function parseBoardUpdateArgs(args: unknown): BoardUpdateArgs | null {
-  if (!isObj(args) || !exactKeys(args, [...OPTION_KEYS, 'token'])) return null;
-  const o = optionsOf(args);
+  if (!isObj(args)) return null;
+  const o = optionsOf(args, ['token']);
   if (o == null || typeof args.token !== 'string' || args.token.length < 1 || [...args.token].length > TOKEN_MAX) return null;
   return { ...o, token: args.token };
 }
 
-/** The args as kicadUpdateBoardFromSchematic reads them: the seven keys, `apply` and the token from whether a token is given. */
-export const boardUpdateJson = (run: number, dir: string, o: BoardOptions, token: string | null): string =>
-  JSON.stringify({ run, dir, apply: token != null, replaceFootprints: o.replaceFootprints, deleteExtra: o.deleteExtra, relinkByReference: o.relinkByReference, token: token ?? '' });
+/**
+ * The args as kicadUpdateBoardFromSchematic reads them: the seven keys,
+ * `apply` and the token from whether a token is given; with Keep groups on,
+ * the nine (engine run 15: `transferGroups` true and
+ * `applyDesignBlockLayouts`, KiCad's own name for the second box).
+ */
+export function boardUpdateJson(run: number, dir: string, o: BoardOptions, token: string | null): string {
+  const seven = { run, dir, apply: token != null, replaceFootprints: o.replaceFootprints, deleteExtra: o.deleteExtra, relinkByReference: o.relinkByReference, token: token ?? '' };
+  return JSON.stringify(o.groups == null ? seven : { ...seven, transferGroups: true, applyDesignBlockLayouts: o.groups.applyBlockLayouts });
+}
 
 /** The schematic the update reads, as a project path: beside the opened board, with its stem. */
 export const schematicBeside = (board: string): string => `${board.replace(/\.kicad_pcb$/i, '')}.kicad_sch`;
@@ -156,6 +194,24 @@ function readChange(v: unknown): BoardChange | null {
 }
 
 const REPORT_KEYS = ['run', 'ok', 'token', 'blocked', 'sheets', 'changes', 'added', 'warnings', 'errors', 'truncated', 'unmapped'] as const;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * The layouts' records read closed, as the update report and the apply
+ * layout record carry them: exactly `{ applied, failures }`, `applied` a
+ * count, each failure exactly `{ uuid, reason }` (a lower case uuid, KiCad's
+ * reason cut at TEXT_MAX). At most MAX_LAYOUT_FAILURES are kept. Null for any
+ * other shape.
+ */
+export function readLayouts(v: unknown): BoardLayouts | null {
+  if (!isObj(v) || !exactKeys(v, ['applied', 'failures']) || !isCount(v.applied) || !Array.isArray(v.failures)) return null;
+  const failures: BoardLayouts['failures'] = [];
+  for (const f of v.failures as unknown[]) {
+    if (!isObj(f) || !exactKeys(f, ['uuid', 'reason']) || typeof f.uuid !== 'string' || !UUID_RE.test(f.uuid) || typeof f.reason !== 'string') return null;
+    if (failures.length < MAX_LAYOUT_FAILURES) failures.push({ uuid: f.uuid, reason: cut(f.reason) });
+  }
+  return { applied: v.applied, failures };
+}
 
 /**
  * report.json (the engine report: run A's design 5.1 and the Update spec 6.4)
@@ -169,7 +225,11 @@ const REPORT_KEYS = ['run', 'ok', 'token', 'blocked', 'sheets', 'changes', 'adde
 export function readBoardReport(bytes: Uint8Array | null, run: number, toRel: (abs: string) => string | null): BoardReport | null {
   if (bytes == null) return null;
   const v = parseJson(bytes);
-  if (!isObj(v) || !exactKeys(v, REPORT_KEYS) || v.run !== run || typeof v.ok !== 'boolean') return null;
+  if (!isObj(v) || v.run !== run || typeof v.ok !== 'boolean') return null;
+  const hasLayouts = Object.prototype.hasOwnProperty.call(v, 'layouts');
+  if (!exactKeys(v, hasLayouts ? [...REPORT_KEYS, 'layouts'] : REPORT_KEYS)) return null;
+  const layouts = hasLayouts ? readLayouts(v.layouts) : null;
+  if (hasLayouts && layouts == null) return null;
   if (typeof v.token !== 'string' || [...v.token].length > TOKEN_MAX || (v.blocked !== '' && v.blocked !== 'not_annotated')) return null;
   if (!isCount(v.warnings) || !isCount(v.errors) || !isCount(v.unmapped) || typeof v.truncated !== 'boolean') return null;
   if (!Array.isArray(v.sheets) || v.sheets.length > MAX_UPDATE_SHEETS || !Array.isArray(v.changes) || !Array.isArray(v.added) || v.added.length > MAX_UPDATE_CHANGES) return null;
@@ -188,16 +248,21 @@ export function readBoardReport(bytes: Uint8Array | null, run: number, toRel: (a
     if (changes.length >= MAX_UPDATE_CHANGES) { truncated = true; continue; }
     changes.push(change);
   }
-  return {
+  const report: BoardReport = {
     run, ok: v.ok, token: v.token, blocked: v.blocked, sheets, changes, added: [...v.added] as string[],
     warnings: v.warnings, errors: v.errors, truncated, unmapped: v.unmapped,
   };
+  return layouts == null ? report : { ...report, layouts };
 }
 
-/** board.preview's answer from a report. */
-export const previewAnswer = (r: BoardReport): Record<string, unknown> =>
-  ({ token: r.token, blocked: r.blocked, sheets: r.sheets, changes: r.changes, warnings: r.warnings, errors: r.errors, truncated: r.truncated, unmapped: r.unmapped });
+/** The layouts beside an answer, when the report carries them. */
+const withLayouts = (answer: Record<string, unknown>, r: BoardReport): Record<string, unknown> =>
+  (r.layouts == null ? answer : { ...answer, layouts: r.layouts });
 
-/** board.update's answer from a report. */
+/** board.preview's answer from a report (with `layouts` when the run kept groups). */
+export const previewAnswer = (r: BoardReport): Record<string, unknown> =>
+  withLayouts({ token: r.token, blocked: r.blocked, sheets: r.sheets, changes: r.changes, warnings: r.warnings, errors: r.errors, truncated: r.truncated, unmapped: r.unmapped }, r);
+
+/** board.update's answer from a report (with `layouts` when the run kept groups). */
 export const updateAnswer = (r: BoardReport): Record<string, unknown> =>
-  ({ changes: r.changes, added: r.added, warnings: r.warnings, errors: r.errors, truncated: r.truncated, unmapped: r.unmapped });
+  withLayouts({ changes: r.changes, added: r.added, warnings: r.warnings, errors: r.errors, truncated: r.truncated, unmapped: r.unmapped }, r);

@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Chirichella Inc.
 import { describe, expect, it } from 'vitest';
 import {
-  boardUpdateJson, MAX_UPDATE_CHANGES, parseBoardPreviewArgs, parseBoardUpdateArgs, previewAnswer, readBoardReport,
-  readBoardUpdateDone, schematicBeside, updateAnswer,
+  boardUpdateJson, MAX_LAYOUT_FAILURES, MAX_UPDATE_CHANGES, parseBoardPreviewArgs, parseBoardUpdateArgs, previewAnswer, readBoardReport,
+  readBoardUpdateDone, readLayouts, schematicBeside, sendsGroupKeys, updateAnswer,
 } from './boardUpdate';
 
 const enc = (s: unknown) => new TextEncoder().encode(typeof s === 'string' ? s : JSON.stringify(s));
@@ -99,5 +99,67 @@ describe('report.json', () => {
     expect(r!.changes).toHaveLength(MAX_UPDATE_CHANGES);
     expect(r!.truncated).toBe(true);
     expect(r!.warnings).toBe(7);
+  });
+});
+
+// Island v0.2.3-cc25 (unit i-block-layout, engine run 15): Keep groups and Apply block layouts.
+const G1 = 'cc0b10c5-0000-4000-8000-000000000a01';
+const KEEP = { transferGroups: true, applyBlockLayouts: true } as const;
+
+describe('the group boxes (unit i-block-layout)', () => {
+  it('a preview and an update take Keep groups alone or with Apply block layouts; Keep groups off is today\'s form', () => {
+    expect(parseBoardPreviewArgs({ ...OPTS, transferGroups: true })).toEqual({ ...OPTS, groups: { transferGroups: true, applyBlockLayouts: false } });
+    expect(parseBoardPreviewArgs({ ...OPTS, ...KEEP })).toEqual({ ...OPTS, groups: KEEP });
+    expect(parseBoardPreviewArgs({ ...OPTS, transferGroups: false })).toEqual(OPTS);
+    expect(parseBoardPreviewArgs({ ...OPTS, transferGroups: false, applyBlockLayouts: false })).toEqual(OPTS);
+    expect(parseBoardUpdateArgs({ ...OPTS, ...KEEP, token: 'abc' })).toEqual({ ...OPTS, groups: KEEP, token: 'abc' });
+    expect(parseBoardUpdateArgs({ ...OPTS, transferGroups: false, token: 'abc' })).toEqual({ ...OPTS, token: 'abc' });
+  });
+
+  it('refuses Apply block layouts without Keep groups, or on beside it off, and any box of another type', () => {
+    for (const extra of [
+      { applyBlockLayouts: true }, { applyBlockLayouts: false }, { transferGroups: false, applyBlockLayouts: true },
+      { transferGroups: 'yes' }, { transferGroups: true, applyBlockLayouts: 1 }, { transferGroups: true, more: true },
+    ]) {
+      expect(parseBoardPreviewArgs({ ...OPTS, ...extra }), JSON.stringify(extra)).toBeNull();
+      expect(parseBoardUpdateArgs({ ...OPTS, ...extra, token: 'abc' }), JSON.stringify(extra)).toBeNull();
+    }
+    expect(parseBoardUpdateArgs({ ...OPTS, ...KEEP })).toBeNull();
+  });
+
+  it('says whether args send either box', () => {
+    expect(sendsGroupKeys(OPTS)).toBe(false);
+    expect(sendsGroupKeys({ ...OPTS, transferGroups: false })).toBe(true);
+    expect(sendsGroupKeys({ ...OPTS, applyBlockLayouts: true })).toBe(true);
+    expect(sendsGroupKeys(null)).toBe(false);
+  });
+
+  it('hands the engine the nine keys with Keep groups on, the second under KiCad\'s own name; the seven with it off', () => {
+    expect(JSON.parse(boardUpdateJson(2, '/tmp/cc-update/2', { ...OPTS, groups: { transferGroups: true, applyBlockLayouts: false } }, null)))
+      .toEqual({ run: 2, dir: '/tmp/cc-update/2', apply: false, ...OPTS, token: '', transferGroups: true, applyDesignBlockLayouts: false });
+    expect(JSON.parse(boardUpdateJson(5, '/tmp/cc-update/5', { ...OPTS, groups: KEEP }, 'tok')))
+      .toEqual({ run: 5, dir: '/tmp/cc-update/5', apply: true, ...OPTS, token: 'tok', transferGroups: true, applyDesignBlockLayouts: true });
+    expect(Object.keys(JSON.parse(boardUpdateJson(5, '/d', parseBoardPreviewArgs({ ...OPTS, transferGroups: false })!, null)))).toHaveLength(7);
+  });
+
+  it('reads a report\'s layouts closed and answers them beside both answers', () => {
+    const layouts = { applied: 1, failures: [{ uuid: G1, reason: 'its layout has no footprint for C2' }] };
+    const r = readBoardReport(enc(report({ layouts })), 3, toRel);
+    expect(r?.layouts).toEqual(layouts);
+    expect(previewAnswer(r!)).toMatchObject({ token: 'a'.repeat(64), layouts });
+    expect(updateAnswer(r!)).toMatchObject({ added: [], layouts });
+    expect(readBoardReport(enc(report({ layouts: { applied: 0, failures: [] } })), 3, toRel)?.layouts).toEqual({ applied: 0, failures: [] });
+    expect('layouts' in previewAnswer(readBoardReport(enc(report()), 3, toRel)!)).toBe(false);
+    for (const bad of [null, {}, { applied: 1 }, { applied: -1, failures: [] }, { applied: 0, failures: [{ uuid: 'G1', reason: 'r' }] }, { applied: 0, failures: [{ uuid: G1, reason: 3 }] }, { applied: 0, failures: [], more: 1 }]) {
+      expect(readBoardReport(enc(report({ layouts: bad })), 3, toRel), JSON.stringify(bad)).toBeNull();
+    }
+  });
+
+  it('cuts a reason at 1,024 characters and keeps at most 4,096 failures', () => {
+    const many = Array.from({ length: MAX_LAYOUT_FAILURES + 2 }, () => ({ uuid: G1, reason: 'r'.repeat(2000) }));
+    const l = readLayouts({ applied: 3, failures: many });
+    expect(l!.failures).toHaveLength(MAX_LAYOUT_FAILURES);
+    expect(l!.failures[0].reason).toHaveLength(1024);
+    expect(l!.applied).toBe(3);
   });
 });
