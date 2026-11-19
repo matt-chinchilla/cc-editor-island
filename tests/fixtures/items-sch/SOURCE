@@ -1,0 +1,38 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (C) 2026 Circuit Center Inc
+
+Written by hand for this repository on 2026-11-19 (CC0 1.0: no rights
+reserved), no third-party content. A KiCad 10 design holding one of every
+schematic item kind that is not a symbol, for sch.item.get, sch.item.set,
+sch.image.place and ev.schItem (unit m5-i, tests/e2e/sch-items.spec.ts).
+The three schematic files were written in KiCad 10's text form and then
+saved once by KiCad's own schematic writer (kicad-cli 10.0 "sch upgrade",
+kicad/kicad:10.0, 2026-11-19), so each is KiCad's normalized form; the
+project file is hand written. The picture is an 8 by 8 PNG made for this
+fixture.
+
+- items-sch.kicad_sch, the root (uuid ...0100): three wires meeting at a
+  junction (...0110, ...0111, ...0112, junction ...0118) with a no connect
+  (...0119) at the free end of the first; a bus (...0115) with a bus entry
+  (...0116), the wire (...0113) and the label D0 (...011c) beside it and the
+  bus label D[0..3] (...011b); the local label IN1 (...011a) on the third
+  wire's end; the global label GOUT (...011e, shape input, its
+  Intersheetrefs field); the hierarchical label HIER (...011f, output); a
+  directive label (...0120, round, its Netclass field Default); a text
+  "Items" (...0121); a text box (...0122); a graphic line (...0123, dashed);
+  a rectangle (...0140); a rule area of four corners (...0141); the picture
+  (...0144); a 2 by 2 table (...012f, cells ...0130 to ...0133 reading A, B,
+  C and empty); the group "Pair" (...0160) of the text and the rectangle;
+  and the sheet "sub" (...0150, file sub.kicad_sch, page 2) with one sheet
+  pin A_PIN (...0151, input, left).
+- sub.kicad_sch (uuid ...0200): the hierarchical label A_PIN (...0201).
+- spare.kicad_sch (uuid ...0300): a file of the project no sheet shows (one
+  text, ...0301), so a sheet's file set to it exists.
+- items-sch.kicad_pro names the root and the sheet sub.
+
+Every uuid above is cc05a11e-0000-4000-8000- followed by the twelve digits
+shown. Read by kicad-cli 10.0 (2026-11-19): both sheets of the hierarchy
+load; ERC reports only the connection findings of a drawing with no parts
+(dangling labels, pins left unconnected, two names on one net). files.json lists what the e2e harness
+opens. The KiCad files carry no comment (their formats have none), so this
+file holds their license.
