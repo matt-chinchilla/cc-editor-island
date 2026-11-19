@@ -1,0 +1,9 @@
+<!-- Copyright (C) 2026 Circuit Center Inc -->
+<!-- SPDX-License-Identifier: MIT -->
+<!-- part: requests -->
+| `board.nets` | none, or `{ nets: string[] }` | `{ nets: [{ name: string, netClass: string, length: number, byLayer: [{ layer: string, length: number }], vias: number, viaLength: number, pads: number, dieLength: number, delay: number \| null }] }` |
+<!-- part: section -->
+### board.nets
+The board's nets with their lengths, read in a `pcb` frame with a board open (island `v0.2.3-cc25`, on an engine with `kicadNetReport`, engine run 15; a host gates it on `ev.ready` `caps` listing `netReport`, listed by `pcb` frames only). No KiCad window opens. The args are none or `{}` (every net but the unconnected one, in KiCad's net code order), or exactly `{ nets }`: 1 to 8,192 names of 1 to 1,024 UTF-8 bytes, each matching a net's stored name or its unescaped form; a name the board lacks is left out of the answer. The checks, in order: the args (`bad_args`); the frame (`unsupported` "a board op runs in a pcb frame"); the engine (`not_ready`, `unsupported` naming `kicadNetReport`); a board open (`not_ready`); a load parked, a popup or a dialog up, or an item hanging off the pointer (`busy`). A read: answered during a `board.check`.
+
+Each row holds the figures of KiCad's own Net Inspector: `name` as the board stores it, `netClass` its human readable name, `length` the routed track length in mm with the inspector's optimizations (vias, merged tracks, the track inside a pad trimmed), so it can be shorter than the plain sum of the segments (on Glasgow GND reads 254.4734 mm where the segments sum to 255.8152 mm), `byLayer` the copper layers that carry length, `vias` and `viaLength`, `pads`, `dieLength` (mm), and `delay` the total in picoseconds or null when the board gives no delay. `busy` when the engine answered nothing (an open began); `island_error` for an answer of another shape.
