@@ -212,7 +212,7 @@ describe('the 3D service provider', () => {
     const staged: unknown[] = [];
     h.setStage(async (input) => {
       staged.push(input);
-      return { models: [{ path: '/pcbjam/3dmodels/R.3dshapes/R.step', bytes: new Uint8Array([7, 7]) }], report: 'Skipped 1 file.' };
+      return { models: [{ path: 'R.3dshapes/R.step', bytes: new Uint8Array([7, 7]) }], report: 'Skipped 1 file.' };
     });
     const run = h.request(exportReq());
     const w = await bootWorker(0);
