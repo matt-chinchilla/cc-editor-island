@@ -14,9 +14,11 @@
 // kicadBoardVerticesSet in a board frame: the corners of a zone, a rule area or
 // a polygon shape, as KiCad's vertex editor pane lists them, and one corner
 // moved per call, one undo step ("Edit Vertex"), answered at once with the
-// item read back. KiCad's Edit Corners (that pane, KiCad chrome) is held under
-// the cap vertices: the frame sends ev.held and the host opens the board
-// form's Corners block over board.vertices.get.
+// item read back. Engine fix e10-3 (builds T9 and later) serves the footprint
+// editor frame the same way, the item of the open footprint. KiCad's Edit
+// Corners (that pane, KiCad chrome) is held under the cap vertices in both
+// frames: the frame sends ev.held and the host opens its Corners block over
+// board.vertices.get.
 import { fail, hasAll, ok, refused, type Answer, type ExtUnit, type HeldRow, type ResponderCtx } from './contract';
 import { BOARD_ASK_READERS, BOARD_ASKS } from './m3-i/asks';
 import { cornerAt, lineOf, parseVerticesGet, parseVerticesSet, readVertices, type VertexRecord } from './m3-i/vertices';
@@ -25,13 +27,15 @@ import { cornerAt, lineOf, parseVerticesGet, parseVerticesSet, readVertices, typ
 export const VERTICES_CAP = 'vertices';
 /** The engine exports the cap and the ops need (engine run 15, unit m3-e3). */
 export const VERTICES_EXPORTS = ['kicadBoardVerticesGet', 'kicadBoardVerticesSet'] as const;
+/** The frames whose engine reads corners: the board, and the footprint editor (engine fix e10-3). */
+export const VERTICES_FRAMES = ['pcb', 'fpedit'] as const;
+const FPEDIT = 'fpedit';
 /** KiCad's Edit Corners, held: the host opens the board form's Corners block. */
 export const EDIT_VERTICES = 'pcbnew.InteractiveEdit.editVertices';
 /**
  * The row names the board and the footprint editor, as KiCad's menus show
- * Edit Corners in both; the cap is listed only where the engine reads corners
- * (a board frame: in the footprint editor kicadBoardVerticesGet answers ""),
- * so in the footprint editor the row waits and no door is offered there.
+ * Edit Corners in both; the cap is listed in each where the engine has both
+ * exports, so the action is held there exactly as on the board.
  */
 export const M3_HELD_ROWS: readonly HeldRow[] = Object.freeze([
   Object.freeze({ action: EDIT_VERTICES, frames: Object.freeze(['pcb', 'fpedit']), cap: VERTICES_CAP }),
@@ -48,12 +52,33 @@ function readNow(op: string, mod: Record<string, unknown>, uuid: string): Vertex
 }
 const isAnswer = (v: unknown): v is Answer => typeof v === 'object' && v !== null && 'ok' in v;
 
+/**
+ * The checks both ops make after their args, each before any effect. In a pcb
+ * frame the board gate. In an fpedit frame the same checks in the same order
+ * over the footprint editor: the engine up (not_ready), each export
+ * (unsupported naming the first missing), a footprint open (not_ready), busy
+ * while a load is parked, a popup menu or a dialog is up, or a placed item
+ * hangs off the pointer.
+ */
+function cornersGate(op: string, ctx: ResponderCtx): Answer | { mod: Record<string, unknown> } {
+  if ((ctx.frame as string) !== FPEDIT) {
+    const g = ctx.boardGate(op, VERTICES_EXPORTS);
+    return refused(g) ? g : { mod: g.mod };
+  }
+  const mod = ctx.win() == null ? null : ctx.mod();
+  if (mod == null) return fail('not_ready', op);
+  for (const name of VERTICES_EXPORTS) if (typeof mod[name] !== 'function') return fail('unsupported', name);
+  if (!ctx.admit()) return fail('not_ready', op);
+  if (ctx.engineBusy() || ctx.keysBlocked() || ctx.placeHanging()) return fail('busy', op);
+  return { mod };
+}
+
 export default {
   unit: 'm3-i',
-  frames: ['pcb'],
-  frameRefusal: 'board corners are read in a pcb frame',
+  frames: [...VERTICES_FRAMES],
+  frameRefusal: 'board corners are read in a pcb or an fpedit frame',
   capNames: [VERTICES_CAP],
-  caps: (mod, frame) => (frame === 'pcb' && hasAll(mod, VERTICES_EXPORTS) ? [VERTICES_CAP] : []),
+  caps: (mod, frame) => ((VERTICES_FRAMES as readonly string[]).includes(frame) && hasAll(mod, VERTICES_EXPORTS) ? [VERTICES_CAP] : []),
   held: M3_HELD_ROWS.map((r) => r.action),
   heldRows: M3_HELD_ROWS,
   asks: [...BOARD_ASKS],
@@ -66,8 +91,8 @@ export default {
         const op = 'board.vertices.get';
         const a = parseVerticesGet(args);
         if (a == null) return fail('bad_args', op);
-        const g = ctx.boardGate(op, VERTICES_EXPORTS);
-        if (refused(g)) return g;
+        const g = cornersGate(op, ctx);
+        if (isAnswer(g)) return g;
         const r = readNow(op, g.mod, a.uuid);
         if (r == null) return fail('not_found', a.uuid);
         if (isAnswer(r)) return r;
@@ -79,8 +104,8 @@ export default {
         const op = 'board.vertices.set';
         const s = parseVerticesSet(args);
         if (s == null) return fail('bad_args', op);
-        const g = ctx.boardGate(op, VERTICES_EXPORTS);
-        if (refused(g)) return g;
+        const g = cornersGate(op, ctx);
+        if (isAnswer(g)) return g;
         // The corner must be one the item holds: read it first, so a wrong
         // index is the host's fault, named, and the engine is never asked.
         const before = readNow(op, g.mod, s.uuid);

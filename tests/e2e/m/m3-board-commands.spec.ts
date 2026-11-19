@@ -61,6 +61,10 @@ const ID = {
   TEXT_BOX: 'cc0ca4d5-0000-4000-8000-00000000033a',
 } as const;
 
+/** The footprint editor's polygon (written into the SOIC by the fpedit test) and its corners, in mm. */
+const FP_POLY = 'f9ed1700-0000-4000-8000-0000000010f0';
+const FP_POLY_CORNERS = [{ x: 5, y: 5 }, { x: 7, y: 5 }, { x: 7, y: 7 }, { x: 5, y: 7 }];
+
 /** Top level items in the saved board, as KiCad writes them (one tab, then the token). */
 const TOP = {
   line: /^\t\(gr_line$/gm,
@@ -696,18 +700,45 @@ test.describe('engine run 15: every board canvas command once, no window', () =>
     ], [ID.TRACK_A]);
   });
 
-  test('The footprint editor: Duplicate and Increment pads; Edit Corners keeps no door there', async ({ page }) => {
+  test('The footprint editor: Duplicate and Increment pads; Corners read and moved, Edit Corners held as on the board', async ({ page }) => {
     await page.goto('/parent.html?frame=fpedit');
     await page.waitForFunction(() => (window as unknown as Harness).__events.some((e) => e.type === 'ev.ready' || (e.type === 'ev.state' && /blocked|fatal/.test(String((e as { phase?: string }).phase)))), null, { timeout: 170_000 });
     const caps = (await of(page, 'ev.ready'))[0]?.caps ?? [];
     test.skip(!caps.includes('fpedit') || !caps.includes('contextMenu'), RUN15);
-    // The footprint editor reads no corners: vertices is never listed here.
-    expect(caps).not.toContain('vertices');
+    // Engine fix e10-3 (builds T9 and later): the footprint editor reads corners, so vertices is listed here.
+    expect(caps).toContain('vertices');
     const soic = await page.evaluate(async () => (await fetch('/fixtures/fpedit-small/fpedit-small_parts.pretty/SOIC-8_3.9x4.9mm_P1.27mm.kicad_mod')).text());
-    expect((await request(page, 'fpedit.open', { text: soic, name: 'SOIC-8_3.9x4.9mm_P1.27mm', lib: 'fpedit-small_parts', mode: 'library', discard: true })).error).toBeUndefined();
+    // The SOIC with one polygon of four corners on F.Fab beside the body (written here, as KiCad 10 writes an fp_poly).
+    const withPoly = soic.replace(/\)\s*$/, `\t(fp_poly\n\t\t(pts\n${FP_POLY_CORNERS.map((p) => `\t\t\t(xy ${p.x} ${p.y})\n`).join('')}\t\t)\n\t\t(stroke\n\t\t\t(width 0.1)\n\t\t\t(type solid)\n\t\t)\n\t\t(fill no)\n\t\t(layer "F.Fab")\n\t\t(uuid "${FP_POLY}")\n\t)\n)\n`);
+    expect((await request(page, 'fpedit.open', { text: withPoly, name: 'SOIC-8_3.9x4.9mm_P1.27mm', lib: 'fpedit-small_parts', mode: 'library', discard: true })).error).toBeUndefined();
     await page.waitForTimeout(800);
+    // Corners: the polygon read, one corner moved in one undo step, the read back, Ctrl+Z back to the start.
+    const poly = await corners(page, FP_POLY);
+    expect(poly).toEqual({ uuid: FP_POLY, kind: 'polygon', outlines: [{ outline: 0, hole: -1, points: FP_POLY_CORNERS }] });
+    expect(await request(page, 'board.vertices.get', { uuid: 'f9ed1700-0000-4000-8000-00000000100b' }))
+      .toEqual({ error: { code: 'not_found', message: 'f9ed1700-0000-4000-8000-00000000100b' } });
+    const cornerEdited0 = await countOf(page, 'ev.edited');
+    const moved = await request(page, 'board.vertices.set', { uuid: FP_POLY, outline: 0, hole: -1, index: 2, x: 7.5, y: 7.25 });
+    expect(moved.error).toBeUndefined();
+    expect((moved.outlines as Array<{ points: unknown[] }>)[0].points[2]).toEqual({ x: 7.5, y: 7.25 });
+    await expect.poll(async () => (await countOf(page, 'ev.edited')) - cornerEdited0, { timeout: 10_000 }).toBe(1);
+    expect(await corners(page, FP_POLY)).toEqual(moved);
+    await noWindow(page, 'board.vertices.set in the footprint editor');
+    await undoStep(page, cornerEdited0, 'board.vertices.set in the footprint editor');
+    expect(await corners(page, FP_POLY)).toEqual(poly);
+    measure('fpedit corners', 'get, set one step, undo: as on the board');
+    // Edit Corners: action.run refuses it as held, our menu holds it (ev.held); KiCad's pane never shows.
+    await select(page, [FP_POLY]);
     expect(await request(page, 'action.run', { name: 'pcbnew.InteractiveEdit.editVertices' }))
-      .toMatchObject({ error: { code: 'unsupported' } });
+      .toEqual({ error: { code: 'held', message: 'pcbnew.InteractiveEdit.editVertices' } });
+    const held0 = await countOf(page, 'ev.held');
+    const menu = await rightClick(page);
+    const item = await chooseFrom(page, menu, 'pcbnew.InteractiveEdit.editVertices');
+    expect(item.door).toBe('held');
+    await expect.poll(async () => (await of(page, 'ev.held')).slice(held0).map((e) => e.action), { timeout: 10_000 }).toEqual(['pcbnew.InteractiveEdit.editVertices']);
+    await noWindow(page, 'editVertices in the footprint editor');
+    await escape(page);
+    await select(page, []);
     const pads0 = Number((await request(page, 'fpedit.state')).padCount);
     expect(await request(page, 'select', { uuids: ['f9ed1700-0000-4000-8000-00000000100b'], zoom: true })).toEqual({});
     await page.waitForTimeout(500);

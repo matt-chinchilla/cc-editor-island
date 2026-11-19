@@ -34,17 +34,32 @@ function engine(over: Record<string, unknown> = {}) {
   };
 }
 
-/** A ctx over a fake engine module; the board gate answers as the responder's does for an open, idle board. */
-function fakeCtx(mod: Record<string, unknown>, state: Partial<{ busy: boolean; doc: boolean; frame: string }> = {}) {
-  const s = { busy: false, doc: true, frame: 'pcb', ...state };
-  const boardGate = (op: string, exports: readonly string[]) => {
+/**
+ * A ctx over a fake engine module; the board gate answers as the responder's
+ * does for an open, idle board. In an fpedit frame the unit makes its own
+ * checks over the ctx's reads: `doc` is a footprint open (admit), `busy` a
+ * load parked, `keys` a popup menu or a dialog up, `hanging` a placed item on
+ * the pointer, `up` the engine up.
+ */
+function fakeCtx(mod: Record<string, unknown>, state: Partial<{ busy: boolean; doc: boolean; frame: string; keys: boolean; hanging: boolean; up: boolean }> = {}) {
+  const s = { busy: false, doc: true, frame: 'pcb', keys: false, hanging: false, up: true, ...state };
+  const boardGate = vi.fn((op: string, exports: readonly string[]) => {
     if (s.frame !== 'pcb') return fail('unsupported', 'a pcb frame');
     for (const n of exports) if (typeof mod[n] !== 'function') return fail('unsupported', n);
     if (!s.doc) return fail('not_ready', op);
     if (s.busy) return fail('busy', op);
     return { w: {} as never, mod };
-  };
-  return { frame: s.frame, mod: () => mod, boardGate } as unknown as ResponderCtx;
+  });
+  return {
+    frame: s.frame,
+    win: () => (s.up ? {} : null),
+    mod: () => (s.up ? mod : null),
+    admit: () => s.doc,
+    engineBusy: () => s.busy,
+    keysBlocked: () => s.keys,
+    placeHanging: () => s.hanging,
+    boardGate,
+  } as unknown as ResponderCtx;
 }
 const run = (op: string, args: unknown, ctx: ResponderCtx): Promise<Answer> => Promise.resolve((unit as ExtUnit).ops![op].run(args, ctx));
 const get = (args: unknown, ctx: ResponderCtx) => run('board.vertices.get', args, ctx);
@@ -77,6 +92,11 @@ describe('the unit in the registry', () => {
     // Without the cap the item has no door and our menu leaves it out.
     expect(doorOf(EDIT_VERTICES, 'pcb', [], union)).toBeNull();
     expect(heldTaken(EDIT_VERTICES, 'sch', [VERTICES_CAP], union)).toBe(false);
+    // The footprint editor takes it the same way once its frame lists the cap.
+    expect(heldTaken(EDIT_VERTICES, 'fpedit', [VERTICES_CAP], union)).toBe(true);
+    expect(heldTaken(EDIT_VERTICES, 'fpedit', [], union)).toBe(false);
+    expect(doorOf(EDIT_VERTICES, 'fpedit', [VERTICES_CAP], union)).toBe('held');
+    expect(doorOf(EDIT_VERTICES, 'fpedit', [], union)).toBeNull();
     expect(doorRow(EDIT_VERTICES)?.door).toBe('held');
     // The board's windows open the asks through the prompt host.
     expect(doorRow('pcbnew.Convert.convertToPoly')?.door).toBe('prompt:convert');
@@ -86,14 +106,17 @@ describe('the unit in the registry', () => {
 });
 
 describe('vertices, feature detected', () => {
-  it('lists the cap in a pcb frame only with both exports', () => {
+  it('lists the cap in a pcb and an fpedit frame, each only with both exports', () => {
     const caps = unit.caps!;
-    expect(caps(engine(), 'pcb')).toEqual([VERTICES_CAP]);
-    // The footprint editor's engine answers "" for corners: the cap is not listed there.
-    for (const f of ['sch', 'symedit', 'fpedit', 'ds']) expect(caps(engine(), f as never)).toEqual([]);
-    expect(caps({ kicadBoardVerticesGet: () => '' }, 'pcb')).toEqual([]);
-    expect(caps({}, 'pcb')).toEqual([]);
+    // Engine fix e10-3 (builds T9 and later) reads corners in the footprint editor as on the board.
+    for (const f of ['pcb', 'fpedit']) {
+      expect(caps(engine(), f as never)).toEqual([VERTICES_CAP]);
+      expect(caps({ kicadBoardVerticesGet: () => '' }, f as never)).toEqual([]);
+      expect(caps({}, f as never)).toEqual([]);
+    }
+    for (const f of ['sch', 'symedit', 'ds']) expect(caps(engine(), f as never)).toEqual([]);
     expect(VERTICES_EXPORTS).toEqual(['kicadBoardVerticesGet', 'kicadBoardVerticesSet']);
+    expect((unit as ExtUnit).frames).toEqual(['pcb', 'fpedit']);
   });
 
   it('on an engine without the exports (run 14) both ops answer unsupported naming the first missing', async () => {
@@ -107,6 +130,42 @@ describe('vertices, feature detected', () => {
     expect(await set(SET, fakeCtx(mod, { doc: false }))).toEqual(fail('not_ready', 'board.vertices.set'));
     expect(await get({ uuid: ZONE }, fakeCtx(mod, { frame: 'sch' }))).toEqual(fail('unsupported', 'a pcb frame'));
     expect(mod.kicadBoardVerticesGet).not.toHaveBeenCalled();
+    expect(mod.kicadBoardVerticesSet).not.toHaveBeenCalled();
+  });
+});
+
+describe('the footprint editor (fpedit)', () => {
+  const fp = (mod: Record<string, unknown>, state: Partial<{ busy: boolean; doc: boolean; keys: boolean; hanging: boolean; up: boolean }> = {}) => fakeCtx(mod, { frame: 'fpedit', ...state });
+
+  it('reads and moves a corner of the open footprint\'s item as on the board, never through the board gate', async () => {
+    const mod = engine();
+    const ctx = fp(mod);
+    expect(await get({ uuid: ZONE }, ctx)).toEqual({ ok: true, result: RECORD });
+    const moved = await set(SET, ctx);
+    expect(moved.ok).toBe(true);
+    expect(mod.kicadBoardVerticesSet).toHaveBeenCalledWith(JSON.stringify(SET));
+    expect((ctx as unknown as { boardGate: ReturnType<typeof vi.fn> }).boardGate).not.toHaveBeenCalled();
+    const other = 'cc0ca4d5-0000-4000-8000-000000000399';
+    expect(await get({ uuid: other }, ctx)).toEqual(fail('not_found', other));
+  });
+
+  it('checks in the board gate\'s order, each before the engine: the engine up, its exports, a footprint open, busy', async () => {
+    const mod = engine();
+    expect(await get({ uuid: ZONE }, fp(mod, { up: false }))).toEqual(fail('not_ready', 'board.vertices.get'));
+    expect(await get({ uuid: ZONE }, fp({}))).toEqual(fail('unsupported', 'kicadBoardVerticesGet'));
+    expect(await set(SET, fp({ kicadBoardVerticesGet: () => '' }, { doc: false }))).toEqual(fail('unsupported', 'kicadBoardVerticesSet'));
+    expect(await get({ uuid: ZONE }, fp(mod, { doc: false }))).toEqual(fail('not_ready', 'board.vertices.get'));
+    expect(await set(SET, fp(mod, { busy: true }))).toEqual(fail('busy', 'board.vertices.set'));
+    expect(await set(SET, fp(mod, { keys: true }))).toEqual(fail('busy', 'board.vertices.set'));
+    expect(await get({ uuid: ZONE }, fp(mod, { hanging: true }))).toEqual(fail('busy', 'board.vertices.get'));
+    expect(await get({ uuid: 'nope' }, fp(mod))).toEqual(fail('bad_args', 'board.vertices.get'));
+    expect(mod.kicadBoardVerticesGet).not.toHaveBeenCalled();
+    expect(mod.kicadBoardVerticesSet).not.toHaveBeenCalled();
+  });
+
+  it('a corner the item lacks is named and never sent there either', async () => {
+    const mod = engine();
+    expect(await set({ ...SET, index: 9 }, fp(mod))).toEqual(fail('bad_args', 'board.vertices.set: the outline has no corner 9'));
     expect(mod.kicadBoardVerticesSet).not.toHaveBeenCalled();
   });
 });
