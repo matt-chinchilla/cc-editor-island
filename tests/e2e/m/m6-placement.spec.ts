@@ -277,8 +277,8 @@ test.describe('engine run 15: the placement asks and the selection filter, no wi
     await page.mouse.click(c.x, c.y);
     const rec = await updateOf(page, p, updates0, 'the picked center');
     const circ = rec.circular as Rec;
-    measure('array center', `picked ${String(circ.centreX)}, ${String(circ.centreY)}; U1 at ${String(u1.x)}, ${String(u1.y)}`);
-    expect(near(circ.centreX, Number(u1.x), 5) && near(circ.centreY, Number(u1.y), 5), 'the center picked on U1').toBe(true);
+    measure('array center', `picked ${String(circ.centerX)}, ${String(circ.centerY)}; U1 at ${String(u1.x)}, ${String(u1.y)}`);
+    expect(near(circ.centerX, Number(u1.x), 5) && near(circ.centerY, Number(u1.y), 5), 'the center picked on U1').toBe(true);
     expect(await answer(page, p, { shape: 'circular', arrangeSelection: false, circular: { count: 6, angle: 60 } })).toEqual({ accepted: true });
     await oneEdit(page, edited0, 'array');
     // KiCad counts the original as the circle's first point.

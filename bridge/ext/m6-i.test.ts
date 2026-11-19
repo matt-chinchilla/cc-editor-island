@@ -24,10 +24,10 @@ const ARRAY = {
   uniqueReferences: true,
   padNumbering: false,
   grid: {
-    nx: 5, ny: 5, dx: 2.54, dy: 2.54, offsetX: 0, offsetY: 0, centred: true, stagger: 1, staggerRows: true, horizontalThenVertical: true,
+    nx: 5, ny: 5, dx: 2.54, dy: 2.54, offsetX: 0, offsetY: 0, centered: true, stagger: 1, staggerRows: true, horizontalThenVertical: true,
     reverseNumberingAlternate: false, numberingStartSpecified: true, numbering2d: false, primary: AXIS, secondary: AXIS,
   },
-  circular: { centreX: 0, centreY: 0, angle: 90, angleOffset: 0, clockwise: true, count: 4, rotateItems: false, numberingStartSpecified: true, axis: AXIS },
+  circular: { centerX: 0, centerY: 0, angle: 90, angleOffset: 0, clockwise: true, count: 4, rotateItems: false, numberingStartSpecified: true, axis: AXIS },
 };
 const RELATIVE = { anchor: { kind: 'item', x: 120.5, y: 80, label: 'Reference item: U1' }, x: 5, y: 0 };
 const FILTER_SEL = Object.fromEntries(FILTER_SELECTION_KEYS.map((k) => [k, true]));
@@ -150,6 +150,12 @@ describe('the ask records, read closed', () => {
       expect(readArray({ ...ARRAY, circular: { ...ARRAY.circular, axis: { ...AXIS, type, start: 'A' } } })).not.toBeNull();
     }
     expect(readArray({ ...ARRAY, shape: 'polar' })).toBeNull();
+    // RULINGS 33a: the engine's keys are spelled centerX, centerY and centered (engine fix e2-1); the old spelling is no alias.
+    const old = (k: string) => k.replace('ter', 'tre');
+    const { centerX, centerY, ...circularRest } = ARRAY.circular;
+    expect(readArray({ ...ARRAY, circular: { ...circularRest, [old('centerX')]: centerX, [old('centerY')]: centerY } })).toBeNull();
+    const { centered, ...gridRest } = ARRAY.grid;
+    expect(readArray({ ...ARRAY, grid: { ...gridRest, [old('centered').replace('treed', 'tred')]: centered } })).toBeNull();
     expect(readArray({ ...ARRAY, grid: { ...ARRAY.grid, nx: 2.5 } })).toBeNull();
     expect(readArray({ ...ARRAY, grid: { ...ARRAY.grid, extra: 1 } })).toBeNull();
     expect(readArray({ ...ARRAY, grid: { ...ARRAY.grid, primary: { ...AXIS, type: 'roman' } } })).toBeNull();

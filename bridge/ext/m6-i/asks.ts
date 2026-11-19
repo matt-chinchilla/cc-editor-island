@@ -76,7 +76,7 @@ function readAxis(a: unknown): Record<string, unknown> | null {
 }
 
 const GRID_KEYS = [
-  'nx', 'ny', 'dx', 'dy', 'offsetX', 'offsetY', 'centred', 'stagger', 'staggerRows', 'horizontalThenVertical',
+  'nx', 'ny', 'dx', 'dy', 'offsetX', 'offsetY', 'centered', 'stagger', 'staggerRows', 'horizontalThenVertical',
   'reverseNumberingAlternate', 'numberingStartSpecified', 'numbering2d', 'primary', 'secondary',
 ] as const;
 
@@ -84,7 +84,7 @@ function readGrid(g: unknown): Record<string, unknown> | null {
   if (!isObj(g) || !exact(g, GRID_KEYS)) return null;
   if (!isWhole(g.nx) || !isWhole(g.ny) || !isWhole(g.stagger)) return null;
   if (!isLength(g.dx) || !isLength(g.dy) || !isLength(g.offsetX) || !isLength(g.offsetY)) return null;
-  for (const k of ['centred', 'staggerRows', 'horizontalThenVertical', 'reverseNumberingAlternate', 'numberingStartSpecified', 'numbering2d'] as const) {
+  for (const k of ['centered', 'staggerRows', 'horizontalThenVertical', 'reverseNumberingAlternate', 'numberingStartSpecified', 'numbering2d'] as const) {
     if (!isBool(g[k])) return null;
   }
   const primary = readAxis(g.primary);
@@ -95,11 +95,11 @@ function readGrid(g: unknown): Record<string, unknown> | null {
   return { ...out, primary, secondary };
 }
 
-const CIRCULAR_KEYS = ['centreX', 'centreY', 'angle', 'angleOffset', 'clockwise', 'count', 'rotateItems', 'numberingStartSpecified', 'axis'] as const;
+const CIRCULAR_KEYS = ['centerX', 'centerY', 'angle', 'angleOffset', 'clockwise', 'count', 'rotateItems', 'numberingStartSpecified', 'axis'] as const;
 
 function readCircular(c: unknown): Record<string, unknown> | null {
   if (!isObj(c) || !exact(c, CIRCULAR_KEYS)) return null;
-  if (!isLength(c.centreX) || !isLength(c.centreY) || !isAngle(c.angle) || !isAngle(c.angleOffset) || !isWhole(c.count)) return null;
+  if (!isLength(c.centerX) || !isLength(c.centerY) || !isAngle(c.angle) || !isAngle(c.angleOffset) || !isWhole(c.count)) return null;
   if (!isBool(c.clockwise) || !isBool(c.rotateItems) || !isBool(c.numberingStartSpecified)) return null;
   const axis = readAxis(c.axis);
   if (axis == null) return null;
