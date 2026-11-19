@@ -70,11 +70,15 @@ for (const frame of ['sch', 'pcb'] as const) {
       expect(await request(page, 'paths.set', { vars: { MYLIB: 'mylib' } })).toEqual({ set: ['MYLIB'] });
       measure('paths.set', `${Date.now() - t0} ms`);
 
-      // Add, remove, add again: the run time row of the symbol library.
+      // Add, remove, add again: the run time row of the frame's own kind (each engine removes only the rows it added
+      // since its boot: the schematic engine its symbol row, the board engine its footprint row).
+      const own = frame === 'sch' ? 'symbol' : 'footprint';
       t0 = Date.now();
-      expect(await request(page, 'libs.remove', { kind: 'symbol', nickname: 'MyLib' })).toEqual({});
-      measure('libs.remove', `${Date.now() - t0} ms`);
-      expect(await refusal(page, 'libs.remove', { kind: 'symbol', nickname: 'MyLib' })).toBe('not_found: MyLib');
+      expect(await request(page, 'libs.remove', { kind: own, nickname: 'MyLib' })).toEqual({});
+      measure('libs.remove', `${own} ${Date.now() - t0} ms`);
+      expect(await refusal(page, 'libs.remove', { kind: own, nickname: 'MyLib' })).toBe('not_found: MyLib');
+      // A board engine never holds a symbol row of the project's (seen on engine build T3).
+      if (frame === 'pcb') expect(await refusal(page, 'libs.remove', { kind: 'symbol', nickname: 'MyLib' })).toBe('not_found: MyLib');
       expect(await request(page, 'project.libs', { libs: ['MyLib'] })).toEqual({ symbol: ['MyLib'], footprint: ['MyLib'], block: [] });
 
       // A block row answers under block, and comes off again.
