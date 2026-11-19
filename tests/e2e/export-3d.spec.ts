@@ -52,13 +52,17 @@ function checkProgress(evs: Ev[]): void {
   for (let i = 1; i < evs.length; i++) expect(evs[i].at - evs[i - 1].at).toBeGreaterThanOrEqual(240);
 }
 
-/** What each 3D format's file starts with (or, for STL, its binary size rule). */
+/** What each 3D format's file starts with (or, for a binary STL, its size rule). */
 function checkFormat(format: string, f: Made['files'][number]): void {
   const starts: Record<string, string> = { glb: 'glTF', ply: 'ply', u3d: 'U3D', pdf: '%PDF', step: 'ISO-10303-21', stpz: '\x1f\x8b', vrml: '#VRML V2.0' };
   if (format in starts) expect(f.head.startsWith(starts[format]), `${format} ${f.path}`).toBe(true);
   if (format === 'stl') {
-    const n = f.head.charCodeAt(80) | (f.head.charCodeAt(81) << 8) | (f.head.charCodeAt(82) << 16) | (f.head.charCodeAt(83) << 24);
-    expect(f.bytes, f.path).toBe(84 + 50 * n);
+    // KiCad writes STL through OpenCASCADE's StlAPI_Writer, whose default is ASCII ("solid ..."); a
+    // binary STL is 84 bytes and 50 a triangle.
+    if (!f.head.startsWith('solid')) {
+      const n = f.head.charCodeAt(80) | (f.head.charCodeAt(81) << 8) | (f.head.charCodeAt(82) << 16) | (f.head.charCodeAt(83) << 24);
+      expect(f.bytes, f.path).toBe(84 + 50 * n);
+    }
   }
   // The engine fails a run that leaves an empty file, and a VRML file of 64 bytes or less (a header alone).
   expect(f.bytes, `${format} ${f.path}`).toBeGreaterThan(format === 'vrml' ? 64 : 0);
