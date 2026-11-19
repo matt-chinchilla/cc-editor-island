@@ -1727,6 +1727,34 @@ describe('ev.edited', () => {
     expect(got[sent]).toEqual({ type: 'ev.edited', depth: 1 });
   });
 
+  it('reads the depth after each answered request too: an undo and an edit back to the same depth during back to back requests are each sent', async () => {
+    const { eng, undo, port, got, request, edited } = edits('?frame=pcb&theme=day');
+    expect(await request('project.open', { name: 'x', files: [{ path: 'b.kicad_pcb', bytes: b('(kicad_pcb)') }] })).toMatchObject({ ok: true });
+    undo.depth = 5;
+    await settle(40);
+    expect(edited()).toEqual([{ type: 'ev.edited', depth: 5 }]);
+    // A host whose requests follow each other with no gap: one is always in
+    // flight, so the timed read never runs. During the first the reader undoes
+    // (5 to 4), during the second makes a new edit (back to 5).
+    const steps = [4, 5];
+    eng.Module.kicadSaveBoard.mockImplementation(async (p: string) => {
+      undo.depth = steps.shift() ?? undo.depth;
+      await settle(30);
+      eng.files.set(p, b('(kicad_pcb saved)'));
+      return undefined;
+    });
+    port.postMessage({ id: 21, op: 'project.save' });
+    port.postMessage({ id: 22, op: 'project.save' });
+    for (let i = 0; i < 40 && !got.some((m) => m.id === 22); i++) await settle(5);
+    expect(got.find((m) => m.id === 22)).toMatchObject({ ok: true });
+    await settle(5);
+    expect(edited()).toEqual([{ type: 'ev.edited', depth: 5 }, { type: 'ev.edited', depth: 4 }, { type: 'ev.edited', depth: 5 }]);
+    // Each read follows its own request's answer.
+    const at = (pred: (m: Record<string, unknown>) => boolean) => got.findIndex(pred);
+    expect(at((m) => m.id === 21)).toBeLessThan(at((m) => m.type === 'ev.edited' && m.depth === 4));
+    expect(at((m) => m.type === 'ev.edited' && m.depth === 4)).toBeLessThan(at((m) => m.id === 22));
+  });
+
   it('ignores a read that throws or answers anything but a whole number of at least 0', async () => {
     const { undo, depthFn, request, edited } = edits();
     await request('project.open', OPEN);

@@ -695,6 +695,14 @@ export function startResponder(opts: {
   let editDepth: number | null = null;
   /** Stops the undo depth poll (ev.edited); set by engineReady when the engine has the export. */
   let stopEdits: (() => void) | null = null;
+  /**
+   * One ev.edited read right after a request's answer (set with stopEdits):
+   * the state is settled between two requests, so it is read then too, even
+   * with more requests queued, and a host whose requests follow each other
+   * with no gap still hears each change (an undo, then an edit back to the
+   * same depth).
+   */
+  let readEditsNow: (() => void) | null = null;
   /** The libraries the picker's ops read (the source boot chose, and the mirror when there is one); set by engineReady. */
   let libs: PickerLibs | null = null;
   /** Library nicknames to the source's ids (src/picker.ts libIds). */
@@ -849,7 +857,7 @@ export function startResponder(opts: {
       inFlight += 1;
       const next = (): Promise<void> => handle(m.data)
         .catch((err: unknown) => answerIslandError(m.data, err))
-        .finally(() => { inFlight -= 1; });
+        .finally(() => { inFlight -= 1; readEditsNow?.(); });
       chain = chain.then(next, next);
     };
     for (const ev of queued.splice(0)) { if (ev.type === EXT_POST) postExt(ev); else emit(ev); }
@@ -1033,6 +1041,7 @@ export function startResponder(opts: {
     selectionFeed = null;
     stopEdits?.();
     stopEdits = null;
+    readEditsNow = null;
     editDepth = null;
     stopMenus?.();
     stopMenus = null;
@@ -1103,12 +1112,13 @@ export function startResponder(opts: {
 
   /**
    * One ev.edited read (PROTOCOL.md): only while a document is open, no
-   * request is in flight (an import included), no load is parked and no dialog
+   * request is in flight (an import included) or `settled` (a request was just
+   * answered and the next has not started), no load is parked and no dialog
    * is up, progress dialogs included. The first read after an open, an import
    * or a forget is the baseline; a later read that differs is sent.
    */
-  function pollEdits(w: ToolWindow): void {
-    if (closed || opened == null || staged == null || importing || checking || inFlight > 0 || collecting != null) return;
+  function pollEdits(w: ToolWindow, settled = false): void {
+    if (closed || opened == null || staged == null || importing || checking || (inFlight > 0 && !settled) || collecting != null) return;
     if (engineBusy() || dialogUp(w, true)) return;
     const depth = undoDepth(w);
     if (depth == null) return;
@@ -1123,8 +1133,8 @@ export function startResponder(opts: {
    * (kicadSymEditState), read while a symbol is open and on the same gates as
    * pollEdits; the first read after an open or a new symbol is the baseline.
    */
-  function pollSymEdits(mod: Record<string, unknown>): void {
-    if (closed || importing || inFlight > 0 || win == null) return;
+  function pollSymEdits(mod: Record<string, unknown>, settled = false): void {
+    if (closed || importing || (inFlight > 0 && !settled) || win == null) return;
     if (engineBusy() || dialogUp(win, true)) return;
     const state = symState(mod);
     if (state == null || !state.open) return;
@@ -4213,8 +4223,8 @@ export function startResponder(opts: {
    * ev.edited in a frame a unit defines: its descriptor's undo depth, read on
    * the same gates as pollSymEdits; the first read after an open is the baseline.
    */
-  function pollFrameEdits(mod: Record<string, unknown>): void {
-    if (closed || importing || inFlight > 0 || win == null || kind?.undoDepth == null) return;
+  function pollFrameEdits(mod: Record<string, unknown>, settled = false): void {
+    if (closed || importing || (inFlight > 0 && !settled) || win == null || kind?.undoDepth == null) return;
     if (engineBusy() || dialogUp(win, true)) return;
     let depth: number | null = null;
     try { depth = kind.undoDepth(mod, ctx); } catch { depth = null; }
@@ -4433,9 +4443,11 @@ export function startResponder(opts: {
       if (kind?.undoDepth != null) {
         const edits = setInterval(() => pollFrameEdits(mod), timing.editPollMs);
         stopEdits = () => clearInterval(edits);
+        readEditsNow = () => pollFrameEdits(mod, true);
       } else if (symedit ? symeditOn : typeof mod.kicadCollabTestUndoDepth === 'function') {
         const edits = setInterval(() => (symedit ? pollSymEdits(mod) : pollEdits(w)), timing.editPollMs);
         stopEdits = () => clearInterval(edits);
+        readEditsNow = () => (symedit ? pollSymEdits(mod, true) : pollEdits(w, true));
       }
       const n = help.attempts();
       if (n > 0) emit({ type: 'ev.state', phase: 'booting', detail: popupNote(n) });
