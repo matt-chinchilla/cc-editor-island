@@ -11,7 +11,7 @@
 // footprint each in a pcb and an fpedit frame.
 import { expect, test, type Page } from '@playwright/test';
 
-interface Ev { type: string; phase?: string; caps?: string[]; path?: string; bytes?: Uint8Array; at: number }
+interface Ev { type: string; phase?: string; caps?: string[]; path?: string; bytes?: number; at: number }
 interface Harness { __events: Ev[]; __bridge: { request(op: string, args?: unknown): Promise<Record<string, unknown>> } }
 
 const RUN15 = 'waits for engine run 15 (pcbjam cc_e5, unit fp-e7: kicadFootprintForEditor, kicadFootprintPushToBoard, kicadFootprintConvert)';
@@ -60,7 +60,8 @@ async function savedBoard(page: Page): Promise<string> {
   await request(page, 'project.save');
   await expect.poll(async () => (await of(page, 'ev.saved')).slice(n).some((e) => e.path?.endsWith('.kicad_pcb')), { timeout: 10_000 }).toBe(true);
   const ev = (await of(page, 'ev.saved')).slice(n).find((e) => e.path?.endsWith('.kicad_pcb'));
-  return page.evaluate((b) => new TextDecoder().decode(new Uint8Array(Object.values(b as Record<string, number>))), ev?.bytes as unknown);
+  // The harness records an event's size and its first 4 KiB as text; the whole bytes of each saved path are in __saved.
+  return page.evaluate((path) => new TextDecoder().decode((window as unknown as { __saved: Record<string, Uint8Array> }).__saved[path]), ev?.path as string);
 }
 
 /** The `(footprint ...)` block of the board text whose own uuid is `uuid`. */
