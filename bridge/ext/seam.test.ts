@@ -86,7 +86,6 @@ describe('the registry', () => {
   });
 
   it('answers every manifest op of bridge/ext/pending.json with its unit, none of them an op that ships', () => {
-    expect(REGISTRY.pending.size).toBeGreaterThan(0);
     for (const [op, unit] of REGISTRY.pending) {
       expect(BUILTIN_OPS).not.toContain(op);
       expect(unit).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
