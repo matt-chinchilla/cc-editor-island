@@ -2089,7 +2089,7 @@ describe('project.import', () => {
   it('the import call: each extension names KiCad\'s own importer type, and an Altium project lists its sheets as KiCad\'s project import does', () => {
     const R = '/p';
     expect(importCall('pcb', R, 'b/HiFive1.B01.PcbDoc')).toEqual({ name: 'kicadOpenFile', args: ['/p/b/HiFive1.B01.PcbDoc'] });
-    const types: Array<[string, string]> = [['x.SchDoc', 'Altium'], ['x.SCHDOC', 'Altium'], ['x.sch', 'EAGLE'], ['x.csa', 'CADSTAR Schematic Archive'], ['x.asc', 'LTspice'], ['x.json', 'EasyEDA (JLCEDA) Std'], ['x.zip', 'EasyEDA (JLCEDA) Pro']];
+    const types: Array<[string, string]> = [['x.SchDoc', 'Altium'], ['x.SCHDOC', 'Altium'], ['x.sch', 'EAGLE'], ['x.csa', 'CADSTAR Schematic Archive'], ['x.asc', 'LTspice'], ['x.json', 'EasyEDA (JLCEDA) Std'], ['x.zip', 'EasyEDA (JLCEDA) Pro'], ['x.txt', 'PADS Logic']];
     for (const [file, type] of types) expect(importCall('sch', R, file)).toEqual({ name: 'kicadImportSchematic', args: [`/p/${file}`, type, '{}'] });
     // A std::set of wxString: duplicates once, in code point order (upper case before lower, an astral letter after U+FFFD).
     const call = importCall('sch', R, 'b/z.SchDoc', { project: 'p.PrjPcb', sheets: ['b/z.SchDoc', 'b/\u{1D400}.SchDoc', 'b/�.SchDoc', 'b/A.SchDoc', 'a/m.SchDoc', 'b/z.SchDoc'] });
@@ -2099,8 +2099,8 @@ describe('project.import', () => {
     // Each frame's own kinds, and the converted file's path.
     expect(['b.PcbDoc', 'b.CMPcbDoc', 'b.cspcbdoc', 'b.SWPcbDoc', 'b.brd', 'b.fab'].every((p) => importable(p, 'pcb'))).toBe(true);
     expect(['b.SchDoc', 'b.PrjPcb', 'b.kicad_pcb', '.PcbDoc', 'b/.pcbdoc'].some((p) => importable(p, 'pcb'))).toBe(false);
-    expect(['s.SchDoc', 's.sch', 's.CSA', 's.asc', 's.json', 's.zip'].every((p) => importable(p, 'sch'))).toBe(true);
-    expect(['s.PcbDoc', 's.brd', 's.PrjPcb', 's.kicad_sch', 's.txt', '.SchDoc'].some((p) => importable(p, 'sch'))).toBe(false);
+    expect(['s.SchDoc', 's.sch', 's.CSA', 's.asc', 's.json', 's.zip', 's.txt'].every((p) => importable(p, 'sch'))).toBe(true);
+    expect(['s.PcbDoc', 's.brd', 's.PrjPcb', 's.kicad_sch', '.txt', '.SchDoc'].some((p) => importable(p, 'sch'))).toBe(false);
     expect(importTarget('boards/x.PcbDoc', 'pcb')).toBe('boards/x.kicad_pcb');
     expect(importTarget('sheets/x.SchDoc', 'sch')).toBe('sheets/x.kicad_sch');
     expect(importTarget('eDP/eDP_adapter_dvt1.PrjPcb', 'sch')).toBe('eDP/eDP_adapter_dvt1.kicad_sch');

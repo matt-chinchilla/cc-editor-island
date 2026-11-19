@@ -69,9 +69,10 @@ export const SCHEMATIC_FORMATS = Object.freeze([
 export type SchematicFormat = (typeof SCHEMATIC_FORMATS)[number];
 /**
  * The importer each schematic extension names when no `format` does (the
- * fallback): Altium, Eagle, CADSTAR, LTspice, EasyEDA Std and EasyEDA Pro.
- * A `.sch` is Eagle's and an `.asc` LTspice's unless the format says gEDA or
- * PADS Logic (KiCad's PADS Logic importer reads `.asc` and `.txt`).
+ * fallback): Altium, Eagle, CADSTAR, LTspice, EasyEDA Std, EasyEDA Pro and
+ * PADS Logic (`.txt`). A `.sch` is Eagle's and an `.asc` LTspice's unless the
+ * format says gEDA or PADS Logic (KiCad's PADS Logic importer reads `.asc`
+ * and `.txt`).
  */
 export const SCHEMATIC_TYPES = Object.freeze({
   '.schdoc': 'Altium',
@@ -80,6 +81,7 @@ export const SCHEMATIC_TYPES = Object.freeze({
   '.asc': 'LTspice',
   '.json': 'EasyEDA (JLCEDA) Std',
   '.zip': 'EasyEDA (JLCEDA) Pro',
+  '.txt': 'PADS Logic',
 } as const satisfies Readonly<Record<string, SchematicFormat>>);
 /** The extensions a sch frame imports. */
 export const IMPORT_EXTENSIONS_SCH = Object.keys(SCHEMATIC_TYPES) as ReadonlyArray<keyof typeof SCHEMATIC_TYPES>;

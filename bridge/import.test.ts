@@ -29,6 +29,10 @@ describe('project.import format', () => {
     expect(importCall('sch', R, 'g/minimal_test.sch')).toEqual({ name: 'kicadImportSchematic', args: ['/p/g/minimal_test.sch', 'EAGLE', '{}'] });
     expect(importCall('sch', R, 'pads.asc', undefined, 'PADS Logic')).toEqual({ name: 'kicadImportSchematic', args: ['/p/pads.asc', 'PADS Logic', '{}'] });
     expect(importCall('sch', R, 'divider.asc')).toEqual({ name: 'kicadImportSchematic', args: ['/p/divider.asc', 'LTspice', '{}'] });
+    expect(schematicType('x.txt')).toBe('PADS Logic');
+    expect(importCall('sch', R, 'pads/simple_schematic.txt')).toEqual({ name: 'kicadImportSchematic', args: ['/p/pads/simple_schematic.txt', 'PADS Logic', '{}'] });
+    expect(importable('simple_schematic.TXT', 'sch')).toBe(true);
+    expect(importTarget('pads/simple_schematic.txt', 'sch')).toBe('pads/simple_schematic.kicad_sch');
   });
 
   it('every one of the eight formats reaches the engine as given, for any importable file', () => {

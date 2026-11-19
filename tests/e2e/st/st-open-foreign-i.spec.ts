@@ -127,11 +127,18 @@ test.describe('st-open-foreign-i: a sch frame imports with the format named', ()
   });
 
   test('PADS Logic: KiCad\'s parts_schematic, staged as an .asc, is read by the PADS Logic importer, not LTspice', async ({ page }) => {
-    // KiCad's PADS Logic importer reads .asc and .txt; a .txt is not yet an importable name in a sch frame (owed).
-    // The site's simple_schematic.txt holds no part, so KiCad's import counts it refused (no sheet holds items).
+    // KiCad's PADS Logic importer reads .asc and .txt: with the format named, an .asc goes to it, not LTspice.
     const frame = await boot(page, 'sch');
     const { result, seconds } = await importFiles(page, [outside('parts_schematic.txt', 'parts_schematic.asc')], 'parts_schematic.asc', 'PADS Logic');
     measure('import pads logic', `${seconds.toFixed(1)} s, warnings ${JSON.stringify(result.warnings)}`);
+    await expectConverted(page, frame, result, 'parts_schematic.kicad_sch', 'kicad_sch');
+  });
+
+  test('PADS Logic: KiCad\'s parts_schematic.txt, sent with no format, is read by the PADS Logic importer by its extension', async ({ page }) => {
+    // The site's simple_schematic.txt holds no part, so KiCad's import counts it refused (no sheet holds items).
+    const frame = await boot(page, 'sch');
+    const { result, seconds } = await importFiles(page, [outside('parts_schematic.txt')], 'parts_schematic.txt');
+    measure('import pads logic txt', `${seconds.toFixed(1)} s, warnings ${JSON.stringify(result.warnings)}`);
     await expectConverted(page, frame, result, 'parts_schematic.kicad_sch', 'kicad_sch');
   });
 
