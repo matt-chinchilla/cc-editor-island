@@ -30,9 +30,11 @@ export const EXPORT_ROOT = '/tmp/cc-out';
 /** The run's own record, written last (through a .part file): never answered as a file. */
 export const EXPORT_DONE = '.cc-export.json';
 /**
- * The lines the run reports while it goes, one per line as reported, beside
- * its record (engine run 15: the render's "Rendering <n> percent" lines).
- * Its name starts with the record's, so the folder read never answers it.
+ * The lines the run reports while it goes, beside its record: read for the
+ * render's "Rendering <n> percent" lines (engine fix e11-6). No engine run 15
+ * build through T3 writes it (the lines reach only the final record), so
+ * nothing is read then. Its name starts with the record's, so the folder read
+ * never answers it.
  */
 export const EXPORT_LINES = `${EXPORT_DONE}.lines`;
 /** A named job's bound is at least this and at most this (3D exports spec 8.3). */
@@ -143,14 +145,15 @@ export function readExportDone(bytes: Uint8Array | null): ExportDone | null {
   return lines == null ? null : { code: v.code as number, lines, dropped: [...(v.dropped as string[])] };
 }
 
-/** The code the engine's own refusals end with (a 3D format other than VRML, VRML's empty scene): its line is the run's last. */
+/** The code the engine's own refusals end with (a 3D format other than VRML without the 3D service, a VRML scene with no board): its line is the run's last. */
 export const ENGINE_REFUSAL_CODE = -1;
 
 /**
  * Why a finished run failed, or null when it did not (code 0): its first
  * error line; else, for the engine's own refusal (code -1), its last line
  * (the engine reports it as info: "Only VRML is made here.", "The VRML
- * exporter wrote no board (an empty scene)."); else the code. A KiCad job
+ * exporter wrote no board (an empty scene).", a real fault since engine run
+ * 15 writes VRML in full); else the code. A KiCad job
  * that fails without an error line (the drill job's report, code 4) is never
  * answered by a line that says it went well. The run's folder taken out.
  */

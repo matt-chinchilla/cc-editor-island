@@ -1,12 +1,15 @@
 // Copyright (C) 2026 Circuit Center Inc
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The 3D outputs over the local pair (3D exports spec 8.3, unit 3d-i3):
-// project.export's jobs pcb_export_3d (every format) and pcb_render on Glasgow,
-// each answered by a file of its format; ev.export with exactly its keys and
-// never two within 250 ms; the model fixture's ${KIPRJMOD} body inside its
-// STEP. island.json lists pcb_render on any engine; the runs need engine run
-// 15 (the caps occ and render) and are skipped, named, on an engine without
-// them.
+// project.export's jobs pcb_export_3d (every format, VRML included) and
+// pcb_render on Glasgow, each answered by a file of its format; the picture
+// of KiCad's own size (RULINGS 19: 784 by 592 for an asked 800 by 600, as
+// kicad-cli 10.0 writes); ev.export with exactly its keys and never two within
+// 250 ms; the model fixture's ${KIPRJMOD} bodies inside its STEP. island.json
+// lists pcb_render on any engine; the runs need engine run 15 (the caps occ
+// and render) and are skipped, named, on an engine without them. No build
+// through T3 writes the render's lines while it runs (engine fix e11-6), so a
+// running phase is not waited for.
 import { expect, test, type Page } from '@playwright/test';
 
 import { ISLAND } from './ports';
@@ -51,13 +54,21 @@ function checkProgress(evs: Ev[]): void {
 
 /** What each 3D format's file starts with (or, for STL, its binary size rule). */
 function checkFormat(format: string, f: Made['files'][number]): void {
-  const starts: Record<string, string> = { glb: 'glTF', ply: 'ply', u3d: 'U3D', pdf: '%PDF', step: 'ISO-10303-21', stpz: '\x1f\x8b' };
+  const starts: Record<string, string> = { glb: 'glTF', ply: 'ply', u3d: 'U3D', pdf: '%PDF', step: 'ISO-10303-21', stpz: '\x1f\x8b', vrml: '#VRML V2.0' };
   if (format in starts) expect(f.head.startsWith(starts[format]), `${format} ${f.path}`).toBe(true);
   if (format === 'stl') {
     const n = f.head.charCodeAt(80) | (f.head.charCodeAt(81) << 8) | (f.head.charCodeAt(82) << 16) | (f.head.charCodeAt(83) << 24);
     expect(f.bytes, f.path).toBe(84 + 50 * n);
   }
-  expect(f.bytes, `${format} ${f.path}`).toBeGreaterThan(0);
+  // The engine fails a run that leaves an empty file, and a VRML file of 64 bytes or less (a header alone).
+  expect(f.bytes, `${format} ${f.path}`).toBeGreaterThan(format === 'vrml' ? 64 : 0);
+}
+
+/** A PNG's width and height from its IHDR (the head holds its first 84 bytes as Latin-1). */
+function pngSize(head: string): [number, number] {
+  const u32 = (at: number) => ((head.charCodeAt(at) << 24) | (head.charCodeAt(at + 1) << 16) | (head.charCodeAt(at + 2) << 8) | head.charCodeAt(at + 3)) >>> 0;
+  expect(head.slice(12, 16)).toBe('IHDR');
+  return [u32(16), u32(20)];
 }
 
 test('island.json lists pcb_render among the export kinds', async ({ page }) => {
@@ -70,19 +81,26 @@ test('the 3D outputs of Glasgow: every format and the render answer a file, ev.e
   test.setTimeout(1_800_000);
   const caps = await boot(page, 'glasgow');
   test.skip(!caps.includes('occ') || !caps.includes('render'), `engine run 15 (caps occ and render) is not served here: caps ${caps.join(' ')}`);
-  for (const format of ['step', 'stpz', 'brep', 'xao', 'glb', 'ply', 'stl', 'u3d', 'pdf']) {
+  for (const format of ['step', 'stpz', 'brep', 'xao', 'glb', 'ply', 'stl', 'u3d', 'pdf', 'vrml']) {
     const answer = await make(page, { job: 'pcb_export_3d', settings: { format } });
     expect(answer.ok, `${format}: ${answer.ok ? '' : `${answer.code}: ${answer.message}`}`).toBe(true);
     if (!answer.ok) continue;
     expect(answer.files.length, format).toBeGreaterThan(0);
     for (const f of answer.files) checkFormat(format, f);
   }
-  const render = await make(page, { job: 'pcb_render', settings: { format: 'png', width: 640, height: 480, quality: 'basic' } });
+  // The picture has KiCad's own size, never the asked one (RULINGS 19): the engine names it in its
+  // line "The picture is 784 by 592 pixels.", equal to the file's own header.
+  const render = await make(page, { job: 'pcb_render', settings: { format: 'png', width: 800, height: 600, quality: 'basic' } });
   expect(render.ok, render.ok ? '' : `${render.code}: ${render.message}`).toBe(true);
-  if (render.ok) expect(render.files.some((f) => f.head.startsWith('\x89PNG'))).toBe(true);
-  const progress = await of(page, 'ev.export');
-  checkProgress(progress);
-  expect(progress.some((e) => e.job === 'pcb_render' && e.phase === 'running')).toBe(true);
+  if (render.ok) {
+    const png = render.files.find((f) => f.head.startsWith('\x89PNG'));
+    expect(png, 'a PNG').toBeDefined();
+    expect(pngSize(png!.head)).toEqual([784, 592]);
+  }
+  const jpeg = await make(page, { job: 'pcb_render', settings: { format: 'jpeg', width: 800, height: 600, quality: 'basic' } });
+  expect(jpeg.ok, jpeg.ok ? '' : `${jpeg.code}: ${jpeg.message}`).toBe(true);
+  if (jpeg.ok) expect(jpeg.files.some((f) => f.head.startsWith('\xff\xd8\xff'))).toBe(true);
+  checkProgress(await of(page, 'ev.export'));
 });
 
 test('the model fixture: its ${KIPRJMOD} body goes into the STEP', async ({ page }) => {
@@ -96,7 +114,9 @@ test('the model fixture: its ${KIPRJMOD} body goes into the STEP', async ({ page
   if (!answer.ok) return;
   const step = answer.files.find((f) => /\.step$/i.test(f.path));
   expect(step?.head.startsWith('ISO-10303-21')).toBe(true);
-  // The board, the library body and the project's cube: three solids.
+  // The board and the project's two bodies (cube.step, block.wrl's STEP sibling) at least: three solids
+  // (the library body adds its own when the local model store holds it). Before the bodies were sent
+  // relative to the model root the file held one (fix note e10-2).
   expect((step?.text.match(/MANIFOLD_SOLID_BREP/g) ?? []).length).toBeGreaterThanOrEqual(3);
   checkProgress(await of(page, 'ev.export'));
 });

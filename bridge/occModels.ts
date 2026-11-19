@@ -239,14 +239,32 @@ export async function stageModels(refs: readonly string[], deps: StageDeps): Pro
 }
 
 /**
+ * A staged file's path as the 3D service reads it: relative to MODELS_ROOT
+ * (`kiprjmod/<relative path>`, `<Lib>.3dshapes/<Name>.<ext>`), null for a
+ * path outside it. The service has a file system of its own: its
+ * stageModelFiles writes each body under its own MODELS_MEMFS_ROOT and skips
+ * any path that starts with a slash or holds `..` (engine run 15, fix note
+ * e10-2: absolute paths put no body into the file).
+ */
+export function serviceModelPath(abs: string): string | null {
+  if (!abs.startsWith(`${MODELS_ROOT}/`)) return null;
+  const rel = projectRelative(abs.slice(MODELS_ROOT.length + 1));
+  return rel != null && `${MODELS_ROOT}/${rel}` === abs ? rel : null;
+}
+
+/**
  * The bodies a 3D export carries to the 3D service (occExport's `models`):
  * each staged file as `{ path, bytes }` read back from the engine's file
- * system, its path the one the service's resolver reads.
+ * system, its path relative to the model root (serviceModelPath), the one the
+ * service stages and its resolver reads. A staged path outside the root is
+ * left out.
  */
 export function stagedModels(report: StageReport, fs: EmscriptenFS): Array<{ path: string; bytes: Uint8Array }> {
   const out: Array<{ path: string; bytes: Uint8Array }> = [];
-  for (const path of report.staged) {
-    const bytes = readFileBytes(fs, path);
+  for (const abs of report.staged) {
+    const path = serviceModelPath(abs);
+    if (path == null) continue;
+    const bytes = readFileBytes(fs, abs);
     if (bytes != null) out.push({ path, bytes });
   }
   return out;

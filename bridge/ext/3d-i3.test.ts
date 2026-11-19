@@ -189,7 +189,8 @@ describe('the 3D service', () => {
     const stop = installOcc(ctx, handle, () => null);
     expect(stage).not.toBeNull();
     const staged = await stage!({ board: new TextEncoder().encode(BOARD) });
-    expect(staged).toEqual({ models: [{ path: '/pcbjam/3dmodels/kiprjmod/m/a.step', bytes: new TextEncoder().encode('A') }] });
+    // Paths relative to the model root: the 3D service skips an absolute one (fix note e10-2).
+    expect(staged).toEqual({ models: [{ path: 'kiprjmod/m/a.step', bytes: new TextEncoder().encode('A') }] });
     listener!(25, 100);
     expect(occLoadingPercent()).toBe(25);
     stop?.();

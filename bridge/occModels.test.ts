@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Circuit Center Inc
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { afterEach, describe, expect, it } from 'vitest';
-import { boardModelRefs, ensureWriting, MODELS_ROOT, modelSource, noteOccLoading, occLoadingPercent, PROJECT_MODELS, projectRelative, stageBoardModels, stageModels } from './occModels';
+import { boardModelRefs, ensureWriting, MODELS_ROOT, modelSource, noteOccLoading, occLoadingPercent, PROJECT_MODELS, projectRelative, stageBoardModels, stagedModels, stageModels } from './occModels';
 
 /** A small MEMFS: files by absolute path, folders implied. */
 function memfs(files: Record<string, Uint8Array> = {}) {
@@ -117,11 +117,25 @@ describe('stageModels', () => {
     expect(byBytes.skipped).toEqual(['m3.step', 'm4.step']);
   });
 
-  it('answers the staged bodies of a board text for the 3D service', async () => {
-    const { fs } = memfs({ '/project/models/cube.step': bytes(3) });
-    const { models, report } = await stageBoardModels(BOARD, { fs, projectDir: '/project', ensure: null });
-    expect(models).toEqual([{ path: `${PROJECT_MODELS}/models/cube.step`, bytes: bytes(3) }]);
+  it('answers the staged bodies of a board text for the 3D service, each path relative to the model root', async () => {
+    // The 3D service stages only paths relative to its model root and skips any
+    // that starts with a slash (occ_service stageModelFiles, engine run 15, fix
+    // note e10-2): an absolute path put no body into the file.
+    const { fs } = memfs({ '/project/models/cube.step': bytes(3), [`${MODELS_ROOT}/Resistor_SMD.3dshapes/R_0603_1608Metric.step`]: bytes(4) });
+    const ensure = async (ref: string) => (ref.includes('R_0603') ? `${MODELS_ROOT}/Resistor_SMD.3dshapes/R_0603_1608Metric.step` : null);
+    const { models, report } = await stageBoardModels(BOARD, { fs, projectDir: '/project', ensure });
+    expect(models).toEqual([
+      { path: 'Resistor_SMD.3dshapes/R_0603_1608Metric.step', bytes: bytes(4) },
+      { path: 'kiprjmod/models/cube.step', bytes: bytes(3) },
+    ]);
+    for (const m of models) expect(m.path.startsWith('/') || m.path.split('/').includes('..')).toBe(false);
+    expect(report.staged).toEqual([`${MODELS_ROOT}/Resistor_SMD.3dshapes/R_0603_1608Metric.step`, `${PROJECT_MODELS}/models/cube.step`]);
     expect(report.missing).toEqual(['models/part (1).wrl']);
+  });
+
+  it('never hands the 3D service a body staged outside the model root', () => {
+    const { fs } = memfs({ '/elsewhere/x.step': bytes(2), [`${PROJECT_MODELS}/a.step`]: bytes(1) });
+    expect(stagedModels({ staged: ['/elsewhere/x.step', `${PROJECT_MODELS}/a.step`, MODELS_ROOT], skipped: [], missing: [], bytes: 3 }, fs)).toEqual([{ path: 'kiprjmod/a.step', bytes: bytes(1) }]);
   });
 });
 
