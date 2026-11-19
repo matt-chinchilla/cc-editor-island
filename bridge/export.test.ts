@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
 import { describe, expect, it } from 'vitest';
-import FACES from './exports.json';
+import FACES from './exports.builtin.json';
 import {
   EXPORT_DONE, EXPORT_JOBS, exportFace, exportFailure, exportJson, kicadProblem, MAX_EXPORT_BYTES, MAX_EXPORT_FILES, PAGED_JOBS, parseExportArgs,
   readExportDone, readExportFolder, type ExportDone,

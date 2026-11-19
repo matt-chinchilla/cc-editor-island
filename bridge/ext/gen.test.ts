@@ -59,7 +59,9 @@ describe('the PROTOCOL.md assembly', () => {
 });
 
 describe('the generator at the join', () => {
-  const protocol = readProtocol() as string;
+  // The built in PROTOCOL.md: the checkout's file with every unit part taken out
+  // (once the join has run gen:ext the file holds the landed units' parts).
+  const protocol = assembleProtocol(readProtocol(), []) as string;
   const frag = (unit: string, text: string) => ({ unit, ...readFragment(unit, text) });
 
   it('adds a code once: a code the table holds, or an earlier unit gave, is not added again', () => {
