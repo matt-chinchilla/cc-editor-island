@@ -1,0 +1,14 @@
+SPDX-License-Identifier: CC0-1.0
+
+Written by hand for this repository on 2026-11-19 (CC0 1.0: no rights
+reserved): the RC step of tests/fixtures/sim-rc (V1, a PULSE source 0 to 5 V
+on "in"; R1, 1 kOhm, from "in" to "out"; C1, 1 uF, from "out" to ground; the
+directive ".tran 1u 5m") with two compiled models added: U1, a raw SPICE part
+(Sim.Device "SPICE", Sim.Params type "X", model "adder", lib
+"models/adder.cm") from "out" to ground, whose model file is
+models/adder.cm (a few bytes, an ELF head and a line of text, not a real code
+model), and a text directive ".control / pre_osdi models/adder.osdi / .endc"
+(no .osdi file is held). ngspice in the browser loads neither, so the island
+lists two binary_model problems and runs nothing. For
+tests/e2e/sim-binary.spec.ts. files.json lists the files the e2e harness
+opens. The KiCad files carry no comment, so this file holds their license.
