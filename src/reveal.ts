@@ -14,11 +14,22 @@
 // painted after the hide, and then, for a document, until its first WebGL
 // frame: between the two the stage is wx's own empty window, beige, KiCad's
 // look and not ours (owner 2026-11-17: nothing of KiCad's before his engine).
+//
+// Engine run 15 boots canvas only (boot-e1): main.ts sets the start-up input
+// BOOT_INPUT on window.kicadBoot before the engine's scripts load, the frame is
+// created with its chrome already hidden (never laid out or painted), the
+// empty drawing area is painted in the palette's background, never wx's beige,
+// and kicadSetChrome paints before it returns. Such an engine says so with the
+// marker kicadBootCanvasOnly; with it the screen comes down at the engine's
+// first canvas only frame and waits for nothing else. Without it (an older
+// engine, run 14 and before) every wait below stands as it was.
 
 /** What the reveal reads and does; main.ts gives it the document, the engine and the responder. */
 export interface RevealDeps {
   /** The engine's own read of its chrome (kicadChromeShown); null when this engine has no such read. */
   chromeShown(): boolean | null;
+  /** The engine booted canvas only (its marker kicadBootCanvasOnly answers true); false for an older engine. */
+  canvasOnly(): boolean;
   /** kicadSetChrome(false), and what else runs in the same task before the engine's loop turns (the focus click). */
   hideChrome(): void;
   /**
@@ -48,12 +59,38 @@ export interface RevealDeps {
 }
 
 /**
- * How the screen came down: on the first
+ * How the screen came down: at the first frame an engine that boots canvas
+ * only drew on its stage (`canvas`); for an older engine on the first
  * WebGL frame (`drawn`), after the canvas only paint in a frame with no WebGL
  * to watch (`painted`), after that paint in a frame that holds no document and
- * is asked for none (`no_document`), or at a bound.
+ * is asked for none (`no_document`); or at a bound.
  */
-export type RevealWay = 'drawn' | 'painted' | 'no_document' | 'bound';
+export type RevealWay = 'canvas' | 'drawn' | 'painted' | 'no_document' | 'bound';
+
+/**
+ * The engine's start-up input (boot-e1), set on window.kicadBoot before the
+ * engine's scripts load: boot with KiCad's chrome already hidden. An engine
+ * before run 15 never reads it.
+ */
+export const BOOT_INPUT: Readonly<{ chrome: false }> = Object.freeze({ chrome: false });
+
+/** Sets the start-up input on the frame's window, before the engine boots. */
+export function setBootInput(win: object): void {
+  (win as { kicadBoot?: unknown }).kicadBoot = { ...BOOT_INPUT };
+}
+
+/**
+ * The engine's marker kicadBootCanvasOnly: true only when the export is there
+ * and answers true (it read the input, its empty drawing area is the drawing's
+ * background, its kicadSetChrome paints before it returns). Anything else,
+ * a missing export or a throw included, is an older engine.
+ */
+export function bootsCanvasOnly(mod: unknown): boolean {
+  if (mod == null || typeof mod !== 'object') return false;
+  const fn = (mod as Record<string, unknown>).kicadBootCanvasOnly;
+  if (typeof fn !== 'function') return false;
+  try { return (fn as () => unknown).call(mod) === true; } catch { return false; }
+}
 
 /**
  * The longest the screen waits for the engine's canvas only paint. The paint
@@ -92,6 +129,11 @@ export function hideChromeThenReveal(deps: RevealDeps, boundMs: number = REVEAL_
   // Read before the hide: a chrome that never showed was never painted.
   let shown: boolean | null = null;
   try { shown = deps.chromeShown(); } catch { shown = null; }
+  // An engine that booted canvas only, and whose chrome is still held: nothing
+  // of KiCad's was ever painted, so its first canvas frame is ours to show.
+  let canvasOnly = false;
+  if (shown === false) { try { canvasOnly = deps.canvasOnly() === true; } catch { canvasOnly = false; } }
+  if (canvasOnly) return revealAtFirstCanvasFrame(deps, boundMs);
   try { deps.hideChrome(); } catch { /* chrome stays; the page can still send chrome.show */ }
   return new Promise<RevealWay>((resolve) => {
     let done = false;
@@ -142,6 +184,49 @@ export function hideChromeThenReveal(deps: RevealDeps, boundMs: number = REVEAL_
     if (stopPaint === false) { afterPaint(); return; }
     stops.push(stopPaint);
     stops.push(deps.timer(() => { if (!painted) finish('bound'); }, boundMs));
+  });
+}
+
+/**
+ * The reveal of an engine that boots canvas only: the watches are armed before
+ * the hide, so the paint kicadSetChrome(false) makes before it returns is the
+ * first canvas frame, whole once the call returns: the screen comes down in
+ * that same task, so the next rendering shows both (an open the host sends at
+ * ev.ready can hold the thread for seconds, and an animation frame asked for
+ * here waited it out: 4.4 s on a board at 4x CPU in the GPU window). When that
+ * paint is skipped (an engine call parked), the engine's next paint or WebGL
+ * frame is the first, and the screen comes down at the next animation frame
+ * after it, so that frame is composited with the hide.
+ */
+function revealAtFirstCanvasFrame(deps: RevealDeps, boundMs: number): Promise<RevealWay> {
+  return new Promise<RevealWay>((resolve) => {
+    let done = false;
+    let seen = false;
+    const stops: Array<() => void> = [];
+    const finish = (way: RevealWay): void => {
+      if (done) return;
+      done = true;
+      for (const stop of stops.splice(0)) stop();
+      deps.reveal();
+      resolve(way);
+    };
+    let hiding = true;
+    const frame = (): void => {
+      if (done || seen) return;
+      seen = true;
+      if (!hiding) deps.nextFrame(() => finish('canvas'));
+    };
+    const stopPaint = deps.watchPaint(frame);
+    if (stopPaint !== false) stops.push(stopPaint);
+    const stopGl = deps.watchGl(frame);
+    if (stopGl !== false) stops.push(stopGl);
+    try { deps.hideChrome(); } catch { /* the hold stays; the page can still send chrome.show */ }
+    hiding = false;
+    // The hide painted, and its paint is whole now that it returned.
+    if (seen) { finish('canvas'); return; }
+    // Nothing to watch: the frame is canvas only, so the next frame shows it.
+    if (stopPaint === false && stopGl === false) { frame(); return; }
+    stops.push(deps.timer(() => { if (!seen) finish('bound'); }, boundMs));
   });
 }
 

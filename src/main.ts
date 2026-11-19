@@ -35,7 +35,7 @@ import { islandLibs, warmUpOnEnumerate, type LibsChoice } from './libs';
 import { quietWarmUp } from './picker';
 import { createProjectLibs, withProjectLibs } from './project-libs';
 import { installSimService } from './sim-service';
-import { hideChromeThenReveal, watchStageGl, watchStagePaint } from './reveal';
+import { bootsCanvasOnly, hideChromeThenReveal, setBootInput, watchStageGl, watchStagePaint } from './reveal';
 
 declare const __ISLAND_TAG__: string;      // define'd by vite.config.ts from PIN.json
 declare const __KICAD_VERSION__: string;   // define'd by vite.config.ts
@@ -197,6 +197,11 @@ async function main(): Promise<void> {
     return true;
   };
 
+  // The engine's start-up input (src/reveal.ts): an engine from run 15 boots
+  // every frame with KiCad's chrome already hidden, so it is never painted.
+  // An older engine never reads it.
+  setBootInput(window);
+
   // wx.js addresses the stage by id: #main-window is its top-level window (it
   // owns the canvas) and #window-container parents every child window.
   const container = document.getElementById('main-window');
@@ -239,9 +244,10 @@ async function main(): Promise<void> {
   }
   if (gate.isFatal() || teardown.started()) return;
   // The editor wears the viewer (spec D16): KiCad's menu bar, toolbars, panes
-  // and status bar never show; the page owns the chrome. kicadSetChrome lays
-  // the frame out again before it returns, but the engine paints that layout
-  // on a later turn of its loop, so the loading screen stays until it has
+  // and status bar never show; the page owns the chrome. An engine that booted
+  // canvas only (its marker) is shown at its first canvas frame. For an older
+  // engine: kicadSetChrome lays the frame out again before it returns, but the
+  // engine paints that layout on a later turn of its loop, so the loading screen stays until it has
   // (src/reveal.ts): hidden in this task, it showed KiCad's chrome as last
   // painted for as long as the open or a second engine's boot held the loop.
   // With the hide, one synthetic click on the canvas, as a reader's first click
@@ -251,6 +257,7 @@ async function main(): Promise<void> {
   const stage = document.getElementById('canvas');
   void hideChromeThenReveal({
     chromeShown: () => (typeof tool.Module?.kicadChromeShown === 'function' ? tool.Module.kicadChromeShown() === true : null),
+    canvasOnly: () => bootsCanvasOnly(tool.Module),
     hideChrome: () => {
       try { tool.Module?.kicadSetChrome?.(false); } catch { /* chrome stays; the page can still send chrome.show */ }
       focusCanvas(document);

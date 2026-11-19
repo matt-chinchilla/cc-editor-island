@@ -3,8 +3,8 @@
 import { describe, expect, it } from 'vitest';
 import main from './main.ts?raw';
 import {
-  DOCUMENT_BOUND_MS, GL_DRAW_CALLS, hideChromeThenReveal, NO_DOCUMENT_GRACE_MS, REVEAL_BOUND_MS, REVEAL_POLL_MS,
-  STAGE_PAINT_CALLS, watchStageGl, watchStagePaint, type RevealDeps, type RevealWay,
+  BOOT_INPUT, bootsCanvasOnly, DOCUMENT_BOUND_MS, GL_DRAW_CALLS, hideChromeThenReveal, NO_DOCUMENT_GRACE_MS, REVEAL_BOUND_MS, REVEAL_POLL_MS,
+  setBootInput, STAGE_PAINT_CALLS, watchStageGl, watchStagePaint, type RevealDeps, type RevealWay,
 } from './reveal';
 
 interface StageOpts {
@@ -15,6 +15,10 @@ interface StageOpts {
   gl?: boolean;
   document?: boolean;
   busy?: boolean;
+  /** The engine's marker kicadBootCanvasOnly answers true (engine run 15); 'throws' when reading it throws. */
+  canvasOnly?: boolean | 'throws';
+  /** kicadSetChrome(false) paints before it returns (a run 15 engine on a shown frame, nothing parked). */
+  paintsOnHide?: boolean;
 }
 
 /**
@@ -31,7 +35,12 @@ function fakeStage(opts: StageOpts = {}) {
   const state = { document: opts.document ?? false, busy: opts.busy ?? false };
   const deps: RevealDeps = {
     chromeShown: () => (opts.shown === undefined ? true : opts.shown),
-    hideChrome: () => { log.push('hide'); },
+    canvasOnly: () => {
+      log.push('marker');
+      if (opts.canvasOnly === 'throws') throw new Error('no marker');
+      return opts.canvasOnly === true;
+    },
+    hideChrome: () => { log.push('hide'); if (opts.paintsOnHide === true) painted?.(); },
     watchPaint: (cb) => {
       if (opts.watchable === false) return false;
       painted = cb;
@@ -56,6 +65,8 @@ function fakeStage(opts: StageOpts = {}) {
     log, state, done,
     way: () => way,
     revealed: () => log.includes('reveal'),
+    /** Animation frames asked for and not yet run. */
+    framesAsked: () => frames.length,
     /** The engine's loop turns and paints the 2D stage. */
     paint: () => painted?.(),
     /** The engine draws a WebGL frame on show. */
@@ -76,6 +87,129 @@ function fakeStage(opts: StageOpts = {}) {
     },
   };
 }
+
+describe('hideChromeThenReveal: an engine that boots canvas only (its marker)', () => {
+  it('arms its watches before the hide; the paint the hide makes is the first canvas frame, shown once the hide returned', async () => {
+    const s = fakeStage({ shown: false, canvasOnly: true, paintsOnHide: true, document: true });
+    // In the hide's own task, after it returned (its paint whole), never inside the paint
+    // and never an animation frame later (an open sent at ev.ready can hold the thread).
+    expect(s.log).toEqual(['marker', 'watch', 'hide', 'reveal']);
+    expect(s.framesAsked()).toBe(0);
+    await expect(s.done).resolves.toBe('canvas');
+  });
+
+  it('waits for no WebGL frame, no document and no grace: a design on its way is revealed at the canvas frame', async () => {
+    const s = fakeStage({ shown: false, canvasOnly: true, document: true, busy: true });
+    s.paint();
+    s.frame();
+    await expect(s.done).resolves.toBe('canvas');
+  });
+
+  it('a paint the hide skipped (an engine call parked): the next paint is the first canvas frame', async () => {
+    const s = fakeStage({ shown: false, canvasOnly: true });
+    expect(s.framesAsked()).toBe(0);
+    s.advance(500);
+    expect(s.revealed()).toBe(false);
+    s.paint();
+    expect(s.revealed()).toBe(false);
+    s.frame();
+    await expect(s.done).resolves.toBe('canvas');
+  });
+
+  it('a WebGL frame before any 2D paint is a canvas frame too', async () => {
+    const s = fakeStage({ shown: false, canvasOnly: true, document: true });
+    s.glFrame();
+    s.frame();
+    await expect(s.done).resolves.toBe('canvas');
+  });
+
+  it('a second paint or frame changes nothing: one reveal', async () => {
+    const s = fakeStage({ shown: false, canvasOnly: true });
+    s.paint();
+    s.paint();
+    s.glFrame();
+    expect(s.framesAsked()).toBe(1);
+    s.frame();
+    s.advance(REVEAL_BOUND_MS);
+    await expect(s.done).resolves.toBe('canvas');
+    expect(s.log.filter((l) => l === 'reveal')).toHaveLength(1);
+  });
+
+  it('the hide\'s paint ends every watch: no bound left behind', async () => {
+    const s = fakeStage({ shown: false, canvasOnly: true, paintsOnHide: true });
+    s.advance(REVEAL_BOUND_MS * 2);
+    s.glFrame();
+    await expect(s.done).resolves.toBe('canvas');
+    expect(s.log.filter((l) => l === 'reveal')).toHaveLength(1);
+  });
+
+  it('with nothing to watch, the next frame shows the canvas only stage', async () => {
+    const s = fakeStage({ shown: false, canvasOnly: true, watchable: false, gl: false });
+    expect(s.log).toEqual(['marker', 'hide']);
+    s.frame();
+    await expect(s.done).resolves.toBe('canvas');
+  });
+
+  it('reveals at the bound when the engine never draws', async () => {
+    const s = fakeStage({ shown: false, canvasOnly: true });
+    s.advance(REVEAL_BOUND_MS - 1);
+    expect(s.revealed()).toBe(false);
+    s.advance(1);
+    await expect(s.done).resolves.toBe('bound');
+  });
+
+  it('a marker with the chrome shown (the input was not read): every wait of an older engine stands', () => {
+    const s = fakeStage({ shown: true, canvasOnly: true, document: true });
+    expect(s.log).toEqual(['hide', 'watch']);
+    s.paint();
+    s.frame();
+    s.advance(3_000);
+    expect(s.revealed()).toBe(false);   // still waiting for the first WebGL frame
+  });
+
+  it('no marker, or a marker read that throws: the older engine\'s waits, untouched', async () => {
+    for (const canvasOnly of [false, 'throws'] as const) {
+      const s = fakeStage({ shown: false, canvasOnly, document: true, paintsOnHide: true });
+      expect(s.log).toEqual(['marker', 'hide']);
+      s.frame();
+      s.advance(3_000);
+      expect(s.revealed()).toBe(false);   // a design waits for its first WebGL frame, paint or none
+      s.glFrame();
+      s.frame();
+      await expect(s.done).resolves.toBe('drawn');
+    }
+  });
+});
+
+describe('the start-up input and the marker read', () => {
+  it('sets window.kicadBoot to { chrome: false }, a fresh object each boot', () => {
+    const a: { kicadBoot?: unknown } = {};
+    const b: { kicadBoot?: unknown } = {};
+    setBootInput(a);
+    setBootInput(b);
+    expect(a.kicadBoot).toEqual({ chrome: false });
+    expect(a.kicadBoot).not.toBe(b.kicadBoot);
+    expect(Object.isFrozen(a.kicadBoot)).toBe(false);
+    expect(BOOT_INPUT).toEqual({ chrome: false });
+  });
+
+  it('reads the marker only as the export answering exactly true', () => {
+    expect(bootsCanvasOnly({ kicadBootCanvasOnly: () => true })).toBe(true);
+    expect(bootsCanvasOnly({ kicadBootCanvasOnly: () => false })).toBe(false);
+    expect(bootsCanvasOnly({ kicadBootCanvasOnly: () => 1 })).toBe(false);
+    expect(bootsCanvasOnly({ kicadBootCanvasOnly: () => 'yes' })).toBe(false);
+    expect(bootsCanvasOnly({ kicadBootCanvasOnly: true })).toBe(false);
+    expect(bootsCanvasOnly({ kicadBootCanvasOnly: () => { throw new Error('trap'); } })).toBe(false);
+    expect(bootsCanvasOnly({ kicadChromeShown: () => false })).toBe(false);   // run 14
+    expect(bootsCanvasOnly(null)).toBe(false);
+    expect(bootsCanvasOnly(undefined)).toBe(false);
+  });
+
+  it('calls the export on the engine module (embind binds no this, but a method may need it)', () => {
+    const mod = { ok: true, kicadBootCanvasOnly(this: { ok: boolean }) { return this.ok; } };
+    expect(bootsCanvasOnly(mod)).toBe(true);
+  });
+});
 
 describe('hideChromeThenReveal: KiCad\'s chrome', () => {
   it('never lifts in the hide\'s own task, nor before the engine painted (the stale chrome, 2026-11-17)', () => {
@@ -167,7 +301,7 @@ describe('hideChromeThenReveal: the first WebGL frame (no beige)', () => {
 
   it('a chrome that never showed skips the paint and waits only for the first frame', async () => {
     const s = fakeStage({ shown: false, document: true });
-    expect(s.log).toEqual(['hide']);
+    expect(s.log.filter((l) => l !== 'marker')).toEqual(['hide']);
     s.advance(1_000);
     expect(s.revealed()).toBe(false);
     s.glFrame();
@@ -282,6 +416,15 @@ describe('watchStageGl', () => {
 });
 
 describe('main.ts', () => {
+  it('sets the start-up input before the engine boots, and reads the marker for the reveal', () => {
+    const input = main.indexOf('setBootInput(window);');
+    const boot = main.indexOf('await bootKicadTool(');
+    expect(input).toBeGreaterThan(0);
+    expect(boot).toBeGreaterThan(input);
+    expect(main.match(/setBootInput\(/g) ?? []).toHaveLength(1);
+    expect(main).toMatch(/canvasOnly: \(\) => bootsCanvasOnly\(tool\.Module\)/);
+  });
+
   // The boot's order is the fix: the screen never comes down in the hide's own task.
   it('hides the screen only through the reveal, which watches the 2D stage and the WebGL stage', () => {
     expect(main.match(/hideScreens\(\)/g) ?? []).toHaveLength(1);
