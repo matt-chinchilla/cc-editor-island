@@ -1,0 +1,15 @@
+SPDX-License-Identifier: CC0-1.0
+
+Written by hand for this project on 2026-11-19 (CC0 1.0: no rights
+reserved), in KiCad 10 text (schematic version 20260306): a project file, a
+root sheet holding one sheet "io" (file io.kicad_sch) with four pins, and
+that sheet's file with four hierarchical labels, out of step on purpose.
+Paired by name the sheet reads: A (pin and label, both input), B (label
+only), C (pin input, label output), D (pin only), E (label only) and E1 (pin
+only): six rows. The fixed uuids all start 5e7a1b00-0000-4000-8000-: the
+root 100, the sheet 150, the pins A 151, C 152, D 153, E1 154, the sub
+sheet's file 200, the labels A 201, B 202, C 203, E 204.
+tests/e2e/sheet-pins.spec.ts opens it in a sch frame for sheet.pins.get,
+sheet.pins.apply and sheet.pins.place. files.json lists the files the e2e
+harness opens. The KiCad files carry no comment, so this file holds their
+license.

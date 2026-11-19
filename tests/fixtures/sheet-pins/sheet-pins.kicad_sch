@@ -1,0 +1,102 @@
+(kicad_sch
+	(version 20260306)
+	(generator "eeschema")
+	(generator_version "10.0")
+	(uuid "5e7a1b00-0000-4000-8000-000000000100")
+	(paper "A4")
+	(title_block
+		(title "Sheet pins")
+	)
+	(lib_symbols)
+	(sheet
+		(at 101.6 63.5)
+		(size 30.48 30.48)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0)
+		)
+		(uuid "5e7a1b00-0000-4000-8000-000000000150")
+		(property "Sheetname" "io"
+			(at 101.6 62.7884 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "io.kicad_sch"
+			(at 101.6 94.5646 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(pin "A" input
+			(at 101.6 68.58 180)
+			(uuid "5e7a1b00-0000-4000-8000-000000000151")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "C" input
+			(at 101.6 73.66 180)
+			(uuid "5e7a1b00-0000-4000-8000-000000000152")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "D" input
+			(at 101.6 78.74 180)
+			(uuid "5e7a1b00-0000-4000-8000-000000000153")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "E1" input
+			(at 101.6 83.82 180)
+			(uuid "5e7a1b00-0000-4000-8000-000000000154")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(instances
+			(project "sheet-pins"
+				(path "/5e7a1b00-0000-4000-8000-000000000100"
+					(page "2")
+				)
+			)
+		)
+	)
+	(sheet_instances
+		(path "/"
+			(page "1")
+		)
+	)
+	(embedded_fonts no)
+)
