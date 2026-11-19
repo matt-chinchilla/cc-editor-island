@@ -78,6 +78,7 @@ for (const frame of ['sch', 'pcb'] as const) {
 
       // KiCad 10's 3rd party variable: the one name of KiCad's own paths.set takes, under addonPaths alone.
       expect(await refusal(page, 'paths.set', { vars: { KICAD9_3RD_PARTY: '.cc-addons' } })).toBe('bad_args: paths.set');
+      expect(await refusal(page, 'paths.set', { vars: { KICAD10_SYMBOL_DIR: 'mylib' } })).toBe('bad_args: paths.set');
       const addon = caps.includes('addonPaths');
       measure('addonPaths', addon ? 'listed: the engine takes KICAD10_3RD_PARTY' : 'not listed: the engine has no kicadPathVarsThirdParty');
       if (!addon) {
