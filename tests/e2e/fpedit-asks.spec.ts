@@ -84,9 +84,20 @@ async function askFor(page: Page, act: () => Promise<unknown>, what: string): Pr
   expect((await of(page, 'ev.menu')).length, `${what} opens no window`).toBe(menus);
   return strip((await of(page, 'ev.fpedit')).at(-1) as Ev);
 }
+/**
+ * The footprint editor's selection as the engine holds it (kicadFpEditSelection,
+ * the read behind ev.selected). Read straight from the engine: in an fpedit
+ * frame ev.selected follows a pointer or key release, not a host's select.
+ */
+async function selection(page: Page): Promise<string[]> {
+  const frame = islandFrame(page);
+  if (frame == null) return [];
+  const raw = await frame.evaluate(() => String((window as unknown as { Module: { kicadFpEditSelection(): unknown } }).Module.kicadFpEditSelection()));
+  return raw === '' ? [] : ((JSON.parse(raw) as { uuids?: string[] }).uuids ?? []);
+}
 async function selectOnly(page: Page, uuid: string): Promise<void> {
   expect(await request(page, 'select', { uuids: [uuid] })).toEqual({});
-  await expect.poll(async () => (await of(page, 'ev.selected')).at(-1)?.uuids, { timeout: 5_000 }).toEqual([uuid]);
+  await expect.poll(() => selection(page), { timeout: 5_000 }).toEqual([uuid]);
 }
 /** The page's point of a footprint position in mm (the footprint sits at the origin), read from the engine's viewport. */
 async function screenOf(page: Page, frame: Frame): Promise<((x: number, y: number) => [number, number]) | null> {
@@ -134,7 +145,7 @@ test('run 15: E on a pad, a field, a shape and a text asks its kind with its uui
   for (const it of [pad, field, shape] as Item[]) {
     await selectOnly(page, it.uuid);
     expect(await askFor(page, () => request(page, 'key.press', E), `E on a ${it.kind}`)).toEqual({ type: 'ev.fpedit', ask: it.kind, uuid: it.uuid, isNew: false });
-    expect((await of(page, 'ev.selected')).at(-1)?.uuids, `the ${it.kind} stays selected`).toEqual([it.uuid]);
+    expect(await selection(page), `the ${it.kind} stays selected`).toEqual([it.uuid]);
   }
   expect(await depth(page), 'an ask changes nothing').toBe(d0);
   // A new text from KiCad's text tool asks with its new uuid, placed reading "Text"; E on it then asks text.
@@ -233,4 +244,24 @@ test('run 15: the master pad read and set with no undo step; fpedit.enumerate th
   expect((await of(page, 'ev.fpedit')).length, 'fpedit.enumerate asks nothing').toBe(asks);
   expect(await request(page, 'key.press', UNDO)).toEqual({});
   await expect.poll(async () => (await items(page, { uuids: pads.map((p) => p.uuid) })).map((p) => p.number), { timeout: 5_000 }).toEqual(pads.map((p) => p.number));
+});
+
+test('run 15: a group asks with its uuid from E and from Edit Group Properties run by name (engine fix e3-1), opening no window', async ({ page }) => {
+  const frame = await bootAsking(page);
+  await openSoic(page);
+  const shapes = (await items(page, { kinds: ['shape'] })).slice(0, 2).map((s) => s.uuid);
+  expect(shapes, 'the SOIC holds two shapes to group').toHaveLength(2);
+  expect(await request(page, 'select', { uuids: shapes })).toEqual({});
+  await expect.poll(async () => (await selection(page)).sort(), { timeout: 5_000 }).toEqual([...shapes].sort());
+  const d0 = await depth(page);
+  await run(frame, 'common.Interactive.group');
+  await expect.poll(() => depth(page), { timeout: 5_000, message: 'KiCad groups the two shapes in one undo step' }).toBe(d0 + 1);
+  // KiCad selects the group it made: its one uuid is the group's.
+  await expect.poll(async () => (await selection(page)).length, { timeout: 5_000 }).toBe(1);
+  const [group] = await selection(page);
+  expect(shapes).not.toContain(group);
+  expect(await askFor(page, () => request(page, 'key.press', E), 'E on the group')).toEqual({ type: 'ev.fpedit', ask: 'group', uuid: group, isNew: false });
+  expect(await askFor(page, () => run(frame, 'common.Groups.groupProperties'), 'Edit Group Properties')).toEqual({ type: 'ev.fpedit', ask: 'group', uuid: group, isNew: false });
+  expect(await selection(page), 'the group stays selected').toEqual([group]);
+  expect(await depth(page), 'an ask changes nothing').toBe(d0 + 1);
 });

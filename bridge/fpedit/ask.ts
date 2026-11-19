@@ -29,10 +29,11 @@ export const FPEDIT_EVENT_KEYS = ['ask', 'uuid', 'isNew'] as const;
 /**
  * Asks about one item, its uuid sent: E on a pad, a field, a text, a text
  * box, a shape, a dimension, a rule area, a table (a cell asks its table), a
- * barcode, a reference picture or a point, and Push Pad Properties (the
- * source pad). Never new.
+ * barcode, a reference picture, a point or a group (E or the context
+ * menu's Edit Group Properties, kicad cc/main 639c8bce), and Push Pad
+ * Properties (the source pad). Never new.
  */
-export const FPEDIT_ITEM_ASKS = ['pad', 'field', 'text', 'textbox', 'shape', 'dimension', 'zone', 'table', 'barcode', 'image', 'point', 'pushPad'] as const;
+export const FPEDIT_ITEM_ASKS = ['pad', 'field', 'text', 'textbox', 'shape', 'dimension', 'zone', 'table', 'barcode', 'image', 'point', 'group', 'pushPad'] as const;
 /** Asks about an item a drawing tool just made, its new uuid sent (isNew true). */
 export const FPEDIT_NEW_ASKS = ['text', 'textbox', 'table', 'barcode'] as const;
 /**

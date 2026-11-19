@@ -291,4 +291,15 @@ describe('ev.fpedit', () => {
       { type: 'ev.fpedit', ask: 'image', uuid: '', isNew: true },
     ]);
   });
+
+  it('a group asks with its uuid (engine fix e3-1, E or its context menu\'s Edit Group Properties) and goes out as ev.fpedit, so KiCad\'s Group Properties window stays shut', async () => {
+    const t = await boot('fpedit', fakeFp().exports);
+    await t.open();
+    const press = (ask: string, uuid: string, isNew: boolean) => t.win.kicadHostFpEdit?.onRequest?.(JSON.stringify({ ask, uuid, isNew }));
+    expect(press('group', P1, false)).toBe(true);
+    expect(press('group', '', false)).toBe(false);
+    expect(press('group', P1, true)).toBe(false);
+    await settle();
+    expect(t.got.filter((m) => m.type === 'ev.fpedit')).toEqual([{ type: 'ev.fpedit', ask: 'group', uuid: P1, isNew: false }]);
+  });
 });

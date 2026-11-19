@@ -20,6 +20,13 @@ describe('readFpEditAsk', () => {
     expect(new Set(FPEDIT_ASKS).size).toBe(FPEDIT_ITEM_ASKS.length + FPEDIT_FRAME_ASKS.length);
   });
 
+  it('reads a group ask (engine fix e3-1) as an item ask: its uuid, never new, never ""', () => {
+    expect(FPEDIT_ITEM_ASKS).toContain('group');
+    expect(readFpEditAsk(req('group', U, false))).toEqual({ ask: 'group', uuid: U, isNew: false });
+    expect(readFpEditAsk(req('group', '', false))).toBeNull();
+    expect(readFpEditAsk(req('group', U, true))).toBeNull();
+  });
+
   it('refuses every other form: a frame ask with a uuid, an item ask with none, a new pad, an upper case uuid, a key more or less', () => {
     for (const bad of [
       req('footprint', U, false), req('padDefaults', U, false), req('pad', '', false), req('pushPad', '', false),
