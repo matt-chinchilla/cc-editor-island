@@ -149,13 +149,18 @@ test('run 15: E on a pad, a field, a shape and a text asks its kind with its uui
   }
   expect(await depth(page), 'an ask changes nothing').toBe(d0);
   // A new text from KiCad's text tool asks with its new uuid, placed reading "Text"; E on it then asks text.
+  // KiCad's own tool start (immediate actions, as RULINGS 29d) places one text at the cursor and asks for
+  // it; each press then places and asks for one more: two texts, two asks, two uuids.
   const [x, y] = await emptyPoint(page, frame);
-  const made = await askFor(page, async () => { await run(frame, 'pcbnew.InteractiveDrawing.text'); await page.mouse.click(x, y); }, 'the text tool');
+  const started = await askFor(page, () => run(frame, 'pcbnew.InteractiveDrawing.text'), 'the text tool\'s start');
+  expect(started).toMatchObject({ type: 'ev.fpedit', ask: 'text', isNew: true });
+  const made = await askFor(page, () => page.mouse.click(x, y), 'a press of the text tool');
   expect(made).toMatchObject({ type: 'ev.fpedit', ask: 'text', isNew: true });
   expect(made.uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  expect(made.uuid).not.toBe(started.uuid);
   await request(page, 'key.press', ESC);
   expect((await items(page, { uuids: [made.uuid as string] }))[0]).toMatchObject({ kind: 'text', text: 'Text' });
-  expect(await depth(page)).toBe(d0 + 1);
+  expect(await depth(page)).toBe(d0 + 2);
   await selectOnly(page, made.uuid as string);
   expect(await askFor(page, () => request(page, 'key.press', E), 'E on the new text')).toEqual({ type: 'ev.fpedit', ask: 'text', uuid: made.uuid, isNew: false });
 });
@@ -203,10 +208,14 @@ test('run 15: the footprint, pad defaults, pad table, numbering, push pad, wizar
   const table = await askFor(page, async () => { await run(frame, 'pcbnew.InteractiveDrawing.drawTable'); await page.mouse.click(x, y); await page.mouse.click(x + 60, y + 40); }, 'the table tool');
   expect(table).toMatchObject({ ask: 'table', isNew: true });
   await request(page, 'key.press', ESC);
-  const barcode = await askFor(page, async () => { await run(frame, 'pcbnew.InteractiveDrawing.barcode'); await page.mouse.click(x - 120, y); }, 'the barcode tool');
+  // The barcode tool's start places one barcode at the cursor and asks (KiCad's immediate actions), then the press one more.
+  const barcodeStart = await askFor(page, () => run(frame, 'pcbnew.InteractiveDrawing.barcode'), 'the barcode tool\'s start');
+  expect(barcodeStart).toMatchObject({ ask: 'barcode', isNew: true });
+  const barcode = await askFor(page, () => page.mouse.click(x - 120, y), 'a press of the barcode tool');
   expect(barcode).toMatchObject({ ask: 'barcode', isNew: true });
+  expect(barcode.uuid).not.toBe(barcodeStart.uuid);
   await request(page, 'key.press', ESC);
-  expect(await depth(page)).toBe(d0 + 2);
+  expect(await depth(page)).toBe(d0 + 3);
 });
 
 test('run 15: the master pad read and set with no undo step; fpedit.enumerate then a drag over three pads numbers them in one undo step', async ({ page }) => {
