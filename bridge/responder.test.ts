@@ -766,6 +766,50 @@ describe('startResponder', () => {
     expect(eng.ctrlS).not.toHaveBeenCalled();
   });
 
+  it('a board save and a forget end a popup menu first (KiCad never waits in a menu under them), and a board save refuses under a dialog', async () => {
+    const { page, parent } = fakePage('?frame=pcb&theme=day');
+    const r = startResponder({ parentOrigin: PARENT, page });
+    const { port, got } = connect(page, parent.postMessage.mock.calls[0][0].nonce);
+    const eng = fakeEngine();
+    r.engineReady(eng.win, { tag: 't', kicad: '10.0' }, { attempts: () => 0 });
+    port.postMessage({ id: 1, op: 'project.open', args: { name: 'x', files: [{ path: 'blink.kicad_pcb', bytes: b('(kicad_pcb staged)') }] } });
+    await settle(100);
+    // A popup Escape closes (a context menu, or our parked one): closed, then the board saved.
+    eng.ui.popup = true;
+    got.length = 0;
+    port.postMessage({ id: 2, op: 'project.save' });
+    await settle(60);
+    expect(eng.ui.popup).toBe(false);
+    expect(eng.popupEl.dispatchEvent.mock.invocationCallOrder[0]).toBeLessThan(eng.Module.kicadSaveBoard.mock.invocationCallOrder[0]);
+    expect(got.at(-1)).toEqual({ id: 2, ok: true, result: { path: 'blink.kicad_pcb', saved: ['blink.kicad_pcb'] } });
+    // A dialog refuses first and nothing is touched: the popup over it stays, the engine is not asked.
+    eng.Module.kicadSaveBoard.mockClear();
+    eng.popupEl.dispatchEvent.mockClear();
+    eng.ui.popup = true;
+    eng.dialogs.push({ typeName: 'wxDialog', visible: true });
+    got.length = 0;
+    port.postMessage({ id: 3, op: 'project.save' });
+    await settle();
+    expect(got.filter((m) => (m as { id?: number }).id === 3)).toEqual([{ id: 3, ok: false, error: { code: 'busy', message: 'project.save' } }]);
+    expect(eng.popupEl.dispatchEvent).not.toHaveBeenCalled();
+    expect(eng.Module.kicadSaveBoard).not.toHaveBeenCalled();
+    eng.dialogs.length = 0;
+    // A menu bar popup takes no Escape: it stays, and the save is refused.
+    eng.ui.escapeCloses = false;
+    got.length = 0;
+    port.postMessage({ id: 4, op: 'project.save' });
+    await settle(60);
+    expect(got.filter((m) => (m as { id?: number }).id === 4)).toEqual([{ id: 4, ok: false, error: { code: 'busy', message: 'project.save' } }]);
+    expect(eng.Module.kicadSaveBoard).not.toHaveBeenCalled();
+    // A forget ends the popup before the folder is wiped.
+    eng.ui.escapeCloses = true;
+    got.length = 0;
+    port.postMessage({ id: 5, op: 'project.forget' });
+    await settle();
+    expect(got.filter((m) => (m as { id?: number }).id === 5)).toEqual([{ id: 5, ok: true, result: {} }]);
+    expect(eng.ui.popup).toBe(false);
+  });
+
   it('answers island_error when a handler rejects and still answers the next request', async () => {
     const { page, parent } = fakePage();
     startResponder({ parentOrigin: PARENT, page });

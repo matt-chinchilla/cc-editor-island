@@ -1154,6 +1154,9 @@ export function startResponder(opts: {
         placeWatch?.stop();   // a placement of the previous document is no longer watched
         stopSaveHook();   // a Ctrl+S in the still-shown document emits nothing from here on
         quietForever();
+        // A popup menu (KiCad's, or our parked context menu) is ended first, as
+        // Escape ends it, so nothing waits in a menu over a wiped folder.
+        if (win != null) dismissPopups(win);
         if (win?.FS != null) removeTree(win.FS, root);
         return ok();
       }
@@ -1708,7 +1711,15 @@ export function startResponder(opts: {
     const op = 'project.save';
     const w = win;
     if (w?.FS == null || staged == null || opened == null) return fail('not_ready', op);
-    return frame === 'pcb' ? saveBoard(w, w.FS, opened) : saveSchematic(w, opened);
+    if (frame !== 'pcb') return saveSchematic(w, opened);
+    // As the schematic save: a dialog refuses first and nothing is touched; a
+    // popup menu (KiCad's, or our parked context menu, a hidden popup of the
+    // same class) holds no edits and is closed as Escape closes it, so the save
+    // never runs while KiCad waits in a menu; a popup Escape cannot close refuses.
+    if (dialogUp(w, false)) return fail('busy', op);
+    if (dismissPopups(w)) await sleep(timing.dismissMs);
+    if (keysBlocked(w)) return fail('busy', op);
+    return saveBoard(w, w.FS, opened);
   }
 
   /** The board through kicadSaveBoard: the one file the frame shows. `ms` bounds the engine call. */
