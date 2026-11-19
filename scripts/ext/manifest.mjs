@@ -28,6 +28,9 @@ export function heldRowOf(s) {
 /** An owned path of the island ("island:bridge/x.ts (note)" is "bridge/x.ts"); null for another repository or a unit files entry. */
 const islandPath = (s) => (typeof s === 'string' && s.startsWith('island:') ? bare(s.slice('island:'.length)).replace(/#.*$/, '') : null);
 
+/** A fixture entry: its path in this repository, the manifest's "island:" prefix taken off. */
+export const fixturePath = (s) => bare(String(s).replace(/^island:/, ''));
+
 /** Every island unit of the manifest, with its names. */
 export function islandUnits(path = manifestPath()) {
   const doc = JSON.parse(readFileSync(path, 'utf8'));
@@ -56,9 +59,10 @@ export function islandUnits(path = manifestPath()) {
       asks: list('asks'),
       exportJobs: list('exportJobs'),
       frames: list('frames'),
-      e2e: typeof i.e2e === 'string' ? i.e2e : null,
-      /** The island fixture folders and files its record names. */
-      fixtures: Array.isArray(i.fixtures) ? i.fixtures.map(bare).filter((f) => f !== '') : [],
+      /** Its e2e spec; null for none (a fixture unit's record names "", i-fix-blocks). */
+      e2e: typeof i.e2e === 'string' && i.e2e.trim() !== '' ? i.e2e.trim() : null,
+      /** The island fixture folders and files its record names, "island:tests/fixtures/x/" read as "tests/fixtures/x/". */
+      fixtures: Array.isArray(i.fixtures) ? i.fixtures.map(fixturePath).filter((f) => f !== '') : [],
       /** The island paths it may create or edit (its ownedPaths). */
       owned: (Array.isArray(u.ownedPaths) ? u.ownedPaths : []).map(islandPath).filter((p) => p != null),
     });

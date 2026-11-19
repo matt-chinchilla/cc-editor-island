@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 // @ts-expect-error a plain ES module of the scripts folder, with no types
 import { assembleProtocol, PARTS, readFragment, readFragments, readProtocol, ROWS_MARK, SECTIONS_BEGIN, SECTIONS_END } from '../../scripts/ext/gen.mjs';
 // @ts-expect-error a plain ES module of the scripts folder, with no types
-import { heldRowOf } from '../../scripts/ext/manifest.mjs';
+import { fixturePath, heldRowOf } from '../../scripts/ext/manifest.mjs';
 
 const FRAGMENT = [
   '<!-- Copyright (C) 2026 Circuit Center Inc -->',
@@ -86,6 +86,11 @@ describe('the generator at the join', () => {
     expect(assembleProtocol(out, [])).toBe(protocol);
     expect(() => readFragment('n-i', '<!-- part: notes sim.run -->\nnot an item')).toThrow(/list items/);
     expect(() => assembleProtocol(protocol, [frag('n-i', '<!-- part: notes no.such -->\n- x')])).toThrow(/no section/);
+  });
+
+  it('reads a fixture entry with or without the island prefix as a path of this repository', () => {
+    expect(fixturePath('island:tests/fixtures/fpedit-small/')).toBe('tests/fixtures/fpedit-small/');
+    expect(fixturePath('tests/fixtures/sheet-pins/ (two sheets)')).toBe('tests/fixtures/sheet-pins/');
   });
 
   it('reads a held entry note as its row', () => {
