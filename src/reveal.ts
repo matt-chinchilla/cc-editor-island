@@ -20,9 +20,11 @@
 // created with its chrome already hidden (never laid out or painted), the
 // empty drawing area is painted in the palette's background, never wx's beige,
 // and kicadSetChrome paints before it returns. Such an engine says so with the
-// marker kicadBootCanvasOnly; with it the screen comes down at the engine's
-// first canvas only frame and waits for nothing else. Without it (an older
-// engine, run 14 and before) every wait below stands as it was.
+// marker kicadBootCanvasOnly; with it no chrome is waited out: a frame opening
+// a document keeps the screen until that document's first drawn frame, and a
+// frame with nothing to open shows its canvas only stage (revealCanvasOnly).
+// Without it (an older engine, run 14 and before) every wait below stands as
+// it was.
 
 /** What the reveal reads and does; main.ts gives it the document, the engine and the responder. */
 export interface RevealDeps {
@@ -59,8 +61,9 @@ export interface RevealDeps {
 }
 
 /**
- * How the screen came down: at the first frame an engine that boots canvas
- * only drew on its stage (`canvas`); for an older engine on the first
+ * How the screen came down: for an engine that boots canvas only, at its
+ * canvas only stage when nothing is opened (`canvas`) or at the first WebGL
+ * frame drawn with its document held (`drawn`); for an older engine on the first
  * WebGL frame (`drawn`), after the canvas only paint in a frame with no WebGL
  * to watch (`painted`), after that paint in a frame that holds no document and
  * is asked for none (`no_document`); or at a bound.
@@ -112,7 +115,13 @@ export const DOCUMENT_BOUND_MS = 8_000;
  * After the canvas only paint, how long a frame with no document and no
  * request in flight stays covered before it shows its empty stage: a host
  * opens its document right after ev.ready, before the paint in every start
- * measured, so this only waits out an open sent a moment late.
+ * measured, so this only waits out an open sent a moment late. An engine that
+ * boots canvas only shows its first canvas frame in the task that sends
+ * ev.ready, before any open can arrive, so there this wait is how the frame
+ * learns whether a document is coming (300 ms was too short: the harness's
+ * Glasgow opens, fetched after ev.ready, came later, and the stage showed
+ * empty before the drawing). No chrome is waited out there: that engine
+ * never painted any.
  */
 export const NO_DOCUMENT_GRACE_MS = 1_000;
 
@@ -133,7 +142,7 @@ export function hideChromeThenReveal(deps: RevealDeps, boundMs: number = REVEAL_
   // of KiCad's was ever painted, so its first canvas frame is ours to show.
   let canvasOnly = false;
   if (shown === false) { try { canvasOnly = deps.canvasOnly() === true; } catch { canvasOnly = false; } }
-  if (canvasOnly) return revealAtFirstCanvasFrame(deps, boundMs);
+  if (canvasOnly) return revealCanvasOnly(deps, boundMs);
   try { deps.hideChrome(); } catch { /* chrome stays; the page can still send chrome.show */ }
   return new Promise<RevealWay>((resolve) => {
     let done = false;
@@ -188,20 +197,20 @@ export function hideChromeThenReveal(deps: RevealDeps, boundMs: number = REVEAL_
 }
 
 /**
- * The reveal of an engine that boots canvas only: the watches are armed before
- * the hide, so the paint kicadSetChrome(false) makes before it returns is the
- * first canvas frame, whole once the call returns: the screen comes down in
- * that same task, so the next rendering shows both (an open the host sends at
- * ev.ready can hold the thread for seconds, and an animation frame asked for
- * here waited it out: 4.4 s on a board at 4x CPU in the GPU window). When that
- * paint is skipped (an engine call parked), the engine's next paint or WebGL
- * frame is the first, and the screen comes down at the next animation frame
- * after it, so that frame is composited with the hide.
+ * The reveal of an engine that boots canvas only (owner: a heavy load always
+ * shows its loading animation, never a blank stage). The watches are armed
+ * before the hide, so the paint kicadSetChrome(false) makes before it returns
+ * is the first canvas frame (else the engine's next paint or WebGL frame).
+ * Then: a frame that is opening a document (a request in flight or a document
+ * held, within NO_DOCUMENT_GRACE_MS of that frame) keeps the screen until the
+ * first WebGL frame drawn with the document held, and lifts it on the frame
+ * after, with no further wait; a frame with nothing to open shows its canvas
+ * only stage at NO_DOCUMENT_GRACE_MS. An open that ends with no document lifts
+ * it then.
  */
-function revealAtFirstCanvasFrame(deps: RevealDeps, boundMs: number): Promise<RevealWay> {
+function revealCanvasOnly(deps: RevealDeps, boundMs: number): Promise<RevealWay> {
   return new Promise<RevealWay>((resolve) => {
     let done = false;
-    let seen = false;
     const stops: Array<() => void> = [];
     const finish = (way: RevealWay): void => {
       if (done) return;
@@ -210,22 +219,69 @@ function revealAtFirstCanvasFrame(deps: RevealDeps, boundMs: number): Promise<Re
       deps.reveal();
       resolve(way);
     };
+    const read = (f: () => boolean): boolean => { try { return f(); } catch { return false; } };
+
+    // The document's first frame: a WebGL frame on the stage drawn with the
+    // document held. A frame drawn before (the empty stage, before the open
+    // arrived or while its files are staged) is no document's, so the watch
+    // goes on.
+    let drawn = false;
+    const watchDocument = (): void => {
+      const stop = deps.watchGl(() => {
+        if (done || drawn) return;
+        if (read(() => deps.hasDocument())) {
+          drawn = true;
+          deps.nextFrame(() => finish('drawn'));
+        } else {
+          watchDocument();
+        }
+      });
+      if (stop !== false) stops.push(stop);
+    };
+
+    const afterCanvas = (): void => {
+      if (done) return;
+      const since = deps.now();
+      let openedAt: number | null = null;
+      // Armed now, not when a poll first sees the open: the open holds the
+      // thread, and its first frame is drawn before a poll could run.
+      watchDocument();
+      const poll = (): void => {
+        if (done || drawn) return;
+        const now = deps.now();
+        const doc = read(() => deps.hasDocument());
+        const busy = read(() => deps.busy());
+        if (openedAt == null && (doc || busy)) openedAt = now;
+        if (openedAt != null) {
+          if (!doc && !busy) { finish('no_document'); return; }   // the open ended with nothing held
+          if (now - openedAt >= DOCUMENT_BOUND_MS) { finish('bound'); return; }
+        } else if (now - since >= NO_DOCUMENT_GRACE_MS) {
+          finish('canvas');
+          return;
+        }
+        stops.push(deps.timer(poll, REVEAL_POLL_MS));
+      };
+      poll();
+    };
+
     let hiding = true;
-    const frame = (): void => {
+    let seen = false;
+    const canvasStops: Array<() => void> = [];
+    const canvasFrame = (): void => {
       if (done || seen) return;
       seen = true;
-      if (!hiding) deps.nextFrame(() => finish('canvas'));
+      for (const stop of canvasStops.splice(0)) stop();
+      if (!hiding) afterCanvas();
     };
-    const stopPaint = deps.watchPaint(frame);
-    if (stopPaint !== false) stops.push(stopPaint);
-    const stopGl = deps.watchGl(frame);
-    if (stopGl !== false) stops.push(stopGl);
+    const stopPaint = deps.watchPaint(canvasFrame);
+    if (stopPaint !== false) canvasStops.push(stopPaint);
+    const stopGl = deps.watchGl(canvasFrame);
+    if (stopGl !== false) canvasStops.push(stopGl);
     try { deps.hideChrome(); } catch { /* the hold stays; the page can still send chrome.show */ }
     hiding = false;
-    // The hide painted, and its paint is whole now that it returned.
-    if (seen) { finish('canvas'); return; }
-    // Nothing to watch: the frame is canvas only, so the next frame shows it.
-    if (stopPaint === false && stopGl === false) { frame(); return; }
+    // The hide painted (whole now that it returned), or there is nothing to watch.
+    if (seen || (stopPaint === false && stopGl === false)) { seen = true; afterCanvas(); return; }
+    stops.push(() => { for (const stop of canvasStops.splice(0)) stop(); });
     stops.push(deps.timer(() => { if (!seen) finish('bound'); }, boundMs));
   });
 }

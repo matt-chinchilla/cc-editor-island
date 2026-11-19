@@ -89,69 +89,129 @@ function fakeStage(opts: StageOpts = {}) {
 }
 
 describe('hideChromeThenReveal: an engine that boots canvas only (its marker)', () => {
-  it('arms its watches before the hide; the paint the hide makes is the first canvas frame, shown once the hide returned', async () => {
-    const s = fakeStage({ shown: false, canvasOnly: true, paintsOnHide: true, document: true });
-    // In the hide's own task, after it returned (its paint whole), never inside the paint
-    // and never an animation frame later (an open sent at ev.ready can hold the thread).
-    expect(s.log).toEqual(['marker', 'watch', 'hide', 'reveal']);
-    expect(s.framesAsked()).toBe(0);
-    await expect(s.done).resolves.toBe('canvas');
-  });
+  const marker = { shown: false, canvasOnly: true } as const;
 
-  it('waits for no WebGL frame, no document and no grace: a design on its way is revealed at the canvas frame', async () => {
-    const s = fakeStage({ shown: false, canvasOnly: true, document: true, busy: true });
-    s.paint();
-    s.frame();
-    await expect(s.done).resolves.toBe('canvas');
-  });
-
-  it('a paint the hide skipped (an engine call parked): the next paint is the first canvas frame', async () => {
-    const s = fakeStage({ shown: false, canvasOnly: true });
-    expect(s.framesAsked()).toBe(0);
-    s.advance(500);
+  it('arms its watches before the hide, and never lifts in the hide\'s task: it first waits for the host\'s open', () => {
+    const s = fakeStage({ ...marker, paintsOnHide: true });
+    expect(s.log).toEqual(['marker', 'watch', 'hide']);
+    s.advance(NO_DOCUMENT_GRACE_MS - REVEAL_POLL_MS);
     expect(s.revealed()).toBe(false);
-    s.paint();
+  });
+
+  it('nothing to open: the canvas only stage once no open came within the grace', async () => {
+    const s = fakeStage({ ...marker, paintsOnHide: true });
+    s.advance(NO_DOCUMENT_GRACE_MS);
+    await expect(s.done).resolves.toBe('canvas');
+  });
+
+  it('an open arriving late within the grace (the harness fetches its files after ev.ready) keeps the screen', () => {
+    const s = fakeStage({ ...marker, paintsOnHide: true });
+    s.advance(NO_DOCUMENT_GRACE_MS - 2 * REVEAL_POLL_MS);
+    s.state.busy = true;
+    s.advance(DOCUMENT_BOUND_MS - REVEAL_POLL_MS);
     expect(s.revealed()).toBe(false);
-    s.frame();
-    await expect(s.done).resolves.toBe('canvas');
   });
 
-  it('a WebGL frame before any 2D paint is a canvas frame too', async () => {
-    const s = fakeStage({ shown: false, canvasOnly: true, document: true });
-    s.glFrame();
+  it('a document opening keeps the screen through the load, its frames of the empty stage included', () => {
+    const s = fakeStage({ ...marker, paintsOnHide: true });
+    s.advance(REVEAL_POLL_MS);
+    s.state.busy = true;                  // the host's open arrived
+    s.glFrame();                          // drawn while its files are staged, before the document is held
     s.frame();
-    await expect(s.done).resolves.toBe('canvas');
+    s.advance(DOCUMENT_BOUND_MS - REVEAL_POLL_MS);
+    expect(s.revealed()).toBe(false);
   });
 
-  it('a second paint or frame changes nothing: one reveal', async () => {
-    const s = fakeStage({ shown: false, canvasOnly: true });
-    s.paint();
-    s.paint();
+  it('a WebGL frame drawn with no open in flight and nothing held is no document\'s frame', async () => {
+    const s = fakeStage({ ...marker, paintsOnHide: true });
+    s.advance(REVEAL_POLL_MS);
+    s.state.busy = true;
+    s.advance(REVEAL_POLL_MS);            // the document watch is armed once the open is seen
+    s.state.busy = false;                 // the open ended with nothing held
     s.glFrame();
-    expect(s.framesAsked()).toBe(1);
+    expect(s.framesAsked()).toBe(0);
+    s.advance(REVEAL_POLL_MS);
+    await expect(s.done).resolves.toBe('no_document');
+  });
+
+  it('then lifts on the frame after the first WebGL frame drawn with the document held, with no grace', async () => {
+    const s = fakeStage({ ...marker, paintsOnHide: true });
+    s.state.busy = true;
+    s.advance(REVEAL_POLL_MS);
+    s.state.document = true;
+    s.state.busy = false;
+    s.advance(REVEAL_POLL_MS);
+    expect(s.revealed()).toBe(false);     // held, nothing drawn yet
+    s.glFrame();
+    expect(s.revealed()).toBe(false);     // composited first
     s.frame();
-    s.advance(REVEAL_BOUND_MS);
-    await expect(s.done).resolves.toBe('canvas');
+    await expect(s.done).resolves.toBe('drawn');
     expect(s.log.filter((l) => l === 'reveal')).toHaveLength(1);
   });
 
-  it('the hide\'s paint ends every watch: no bound left behind', async () => {
-    const s = fakeStage({ shown: false, canvasOnly: true, paintsOnHide: true });
-    s.advance(REVEAL_BOUND_MS * 2);
-    s.glFrame();
-    await expect(s.done).resolves.toBe('canvas');
-    expect(s.log.filter((l) => l === 'reveal')).toHaveLength(1);
+  it('watches from the canvas frame: an empty stage frame lifts nothing, the document\'s frame before any poll ran does', async () => {
+    const s = fakeStage({ ...marker, paintsOnHide: true });
+    s.glFrame();                          // the empty stage, nothing asked yet
+    expect(s.framesAsked()).toBe(0);
+    s.state.document = true;              // the open arrived and loaded, holding the thread: no poll ran
+    s.glFrame();                          // its drawing
+    s.frame();
+    await expect(s.done).resolves.toBe('drawn');
   });
 
-  it('with nothing to watch, the next frame shows the canvas only stage', async () => {
-    const s = fakeStage({ shown: false, canvasOnly: true, watchable: false, gl: false });
+  it('an open in flight at the canvas frame is a document opening too', async () => {
+    const s = fakeStage({ ...marker, paintsOnHide: true, busy: true });
+    s.glFrame();
+    s.advance(NO_DOCUMENT_GRACE_MS * 3);
+    expect(s.revealed()).toBe(false);
+    s.state.document = true;
+    s.glFrame();
+    s.frame();
+    await expect(s.done).resolves.toBe('drawn');
+  });
+
+  it('an open that ends with nothing held lifts the screen then', async () => {
+    const s = fakeStage({ ...marker, paintsOnHide: true });
+    s.state.busy = true;
+    s.advance(REVEAL_POLL_MS);
+    s.state.busy = false;
+    s.advance(REVEAL_POLL_MS);
+    await expect(s.done).resolves.toBe('no_document');
+  });
+
+  it('a document that never draws: the bound', async () => {
+    const s = fakeStage({ ...marker, paintsOnHide: true, busy: true });
+    s.advance(DOCUMENT_BOUND_MS - REVEAL_POLL_MS);
+    expect(s.revealed()).toBe(false);
+    s.advance(REVEAL_POLL_MS);
+    await expect(s.done).resolves.toBe('bound');
+  });
+
+  it('a paint the hide skipped (an engine call parked): the grace starts at the next paint', async () => {
+    const s = fakeStage({ ...marker });
+    s.advance(NO_DOCUMENT_GRACE_MS * 2);
+    expect(s.revealed()).toBe(false);
+    s.paint();
+    s.advance(NO_DOCUMENT_GRACE_MS);
+    await expect(s.done).resolves.toBe('canvas');
+  });
+
+  it('a WebGL frame before any 2D paint is the canvas frame too', async () => {
+    const s = fakeStage({ ...marker });
+    s.glFrame();
+    s.advance(NO_DOCUMENT_GRACE_MS);
+    await expect(s.done).resolves.toBe('canvas');
+  });
+
+  it('with nothing to watch, the grace runs from the hide', async () => {
+    const s = fakeStage({ ...marker, watchable: false, gl: false });
     expect(s.log).toEqual(['marker', 'hide']);
-    s.frame();
+    s.advance(NO_DOCUMENT_GRACE_MS);
     await expect(s.done).resolves.toBe('canvas');
   });
 
   it('reveals at the bound when the engine never draws', async () => {
-    const s = fakeStage({ shown: false, canvasOnly: true });
+    const s = fakeStage({ ...marker });
     s.advance(REVEAL_BOUND_MS - 1);
     expect(s.revealed()).toBe(false);
     s.advance(1);

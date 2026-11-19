@@ -245,7 +245,8 @@ async function main(): Promise<void> {
   if (gate.isFatal() || teardown.started()) return;
   // The editor wears the viewer (spec D16): KiCad's menu bar, toolbars, panes
   // and status bar never show; the page owns the chrome. An engine that booted
-  // canvas only (its marker) is shown at its first canvas frame. For an older
+  // canvas only (its marker) waits out no chrome: the screen stays for an
+  // opened document's first drawn frame, else lifts on the empty stage. For an older
   // engine: kicadSetChrome lays the frame out again before it returns, but the
   // engine paints that layout on a later turn of its loop, so the loading screen stays until it has
   // (src/reveal.ts): hidden in this task, it showed KiCad's chrome as last
