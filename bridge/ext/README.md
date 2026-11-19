@@ -115,7 +115,7 @@ Read state when called; nothing is cached.
 - the built in gates, same checks same order: `boardGate(op, exports)`, `schematicGate(op, exports)`, `documentGate(op, exports, section)`; each answers a refusal (`refused(g)`) or `{ w, mod }`
 - doing things: `pressKey(k)`, `emit(ev)`, `emitExt(type, payload, transfer?)`, `withTimeout(value, ms)`, `applyIdle(ms)`, `freshRunFolder(rootDir)`, `dropRunFolder(dir)`, `queuedRun(op, dir, ms, call, record)`, `watchedRun(...)` (closes dialogs met), `closeRunDialogs()`, `readBytes(abs)`, `refocus()`, `log(...)`
 
-Helpers: `ok`, `fail`, `isObj`, `onlyKeys`, `noArgs`, `hasAll`, `refused` from `bridge/ext/contract.ts`. A unit imports anything of `bridge/` and `src/` but `bridge/responder.ts`, `bridge/ext/registry.ts` and `src/frames.ts` (they load the units: the import would be a cycle).
+Helpers: `ok`, `fail`, `isObj`, `onlyKeys`, `noArgs`, `hasAll`, `refused` from `bridge/ext/contract.ts`. A unit imports anything of `bridge/` and `src/` but `bridge/responder.ts`, `bridge/ext/registry.ts` and `src/frames.ts` (they load the units: the import would be a cycle). The same cycle runs through `loader/src/wasm/constants.ts`, which reads `src/frames.ts`: never import statically `src/stage.ts`, `bridge/import.ts`, `src/project-libs.ts` or another module that reaches `constants.ts` (the registry loads the units while it is still being read, and its names are undefined). Import such a module at request time, `const libs = () => import('../../src/project-libs')` (i-librows), or keep what the unit shares with it in a module of the unit's own that imports none of them (st-open-kicad5-i's `legacy.ts`).
 
 ## A worked example: a small unit
 
