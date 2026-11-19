@@ -20,6 +20,7 @@
 // rides the engine's pointer fix (sy2-e) as the symbol editor's pin does.
 import { expect, test, type Frame, type Page } from '@playwright/test';
 import TOOLS from '../../theme/pencil-tools.json' with { type: 'json' };
+import palette from '../../theme/colors/circuitcenter.json' with { type: 'json' };
 
 import { ISLAND } from './ports';
 interface Ev { type: string; phase?: string; open?: boolean; shown?: boolean; depth?: number; caps?: string[]; uuids?: string[]; at: number }
@@ -37,8 +38,18 @@ const SOIC_PATH = `${SMALL}/${LIB}.pretty/${SOIC}.kicad_mod`;
 const FPEDIT_REFUSAL = 'unsupported: a footprint editor opens footprints, not documents';
 const FPEDIT_FRAME_ONLY = 'unsupported: a footprint edits in an fpedit frame';
 const FP_OPS = ['fpedit.open', 'fpedit.new', 'fpedit.state', 'fpedit.take', 'fpedit.markSaved'];
-/** The caps an fpedit frame may list (FP spec 6.1), the engine's export names aside. */
-const FPEDIT_CAPS = ['fpedit', 'fpeditHeld', 'footprintConvert', 'importGraphics', 'heldKeys', 'hostKeys', 'write', 'projectLibs'];
+/**
+ * The island's built in pseudo-caps (bridge/responder.ts) an fpedit frame never
+ * lists: its descriptor allows only heldKeys, hostKeys, write and projectLibs
+ * (FP spec 6.1). The wave units' own caps (fpedit, fpeditHeld,
+ * footprintConvert, importGraphics, m1-i's contextMenu and others as units
+ * land) are each unit's caps(mod, frame) answer and are not this list's.
+ */
+const BUILTIN_DOCUMENT_CAPS = [
+  'picker', 'fields', 'identity', 'selection', 'symbolConvert', 'symedit', 'symeditHeld', 'symbolEdit', 'libUpdate', 'models', 'plot',
+  'symbol', 'annotate', 'check', 'boardUpdate', 'drc', 'explain', 'boardItem', 'export', 'rules', 'symbols', 'symbolExchange', 'schEdit',
+  'boardFootprints', 'boardEdit', 'footprintExchange', 'settings', 'simModel', 'sim', 'boardProperties', 'properties',
+];
 const UNDO: Key = { key: 'z', code: 'KeyZ', ctrl: true };
 
 function measure(type: string, description: string): void {
@@ -60,6 +71,20 @@ const timed = (page: Page, op: string, args?: unknown): Promise<{ ms: number; re
 const text = (page: Page, path: string): Promise<string> => page.evaluate(async (p) => (await fetch(p)).text(), path);
 const heap = async (frame: Frame | null): Promise<number | null> => (frame == null ? null : frame.evaluate(() => (window as unknown as Engine).Module.HEAP8.length));
 const mb = (n: number | null): string => (n == null ? 'unread' : `${Math.round(n / 1048576)} MiB`);
+/** The viewer palette's board background (theme/colors/circuitcenter.json, the theme every frame selects) as "r,g,b,255". */
+const BOARD_BG = `${(/^rgb\((\d+), (\d+), (\d+)\)$/.exec((palette as { board: { background: string } }).board.background) ?? []).slice(1, 4).join(',')},255`;
+/** The four corner pixels of the drawing (the largest shown GL canvas, read back whole), each "r,g,b,a". */
+const corners = (frame: Frame): Promise<string[]> => frame.evaluate(() => {
+  const gls = [...document.querySelectorAll('canvas.gl-canvas')] as HTMLCanvasElement[];
+  const src = gls.filter((c) => c.style.display !== 'none' && c.width > 0).sort((a, b) => b.width * b.height - a.width * a.height)[0] ?? (document.getElementById('canvas') as HTMLCanvasElement);
+  const c = document.createElement('canvas');
+  c.width = src.width;
+  c.height = src.height;
+  const ctx = c.getContext('2d', { willReadFrequently: true })!;
+  ctx.drawImage(src, 0, 0);
+  const at = (x: number, y: number): string => [...ctx.getImageData(x, y, 1, 1).data].join(',');
+  return [at(3, 3), at(c.width - 4, 3), at(3, c.height - 4), at(c.width - 4, c.height - 4)];
+});
 
 /** Boots `frame` (on `fixture`, none: the frame alone); answers the island's frame, ev.ready's caps and the time to ready. */
 async function boot(page: Page, frame: string, fixture: string | null = null): Promise<{ frame: Frame | null; caps: string[]; readyMs: number }> {
@@ -117,10 +142,13 @@ test('run 15: boots canvas only: no KiCad window at boot, its own caps only, a d
   expect(await of(page, 'ev.menu')).toEqual([]);
   const own = caps.filter((c) => !/^kicad/.test(c));
   expect(own).toEqual(expect.arrayContaining(['fpedit', 'hostKeys', 'write']));
-  expect(own.filter((c) => !FPEDIT_CAPS.includes(c))).toEqual([]);
+  expect(own.filter((c) => BUILTIN_DOCUMENT_CAPS.includes(c))).toEqual([]);
   expect((await of(page, 'ev.chrome')).at(-1)?.shown ?? false).toBe(false);
   expect(await state(page)).toMatchObject({ open: false, token: '', name: '', modified: false });
   measure('fpedit boot', `ev.ready ${readyMs} ms after navigation; engine heap 5 s after ready ${mb(await heap(frame))}`);
+  expect(frame).not.toBeNull();
+  // The frame's fpedit.json is seeded with the viewer's appearance: KiCad's own footprint editor theme would draw 0,16,35.
+  expect(await corners(frame as Frame), 'the footprint editor draws on the viewer palette\'s board background').toEqual([BOARD_BG, BOARD_BG, BOARD_BG, BOARD_BG]);
   for (const op of ['project.open', 'project.save', 'project.plot', 'place', 'layers.get', 'board.check', 'footprint.models', 'symedit.open']) expect(await refusal(page, op, {}), op).toBe(FPEDIT_REFUSAL);
   expect(await refusal(page, 'fpedit.take')).toBe('no_footprint: fpedit.take');
   expect(await refusal(page, 'select', { uuids: [] })).toBe('no_footprint: select');

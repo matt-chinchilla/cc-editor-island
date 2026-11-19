@@ -19,7 +19,22 @@ import {
 
 declare module '../../src/types' {
   interface ExtFrames { fpedit: true }
+  interface ExtTools { footprint_editor: true }
 }
+
+/**
+ * The frame's tool: pcbnew's engine and argv[0] under a name of its own, so
+ * its settings file is seeded too. KiCad's footprint editor reads its color
+ * theme from fpedit.json (FOOTPRINT_EDITOR_SETTINGS, "appearance.color_theme",
+ * KiCad's default "user_footprints"), never from pcbnew.json: unseeded, the
+ * frame drew KiCad's default footprint editor background (0, 16, 35) in place
+ * of the viewer's palette. Seeded with the viewer's appearance, as
+ * pcbnew.json is, it draws as the board does.
+ */
+export const FPEDIT_TOOL = {
+  name: 'footprint_editor', bundle: 'kicad_editor', argv0: '/usr/bin/pcbnew', needsConfigSeed: true, libKind: 'footprint',
+  appearanceFiles: ['fpedit.json'],
+} as const;
 
 export default {
   unit: 'fp-i1',
@@ -39,8 +54,8 @@ export default {
   defineFrames: {
     fpedit: {
       token: 'fpedit',
-      // KiCad's footprint editor is a frame of pcbnew: the same kiface, booted by its own token.
-      tool: 'pcbnew',
+      // KiCad's footprint editor is a frame of pcbnew: the same kiface and argv[0], booted by its own token, its fpedit.json seeded.
+      tool: FPEDIT_TOOL,
       // A footprint editor holds no document of the project's: project.write refuses no kind of file there.
       document: null,
       extension: '.kicad_mod',

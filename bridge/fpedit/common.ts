@@ -217,16 +217,25 @@ export function fpStateOf(mod: Record<string, unknown> | null | undefined): FpEd
 export const fpFootprintOpen = (mod: Record<string, unknown> | null | undefined): boolean => fpStateOf(mod)?.open === true;
 
 /**
- * Engines whose next undo depth read is the first after an open or a new:
- * ev.edited's baseline starts again there (the open clears the undo list),
- * so an open is never reported as an edit.
+ * Engines whose next undo depth reads are the first after an open or a new,
+ * with the depth the open left: ev.edited's baseline starts again there (the
+ * open clears the undo list), so an open is never reported as an edit. The
+ * first read answers null (the responder drops its old baseline), the second
+ * the open's own depth (the new baseline), never the depth read then: an edit
+ * made before that poll ran (a tool pressed right after the open) is still
+ * reported by the read after it.
  */
-const freshOpens = new WeakSet<object>();
+const freshOpens = new WeakMap<object, { reset: boolean; depth: number }>();
 
-/** ev.edited's undo depth in an fpedit frame: kicadFpEditState().depth while a footprint is open, null otherwise and once right after an open. */
+/** ev.edited's undo depth in an fpedit frame: kicadFpEditState().depth while a footprint is open, null otherwise; right after an open null, then the open's depth. */
 export function fpUndoDepth(mod: Record<string, unknown> | null | undefined): number | null {
   if (mod == null) return null;
-  if (freshOpens.has(mod)) { freshOpens.delete(mod); return null; }
+  const fresh = freshOpens.get(mod);
+  if (fresh != null) {
+    if (fresh.reset) { fresh.reset = false; return null; }
+    freshOpens.delete(mod);
+    return fresh.depth;
+  }
   const s = fpStateOf(mod);
   return s?.open === true ? s.depth : null;
 }
@@ -308,7 +317,7 @@ async function fpOpening(ctx: ResponderCtx, op: string, discard: boolean, call: 
     return now != null && now.open && now.token === token ? now : null;
   });
   if (after == null) return fail('not_applied', op);
-  freshOpens.add(mod);
+  freshOpens.set(mod, { reset: true, depth: after.depth });
   ctx.log(op, after.name, after.padCount, `${Date.now() - t0} ms`);
   return stateAnswer(after);
 }

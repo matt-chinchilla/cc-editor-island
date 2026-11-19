@@ -11,7 +11,8 @@ import { startResponder, timing } from '../responder';
 import { BUILTIN_OPS } from './builtins';
 import type { ExtUnit } from './contract';
 import { buildRegistry, REGISTRY } from './registry';
-import { bootFrame, documentExtension, framePickKind, framePicks, frameToken, frameTool, ownDocument, unitsPerMm } from '../../src/frames';
+import { bootFrame, documentExtension, extTool, framePickKind, framePicks, frameToken, frameTool, ownDocument, unitsPerMm } from '../../src/frames';
+import { toolAppearanceFiles, toolArgv0, toolBundle, toolLibKind, toolNeedsConfigSeed } from '../../loader/src/wasm/constants';
 import { FPEDIT_EXPORTS, FPEDIT_REFUSAL, FPEDIT_WORKS } from '../fpedit/common';
 import unit from './fp-i1';
 
@@ -151,13 +152,25 @@ describe('the fpedit frame in the registry', () => {
     expect(REGISTRY.widen.get('select')?.map((w) => w.unit)).toContain('fp-i1');
   });
 
-  it('boots pcbnew with the frame token fpedit, opens .kicad_mod, pcbnew\'s units, no picker', () => {
+  it('boots pcbnew\'s engine with the frame token fpedit, opens .kicad_mod, pcbnew\'s units, no picker', () => {
     const reg = buildRegistry(mods(unit));
+    expect(reg.problems).toEqual([]);
     expect(bootFrame('fpedit', reg)).toBe('fpedit');
     expect(frameToken('fpedit' as never, reg)).toBe('fpedit');
-    expect(frameTool('fpedit' as never, reg)).toBe('pcbnew');
+    expect(frameTool('fpedit' as never, reg)).toBe('footprint_editor');
     expect([ownDocument('fpedit' as never, reg), documentExtension('fpedit' as never, reg), unitsPerMm('fpedit' as never, reg), framePicks('fpedit' as never, reg), framePickKind('fpedit' as never, reg)])
       .toEqual([null, '.kicad_mod', 1e6, false, 'footprint']);
+  });
+
+  it('its tool is pcbnew\'s engine and argv[0] with fpedit.json seeded in the viewer\'s palette (the loader\'s tables read it)', () => {
+    expect(extTool('footprint_editor', buildRegistry(mods(unit)))).toEqual({
+      name: 'footprint_editor', bundle: 'kicad_editor', argv0: '/usr/bin/pcbnew', needsConfigSeed: true, libKind: 'footprint', appearanceFiles: ['fpedit.json'],
+    });
+    expect(frameTool('fpedit' as never)).toBe('footprint_editor');
+    expect([toolArgv0('footprint_editor' as never), toolBundle('footprint_editor' as never), toolNeedsConfigSeed('footprint_editor' as never), toolLibKind('footprint_editor' as never)])
+      .toEqual(['/usr/bin/pcbnew', 'kicad_editor', true, 'footprint']);
+    expect(toolAppearanceFiles('footprint_editor' as never)).toEqual(['fpedit.json']);
+    expect(toolAppearanceFiles('pcbnew')).toEqual([]);
   });
 
   it('holds no action of its own (the held rows are fp-i2b\'s)', () => {
@@ -336,6 +349,15 @@ describe('the frame\'s events', () => {
     f.edit();
     await settle(80);
     expect(t.got.filter((m) => m.type === 'ev.edited').map((m) => m.depth)).toEqual([1, 2, 1]);
+  });
+
+  it('reports an edit made right after an open, before any poll ran (the baseline is the open\'s depth, not the next read)', async () => {
+    const f = fakeFp();
+    const t = await boot('fpedit', f.exports);
+    await t.ask('fpedit.open', { text: SOIC, name: 'A', lib: '', mode: 'library', discard: false });
+    f.edit();
+    await settle(80);
+    expect(t.got.filter((m) => m.type === 'ev.edited').map((m) => m.depth)).toEqual([1]);
   });
 
   it('sends ev.selected from kicadFpEditSelection() with fpPaths [], only while a footprint is open', async () => {
