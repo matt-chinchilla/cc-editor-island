@@ -1,0 +1,97 @@
+(kicad_sch
+	(version 20260306)
+	(generator "eeschema")
+	(generator_version "10.0")
+	(uuid "144574c8-862d-5a91-988a-98dca0975ceb")
+	(paper "A4")
+	(title_block
+		(title "Bus conflict")
+	)
+	(lib_symbols)
+	(bus
+		(pts
+			(xy 60 80) (xy 100 80)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "6423f584-f80a-541e-9ca3-994c60ebf9f8")
+	)
+	(label "D[0..3]"
+		(at 62 80 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "18c4cb77-a86e-57ec-8f79-7d7741049346")
+	)
+	(label "DATA[0..3]"
+		(at 82 80 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "62d1ae74-904a-5caf-b2f4-09291260908a")
+	)
+	(bus
+		(pts
+			(xy 60 100) (xy 100 100)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "c800f21e-0dfd-56fb-8841-77bc65160370")
+	)
+	(label "A[0..1]"
+		(at 62 100 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "6acd8f1a-cc8a-58aa-8b5d-b93bbe902237")
+	)
+	(label "ADDR[0..1]"
+		(at 82 100 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "3955afd9-2fb6-5946-8922-b235ced0a80d")
+	)
+	(bus
+		(pts
+			(xy 60 120) (xy 100 120)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "7d5b1890-5aba-529a-978a-eaa593bcc979")
+	)
+	(label "CTRL[0..1]"
+		(at 62 120 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "ff6ddb52-c4cd-5400-ab01-7348abef6e6c")
+	)
+	(sheet_instances
+		(path "/"
+			(page "1")
+		)
+	)
+	(embedded_fonts no)
+)

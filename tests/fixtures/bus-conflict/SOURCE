@@ -1,0 +1,12 @@
+SPDX-License-Identifier: CC0-1.0
+
+Written by hand for this project on 2026-11-17 (CC0 1.0: no rights
+reserved), in KiCad 10 text (schematic version 20260306): a project file and
+a one-sheet schematic of three buses. The first carries two vector labels,
+D[0..3] and DATA[0..3]; the second two, A[0..1] and ADDR[0..1]; the third
+one, CTRL[0..1]. KiCad runs its bus check on every schematic it opens, so
+the first two are the buses that need a name and the third is not one of
+them. tests/e2e/bus-migration.spec.ts opens it in a sch frame for
+buses.migration.get and buses.migration.apply. files.json lists the files
+the e2e harness opens. The KiCad files carry no comment, so this file holds
+their license.
