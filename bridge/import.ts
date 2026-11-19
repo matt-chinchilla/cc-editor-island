@@ -41,6 +41,7 @@
 import { normalizePath } from '../src/stage';
 import type { BuiltinFrame, Frame } from '../src/types';
 import { isProgressDialog, plainLabel, visibleDialogs, type DialogView, type ModalWindow, type WxElement } from './modal';
+import { LEGACY_EXPORT, LEGACY_FORMAT, legacyCallArgs, legacyProjectOf, legacySheetOf, takeLegacyRun } from './ext/st-open-kicad5-i/legacy';
 
 /**
  * The extensions the engine's board importers read at the pin (each importer's
@@ -166,7 +167,10 @@ function byCodePoint(a: string, b: string): number {
 }
 
 /** The engine export an import calls, and its arguments. */
-export type ImportCall = { name: 'kicadOpenFile'; args: [path: string] } | { name: 'kicadImportSchematic'; args: [path: string, typeName: string, propsJson: string] };
+export type ImportCall =
+  | { name: 'kicadOpenFile'; args: [path: string] }
+  | { name: 'kicadImportSchematic'; args: [path: string, typeName: string, propsJson: string] }
+  | { name: 'kicadImportLegacyProject'; args: [argsJson: string] };
 
 /**
  * The engine call for a source staged under `root` (paths relative to it): a
@@ -183,6 +187,9 @@ export type ImportCall = { name: 'kicadOpenFile'; args: [path: string] } | { nam
 export function importCall(frame: Frame, root: string, source: string, altium?: { project: string; sheets: readonly string[] }, format?: string): ImportCall {
   const abs = (p: string): string => `${root}/${p}`;
   if (frame === 'pcb') return { name: 'kicadOpenFile', args: [abs(source)] };
+  // A KiCad 5 project (st-open-kicad5-i): its <stem>.pro, with the run folder the unit's widening armed, taken once.
+  const legacy = altium == null && format === LEGACY_FORMAT ? legacySheetOf(source) : null;
+  if (legacy != null) return { name: LEGACY_EXPORT, args: [legacyCallArgs(abs(legacyProjectOf(legacy)), takeLegacyRun())] };
   if (altium != null) {
     const props: Record<string, string> = { project_file: abs(altium.project) };
     [...new Set(altium.sheets.map(abs))].sort(byCodePoint).forEach((p, i) => { props[`sch${i}`] = p; });
@@ -392,11 +399,11 @@ function errorLine(err: unknown): string {
  */
 export async function driveImport(w: ImportWindow, call: ImportCall, opts: { deadline: number; timing: ImportTiming; closed: () => boolean; engineBusy: () => boolean }): Promise<DriveResult> {
   const t = opts.timing;
-  const mod = w.Module;
-  const start = call.name === 'kicadOpenFile'
-    ? (mod?.kicadOpenFile == null ? null : () => mod.kicadOpenFile?.(...call.args))
-    : (mod?.kicadImportSchematic == null ? null : () => mod.kicadImportSchematic?.(...call.args));
-  if (start == null || typeof mod?.[call.name] !== 'function') return { ok: false, message: `${call.name} is missing` };
+  const mod = w.Module as Record<string, unknown> | undefined;
+  const fn = mod?.[call.name];
+  if (typeof fn !== 'function') return { ok: false, message: `${call.name} is missing` };
+  // kicadImportLegacyProject answers a Promise (RULINGS 18), as kicadOpenFile and kicadImportSchematic do: awaited below.
+  const start = (): unknown => (fn as (...a: unknown[]) => unknown).apply(mod, call.args);
   const tap = tapEngineLog(w);
   /** The call's answer: pending until its Promise settles. */
   // Asserted, not annotated: it is set in the call's callbacks, so the checks below must not narrow it to 'pending'.
@@ -425,7 +432,7 @@ export async function driveImport(w: ImportWindow, call: ImportCall, opts: { dea
       let shown = false;
       for (const v of visibleDialogs(w)) {
         const title = dialogTitle(w, v);
-        const kind = classify(v, title, call.name === 'kicadImportSchematic');
+        const kind = classify(v, title, call.name !== 'kicadOpenFile');
         if (kind === 'progress') continue;
         shown = true;
         // wx's ids are addresses: a later dialog may reuse one, so the kind is part of the key.
