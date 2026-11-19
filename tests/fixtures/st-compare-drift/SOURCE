@@ -1,0 +1,21 @@
+Glasgow Interface Explorer, hardware revC3, https://github.com/GlasgowEmbedded/glasgow @ 49e29452a3372fcc5aea790c080c0be554d15800 (2026-09-11), 0BSD (LICENSE beside this file). Derived for this repository on 2026-11-19 (unit st-compare-i) from tests/fixtures/glasgow:
+
+- glasgow.kicad_pro is that folder's copy, byte for byte
+  (sha256 71b492197836293287ef21694be698939b4469dc4f841f2ace86ef808a9bfc35).
+- glasgow.kicad_pcb is that folder's board (sha256
+  74ef350bc764a48f750a17e71df6bba7364e0d7fbb48d5555e94afa0b0d97c4d) with ONE
+  footprint changed: R48 (Resistor_SMD:R_0603_1608Metric on B.Cu at 124.05,
+  103.4, angle -90, uuid 00000000-0000-0000-0000-00005cc279d9). Its two pads
+  take the geometry of KiCad 10.0.4's own Resistor_SMD:R_0603_1608Metric (pad
+  at 0.825 mm from the center, 0.8 by 0.95 mm, roundrect ratio 0.25), and pad
+  1 (uuid 9fe5c991-a4bb-46ca-b81d-72a45f57a872) is turned 90 degrees on the
+  footprint (written angle 0 in place of 270); pad 2 (uuid
+  212aa087-f922-4c93-bf39-0e34e7e54b8a) keeps the footprint's orientation.
+  Nothing else differs (sha256
+  1c6d7507b45490d70d51f378a36611aa0d4e36595ae46c75121e521b81a85e55).
+
+So a compare of R48 with its source finds pad 1 and not pad 2, while the
+unchanged Glasgow board's R48 (KiCad 6's older pad geometry) differs on both.
+files.json lists the files the e2e harness opens. Read by
+tests/e2e/st/st-compare-i.spec.ts. The files carry no comment, so this file
+and LICENSE hold their license.
