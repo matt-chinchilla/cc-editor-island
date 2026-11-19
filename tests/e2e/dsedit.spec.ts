@@ -28,6 +28,12 @@ const SMALL = '/fixtures/ds-small';
 const DS_REFUSAL = 'unsupported: a drawing sheet editor opens drawing sheets, not documents';
 const DS_FRAME_ONLY = 'unsupported: a drawing sheet edits in a ds frame';
 const DS_OPS = ['dsedit.open', 'dsedit.state', 'dsedit.take', 'dsedit.markSaved', 'dsedit.show'];
+/** The island's built in pseudo-caps a ds frame never lists (its descriptor allows heldKeys and hostKeys only). */
+const BUILTIN_DOCUMENT_CAPS = [
+  'picker', 'fields', 'identity', 'selection', 'write', 'projectLibs', 'symbolConvert', 'symedit', 'symeditHeld', 'symbolEdit', 'libUpdate',
+  'models', 'plot', 'symbol', 'annotate', 'check', 'boardUpdate', 'drc', 'explain', 'boardItem', 'export', 'rules', 'symbols',
+  'symbolExchange', 'schEdit', 'boardFootprints', 'boardEdit', 'footprintExchange', 'settings', 'simModel', 'sim', 'boardProperties', 'properties',
+];
 
 function measure(type: string, description: string): void {
   test.info().annotations.push({ type, description });
@@ -62,11 +68,21 @@ async function openText(page: Page, path: string, name: string, discard = true):
   return (await request(page, 'dsedit.open', { source: 'text', text: await text(page, path), name, discard })) as unknown as State;
 }
 const take = async (page: Page): Promise<{ name: string; text: string }> => (await request(page, 'dsedit.take')) as { name: string; text: string };
-/** Presses a key and waits for the next ev.held; no KiCad window opens within a second after. */
-async function heldBy(page: Page, key: Key): Promise<string | undefined> {
+/**
+ * Presses a key and waits for the next ev.held; no KiCad window opens within a
+ * second after. A string is the reader's own chord on the drawing (Playwright's
+ * keyboard, the frame focused by a press in its corner): key.press takes only
+ * the codes KiCad's default hotkeys use (src/keys.ts), which leave out Comma.
+ */
+async function heldBy(page: Page, key: Key | string): Promise<string | undefined> {
   const n = (await of(page, 'ev.held')).length;
   const menus = (await of(page, 'ev.menu')).length;
-  expect(await request(page, 'key.press', key)).toEqual({});
+  if (typeof key === 'string') {
+    await page.locator('iframe').first().click({ position: { x: 8, y: 8 } });
+    await page.keyboard.press(key);
+  } else {
+    expect(await request(page, 'key.press', key)).toEqual({});
+  }
   await expect.poll(async () => (await of(page, 'ev.held')).length, { timeout: 5_000, message: `${JSON.stringify(key)} sends ev.held` }).toBe(n + 1);
   await page.waitForTimeout(1_000);
   expect((await of(page, 'ev.menu')).length, `${JSON.stringify(key)} opens no window`).toBe(menus);
@@ -87,7 +103,9 @@ test('boots canvas only: no KiCad window at boot, its own caps only, a document 
   expect(await of(page, 'ev.menu')).toEqual([]);
   const caps = ((await of(page, 'ev.ready'))[0]?.caps ?? []).filter((c) => !/^kicad/.test(c));
   expect(caps).toEqual(expect.arrayContaining(['dsedit', 'heldKeys', 'hostKeys']));
-  expect(caps.filter((c) => !['dsedit', 'dseditHeld', 'heldKeys', 'hostKeys'].includes(c))).toEqual([]);
+  // Of the island's built in pseudo-caps only heldKeys and hostKeys: the others are each a document's (bridge/responder.ts).
+  // The wave units' own caps (dseditHeld, m1-i's contextMenu and others as they land) are their units' caps(mod, frame) answers.
+  expect(caps.filter((c) => BUILTIN_DOCUMENT_CAPS.includes(c))).toEqual([]);
   expect((await of(page, 'ev.chrome')).at(-1)?.shown ?? false).toBe(false);
   expect(await state(page)).toMatchObject({ open: false, token: '', name: '', modified: false });
   measure('ds boot', `ev.ready ${readyMs} ms after navigation; engine heap 5 s after ready ${mb(await heap(frame))}`);
@@ -108,16 +126,20 @@ test('opens KiCad\'s basic_test sheet; take, open, take is byte stable; every fi
   const again = (await request(page, 'dsedit.open', { source: 'text', text: first.text, name: 'custom_ds.kicad_wks', discard: false })) as unknown as State;
   expect(again.items).toBe(s.items);
   expect((await take(page)).text, 'take, open, take').toBe(first.text);
-  for (const [file, min] of [['every-item.kicad_wks', 10], ['legacy.kicad_wks', 3]] as const) {
+  // A take carries no uuid (kicad-cli 10.0 refuses one), so a reopened take gives each item a fresh uuid: same items, same text.
+  expect(first.text).not.toMatch(/\(uuid /);
+  // every-item holds nine items, every kind KiCad's sheet editor draws (seen on engine build T3 and T4).
+  for (const [file, n] of [['every-item.kicad_wks', 9], ['legacy.kicad_wks', 3]] as const) {
     const opened = await openText(page, `${SMALL}/${file}`, file);
-    expect(opened.items, file).toBeGreaterThanOrEqual(min);
+    expect(opened.items, file).toBe(n);
   }
   // The legacy codes are read as KiCad's text variables.
   expect((await take(page)).text).toContain('${TITLE}');
   const def = (await request(page, 'dsedit.open', { source: 'default', name: 'new.kicad_wks', discard: false })) as unknown as State;
   expect(def.items).toBeGreaterThan(0);
   const empty = (await request(page, 'dsedit.open', { source: 'empty', name: 'blank.kicad_wks', discard: false })) as unknown as State;
-  expect(empty).toMatchObject({ open: true, name: 'blank.kicad_wks', items: 0 });
+  // KiCad's own empty sheet (emptyDrawingSheet, SetEmptyLayout) keeps one zero length line.
+  expect(empty).toMatchObject({ open: true, name: 'blank.kicad_wks', items: 1 });
   const doc = await text(page, `${BASIC}/custom_ds.kicad_wks`);
   const opens: number[] = [];
   const takes: number[] = [];
@@ -151,12 +173,12 @@ test('show changes the drawing and leaves the depth; markSaved takes only the op
 test('Ctrl+S, Ctrl+O, Ctrl+N, Ctrl+P and Ctrl+, each send ev.held and open no KiCad window', async ({ page }) => {
   await boot(page, 'ds');
   await openText(page, `${BASIC}/custom_ds.kicad_wks`, 'custom_ds.kicad_wks');
-  const keys: Array<[Key, string]> = [
+  const keys: Array<[Key | string, string]> = [
     [{ key: 's', code: 'KeyS', ctrl: true }, 'common.Control.save'],
     [{ key: 'o', code: 'KeyO', ctrl: true }, 'common.Control.open'],
     [{ key: 'n', code: 'KeyN', ctrl: true }, 'common.Control.new'],
     [{ key: 'p', code: 'KeyP', ctrl: true }, 'common.Control.print'],
-    [{ key: ',', code: 'Comma', ctrl: true }, 'common.SuiteControl.openPreferences'],
+    ['Control+Comma', 'common.SuiteControl.openPreferences'],
   ];
   for (const [key, action] of keys) expect(await heldBy(page, key), action).toBe(action);
   await page.screenshot({ path: test.info().outputPath('held-keys.png') });
