@@ -3341,6 +3341,24 @@ describe('project.write', () => {
     expect(s.text('sub/power.kicad_sch')).toBe('(kicad_sch power)');
   });
 
+  it('takes a file of its own document kind under imports/ (a file the reader brings for place.file), in a sch and a pcb frame; only the first segment exempts', async () => {
+    const sch = writing({ frame: 'sch' });
+    expect(await sch.request('project.write', { files: [{ path: 'imports/sub.kicad_sch', text: '(kicad_sch sub)' }] }))
+      .toMatchObject({ ok: true, result: { written: ['imports/sub.kicad_sch'] } });
+    expect(sch.text('imports/sub.kicad_sch')).toBe('(kicad_sch sub)');
+    for (const p of ['sub/imports/x.kicad_sch', 'imports.kicad_sch', 'Imports/x.kicad_sch']) {
+      expect(await sch.request('project.write', { files: [{ path: p, text: '(kicad_sch)' }] }))
+        .toMatchObject({ ok: false, error: { code: 'open_document', message: p } });
+    }
+    const pcb = writing({ frame: 'pcb' });
+    expect(await pcb.request('project.write', { files: [{ path: 'imports/business-card.kicad_pcb', text: '(kicad_pcb card)' }, { path: 'imports/sub.kicad_sch', text: '(kicad_sch)' }] }))
+      .toMatchObject({ ok: true, result: { written: ['imports/business-card.kicad_pcb', 'imports/sub.kicad_sch'] } });
+    expect(pcb.text('imports/business-card.kicad_pcb')).toBe('(kicad_pcb card)');
+    expect(await pcb.request('project.write', { files: [{ path: 'imports/a.kicad_pcb', text: '' }, { path: 'blink.kicad_pcb', text: '' }] }))
+      .toMatchObject({ ok: false, error: { code: 'open_document', message: 'blink.kicad_pcb' } });
+    expect(pcb.text('imports/a.kicad_pcb')).toBeNull();   // nothing of a refused request is written
+  });
+
   it('bad_args for an empty list, a path that is not a plain relative path inside the project, a text that is not a string, or an unknown key; nothing of the request is written', async () => {
     const s = writing({ frame: 'pcb' });
     const good = { path: 'ok.kicad_pro', text: '{}' };

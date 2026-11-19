@@ -153,6 +153,8 @@ const MAX_NAME = 255;
 const MAX_FORMAT = 64;
 /** project.write's bound: the UTF-8 bytes of every text of one request together (32 MiB). */
 export const MAX_WRITE_BYTES = 32 * 1024 * 1024;
+/** project.write takes a file under this folder in every frame: a file the reader brings for place.file, not yet part of the design. */
+export const IMPORTS_FOLDER = 'imports/';
 /**
  * The bridge's waits, in ms: the bound on each engine call (so no call can
  * hold the serial request chain, shutdown included), the chrome watch that
@@ -1295,7 +1297,7 @@ export function startResponder(opts: {
    * relative one, a text that is not a string, more than MAX_WRITE_BYTES of
    * UTF-8), the frame's own documents (open_document: every .kicad_sch in a
    * sch frame, which holds the whole sheet hierarchy, the .kicad_pcb in a pcb
-   * frame), the engine up (not_ready before ev.ready), then the file system
+   * frame, but never a file under imports/, which place.file reads), the engine up (not_ready before ev.ready), then the file system
    * (bad_args: a path that names a folder or runs through a file). Needs no
    * document: the file system exists from boot on.
    */
@@ -1323,7 +1325,9 @@ export function startResponder(opts: {
     if (bytes > MAX_WRITE_BYTES) return fail('bad_args', op);
     const own = ownDocument(frame, reg);
     // A symedit frame holds no document (its symbol lives in the engine): every file is taken.
-    const held = own == null ? undefined : files.find((f) => f.path.toLowerCase().endsWith(own));
+    // A file under imports/ is a file the reader brings for place.file, not part of the open
+    // design until it is placed: taken in every frame.
+    const held = own == null ? undefined : files.find((f) => !f.path.startsWith(IMPORTS_FOLDER) && f.path.toLowerCase().endsWith(own));
     if (held != null) return fail('open_document', held.path);
     const FS = win?.FS;
     if (FS == null) return fail('not_ready', op);

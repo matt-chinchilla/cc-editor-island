@@ -60,6 +60,8 @@ The manifest's ops answer `unsupported` with the message `seam placeholder: <op>
 
 `sim.stop` and `sim.release` are widened the same way and still answered off the queue (lo-e2-i). A unit that edits a bridge file it alone owns may widen there instead; the join test takes that only from the unit the manifest names. `select` in a frame a unit defines (fp-i1's `fpedit`) is widened from that unit's file: `opsWidened: { select: (args, ctx, next) => ctx.frame === 'fpedit' ? ... : next(args) }`.
 
+A file the host brings for a unit to read goes into the project folder through `project.write`, never in the request's args. `project.write` refuses the frame's own document kind (`open_document`) everywhere but under `imports/` (the path's first segment): there a `.kicad_sch` in a `sch` frame and a `.kicad_pcb` in a `pcb` frame are taken, for `place.file` (st-placefile-i) and any unit that reads a brought file of that kind.
+
 A failure answer carries `code` and `message` only (PROTOCOL.md): a state the host must read (st-compare-i's no source) is a code of its own or a field of a success answer, never an extra key of a failure.
 
 ### Frames named before they land
