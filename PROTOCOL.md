@@ -857,6 +857,15 @@ Island `v0.2.3-cc25`. Nine actions of KiCad's open a window of its own that the 
 
 The singular action names the selection, the plural one the whole design: the host reads its own selection when it opens the page. The doors table (`bridge/ext/contextMenuDoors.json`) names all nine `held`.
 
+### Edit in bulk's other doors: the bulk edits of KiCad's menus held
+
+Island `v0.2.3-cc25`. Ten more actions of KiCad's open a window of its own that a tool of the host's Edit in bulk page replaces, so the island holds them and the frame sends `ev.held { action }` in their place (from KiCad's menus under `heldMenus`, and from a key where KiCad gives one); `action.run` of one answers `held`. Each is held only in its frame and only while `ev.ready` listed the cap of the op the host's tool runs, so a host that cannot run the tool never has the window taken from it:
+
+- `pcb`, under `boardEdit` (`board.edit`): `pcbnew.GlobalEdit.editTracksAndVias` (the host opens Tracks and vias), `pcbnew.GlobalEdit.editTextAndGraphics` (Text and lines), `pcbnew.GlobalEdit.editTeardrops` (Teardrops), `pcbnew.GlobalEdit.swapLayers` (Swap layers), `pcbnew.GlobalEdit.globalDeletions` (Delete), and Tidy on the group it names: `pcbnew.GlobalEdit.cleanupTracksAndVias` (Tracks and vias), `pcbnew.GlobalEdit.removeUnusedPads` (Unused pads), `pcbnew.GlobalEdit.cleanupGraphics` (Drawings) and `pcbnew.Control.repairBoard` (Repair).
+- `sch`, under `schEdit` (`sch.edit`): `eeschema.InteractiveEdit.editTextAndGraphics` (the host opens Text and lines).
+
+`pcbnew.GlobalEdit.editTextAndGraphics` and `pcbnew.GlobalEdit.cleanupGraphics` are also held in an `fpedit` frame, where the footprint editor answers them with its own doors; a frame takes only the row that names it. None of the ten stands in our context menu, so the doors table (`bridge/ext/contextMenuDoors.json`) has no row for them.
+
 ### board.padNets
 Reads every footprint pad's net in a `pcb` frame with a board open, the facts KiCad's own Update Schematic from PCB takes from the board (island `v0.2.3-cc25`, on an engine with `kicadBoardPadNets`, engine run 15; a host gates it on `ev.ready` `caps` listing `boardPadNets`, listed by `pcb` frames only). No args (absent or `{}`). The checks, in order: the args (`bad_args`); the frame (`unsupported`); the engine (`not_ready`, `unsupported` naming `kicadBoardPadNets`); a board open (`not_ready`); a load parked, a popup or a dialog up, or an item hanging off the pointer (`busy`). A read: answered during a `board.check` or a `sheet.check`, nothing changed, no undo step.
 
