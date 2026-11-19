@@ -1062,6 +1062,20 @@ describe('key.press', () => {
     expect(seen).toEqual(['keydown:w:KeyW', 'keyup:w:KeyW']);
   });
 
+  it('presses the punctuation, arrow, Tab and paging keys KiCad binds, and still refuses a code outside the list', async () => {
+    const { eng, request } = respond(true);
+    const seen: string[] = [];
+    eng.win.dispatchEvent = vi.fn((e: Event) => { const k = e as KeyboardEvent; seen.push(`${e.type}:${k.ctrlKey ? 'Ctrl+' : ''}${k.shiftKey ? 'Shift+' : ''}${k.key}:${k.code}`); return true; });
+    expect(await request('key.press', { key: ',', code: 'Comma', ctrl: true })).toMatchObject({ ok: true, result: {} });
+    expect(await request('key.press', { key: 'ArrowUp', code: 'ArrowUp' })).toMatchObject({ ok: true, result: {} });
+    expect(await request('key.press', { key: 'Tab', code: 'Tab', shift: true })).toMatchObject({ ok: true, result: {} });
+    expect(await request('key.press', { key: 'PageDown', code: 'PageDown' })).toMatchObject({ ok: true, result: {} });
+    expect(seen).toEqual(['keydown:Ctrl+,:Comma', 'keyup:Ctrl+,:Comma', 'keydown:ArrowUp:ArrowUp', 'keyup:ArrowUp:ArrowUp',
+      'keydown:Shift+Tab:Tab', 'keyup:Shift+Tab:Tab', 'keydown:PageDown:PageDown', 'keyup:PageDown:PageDown']);
+    expect(await request('key.press', { key: '/', code: 'Slash' })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
+    expect(eng.win.dispatchEvent).toHaveBeenCalledTimes(8);
+  });
+
   it('answers busy while a KiCad dialog is up, and bad_args outside the grammar', async () => {
     const { eng, request } = respond(true);
     eng.win.dispatchEvent = vi.fn(() => true);

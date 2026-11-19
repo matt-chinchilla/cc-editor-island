@@ -9,9 +9,21 @@
 
 export interface KeyPress { key: string; code: string; ctrl: boolean; shift: boolean; alt: boolean }
 
-/** The codes KiCad's default hotkeys use. Nothing else is accepted. */
-export const KEY_CODE_RE = /^(Key[A-Z]|Digit[0-9]|F([1-9]|1[0-2])|Escape|Home|Delete|Backspace|Enter|Space)$/;
-const KEY_RE = /^(.|F([1-9]|1[0-2])|Escape|Home|Delete|Backspace|Enter)$/;
+/**
+ * The codes a key.press may carry, a closed list: each is a DOM code the
+ * engine's wx layer (wxWidgets src/wasm/keyboard.cpp, kKeyTranslationEntries)
+ * turns into the key code one of KiCad's hotkey names stands for
+ * (common/hotkeys_basic.cpp, hotkeyNameList, and any single character). The
+ * engine reads only `code` from a keydown (`key` only from a keypress, which
+ * the island never sends), so a code outside its table reaches KiCad as no
+ * key at all. Left out on purpose: Slash (absent from the engine's table, so
+ * KiCad's "/" and "?" cannot be pressed from here), NumpadDecimal (the engine
+ * makes it WXK_NUMPAD_DECIMAL, KiCad's "Num Pad ." is WXK_NUMPAD_SEPARATOR),
+ * NumpadEqual and NumpadComma (KiCad names neither), and the modifier keys.
+ */
+export const KEY_CODE_RE = /^(Key[A-Z]|Digit[0-9]|F([1-9]|1[0-9]|2[0-4])|Escape|Home|End|Insert|Delete|Backspace|Enter|Space|Tab|PageUp|PageDown|Arrow(Up|Down|Left|Right)|Comma|Period|Semicolon|Quote|BracketLeft|BracketRight|Backquote|Backslash|Minus|Equal|Numpad[0-9]|Numpad(Add|Subtract|Multiply|Divide|Enter))$/;
+/** The key a key.press names: one character, or the browser's name of a key that types none. */
+const KEY_RE = /^(.|F([1-9]|1[0-9]|2[0-4])|Escape|Home|End|Insert|Delete|Backspace|Enter|Tab|PageUp|PageDown|Arrow(Up|Down|Left|Right))$/;
 const FIELDS = ['key', 'code', 'ctrl', 'shift', 'alt'];
 
 export function parseKeyPress(args: unknown): KeyPress | null {
@@ -23,6 +35,61 @@ export function parseKeyPress(args: unknown): KeyPress | null {
   const ctrl = flag(a.ctrl), shift = flag(a.shift), alt = flag(a.alt);
   if (ctrl == null || shift == null || alt == null) return null;
   return { key: a.key, code: a.code, ctrl, shift, alt };
+}
+
+/** KiCad's names of keys that type no character, as the browser names them (key, code). */
+const KICAD_NAMED: Readonly<Record<string, readonly [string, string]>> = Object.freeze({
+  Esc: ['Escape', 'Escape'], Del: ['Delete', 'Delete'], Tab: ['Tab', 'Tab'], Back: ['Backspace', 'Backspace'],
+  Ins: ['Insert', 'Insert'], Home: ['Home', 'Home'], End: ['End', 'End'], PgUp: ['PageUp', 'PageUp'], PgDn: ['PageDown', 'PageDown'],
+  Up: ['ArrowUp', 'ArrowUp'], Down: ['ArrowDown', 'ArrowDown'], Left: ['ArrowLeft', 'ArrowLeft'], Right: ['ArrowRight', 'ArrowRight'],
+  Return: ['Enter', 'Enter'], Space: [' ', 'Space'],
+  'Num Pad +': ['+', 'NumpadAdd'], 'Num Pad -': ['-', 'NumpadSubtract'], 'Num Pad *': ['*', 'NumpadMultiply'],
+  'Num Pad /': ['/', 'NumpadDivide'], 'Num Pad Enter': ['Enter', 'NumpadEnter'],
+});
+
+/** The punctuation keys of a US layout: the character each types, unshifted and with Shift. */
+const PUNCTUATION: readonly (readonly [string, string, string])[] = [
+  ['Comma', ',', '<'], ['Period', '.', '>'], ['Semicolon', ';', ':'], ['Quote', "'", '"'], ['BracketLeft', '[', '{'],
+  ['BracketRight', ']', '}'], ['Backquote', '`', '~'], ['Backslash', '\\', '|'], ['Minus', '-', '_'], ['Equal', '=', '+'],
+];
+const SHIFTED_DIGITS = ')!@#$%^&*(';
+
+/**
+ * One of KiCad's hotkey names ("Ctrl+Alt+Shift+K", "Shift+R", "Ctrl+,", "{",
+ * "PgUp", "Num Pad 7", as a .hotkeys file writes them) as the key.press that
+ * presses it on a US layout, or null when key.press cannot carry it: the
+ * Meta, Win, Super, AltGr, Cmd and Option modifiers, "/" and "?", "Num Pad .",
+ * "Num Pad F1" to "Num Pad F4", and any name KiCad does not know. A character
+ * a US layout types with Shift ("{", "<", "~", "+") carries Shift. A letter
+ * is the lowercase key unless Shift is held, as a keyboard sends it.
+ */
+export function keyPressOfHotkey(name: string): KeyPress | null {
+  let rest = name;
+  let ctrl = false, shift = false, alt = false;
+  for (;;) {
+    if (rest.startsWith('Ctrl+') && rest.length > 5) { ctrl = true; rest = rest.slice(5); }
+    else if (rest.startsWith('Alt+') && rest.length > 4) { alt = true; rest = rest.slice(4); }
+    else if (rest.startsWith('Shift+') && rest.length > 6) { shift = true; rest = rest.slice(6); }
+    else break;
+  }
+  const make = (key: string, code: string, shifted = false): KeyPress | null =>
+    parseKeyPress({ key, code, ctrl, shift: shift || shifted, alt });
+  const named = Object.hasOwn(KICAD_NAMED, rest) ? KICAD_NAMED[rest] : undefined;
+  if (named != null) return make(named[0], named[1]);
+  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(rest)) return make(rest, rest);
+  const pad = /^Num Pad ([0-9])$/.exec(rest);
+  if (pad != null) return make(pad[1], `Numpad${pad[1]}`);
+  if (rest.length !== 1) return null;
+  if (/^[A-Za-z]$/.test(rest)) { const up = rest.toUpperCase(); return make(shift ? up : up.toLowerCase(), `Key${up}`); }
+  if (/^[0-9]$/.test(rest)) return make(rest, `Digit${rest}`);
+  const digit = SHIFTED_DIGITS.indexOf(rest);
+  if (digit >= 0) return make(rest, `Digit${digit}`, true);
+  for (const [code, plain, shifted] of PUNCTUATION) {
+    if (rest === plain) return make(plain, code);
+    if (rest === shifted) return make(shifted, code, true);
+  }
+  if (rest === ' ') return make(' ', 'Space');
+  return null;
 }
 
 /**

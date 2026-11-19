@@ -4,7 +4,7 @@
 // the document, the canvas and the three event classes are small stand-ins
 // built on node's own Event and EventTarget.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { focusCanvas, focusCanvasQuietly, focusFrameOnPress, KEY_CODE_RE, parseKeyPress, pressKey } from './keys';
+import { focusCanvas, focusCanvasQuietly, focusFrameOnPress, KEY_CODE_RE, keyPressOfHotkey, parseKeyPress, pressKey } from './keys';
 
 /** An Event subclass that keeps every init field (key, code, clientX, ...) on the instance. */
 const eventClass = () => class extends Event {
@@ -35,9 +35,78 @@ describe('parseKeyPress', () => {
     expect(parseKeyPress({ key: 'w' })).toBeNull();
     expect(parseKeyPress('w')).toBeNull();
   });
-  it('knows the codes KiCad\'s default hotkeys use and nothing else', () => {
-    for (const c of ['KeyA', 'KeyZ', 'Digit0', 'Digit9', 'F1', 'F12', 'Escape', 'Home', 'Delete', 'Backspace', 'Enter', 'Space']) expect(KEY_CODE_RE.test(c)).toBe(true);
-    for (const c of ['F13', 'Tab', 'MetaLeft', 'key', 'ArrowUp', 'Key', '']) expect(KEY_CODE_RE.test(c)).toBe(false);
+  it('knows the codes the engine turns into a key KiCad can name, and nothing else', () => {
+    const known = ['KeyA', 'KeyZ', 'Digit0', 'Digit9', 'F1', 'F12', 'F13', 'F19', 'F24', 'Escape', 'Home', 'End', 'Insert', 'Delete', 'Backspace', 'Enter', 'Space', 'Tab',
+      'PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Comma', 'Period', 'Semicolon', 'Quote', 'BracketLeft', 'BracketRight',
+      'Backquote', 'Backslash', 'Minus', 'Equal', 'Numpad0', 'Numpad9', 'NumpadAdd', 'NumpadSubtract', 'NumpadMultiply', 'NumpadDivide', 'NumpadEnter'];
+    for (const c of known) expect(KEY_CODE_RE.test(c), c).toBe(true);
+    // Slash is absent from the engine's table; NumpadDecimal is a key KiCad's "Num Pad ." is not; the rest name no key KiCad binds.
+    for (const c of ['Slash', 'NumpadDecimal', 'NumpadEqual', 'NumpadComma', 'IntlBackslash', 'F25', 'F0', 'MetaLeft', 'ShiftLeft', 'ContextMenu', 'key', 'Key', 'Arrow', 'Numpad', '']) expect(KEY_CODE_RE.test(c), c).toBe(false);
+  });
+  it('accepts the new keys by their browser names and still refuses a key outside the list', () => {
+    expect(parseKeyPress({ key: ',', code: 'Comma', ctrl: true })).toEqual({ key: ',', code: 'Comma', ctrl: true, shift: false, alt: false });
+    expect(parseKeyPress({ key: 'ArrowUp', code: 'ArrowUp' })).toEqual({ key: 'ArrowUp', code: 'ArrowUp', ctrl: false, shift: false, alt: false });
+    expect(parseKeyPress({ key: 'Tab', code: 'Tab', shift: true })).toEqual({ key: 'Tab', code: 'Tab', ctrl: false, shift: true, alt: false });
+    for (const key of ['End', 'Insert', 'PageUp', 'PageDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'F24']) expect(parseKeyPress({ key, code: key }), key).not.toBeNull();
+    expect(parseKeyPress({ key: '7', code: 'Numpad7' })).not.toBeNull();
+    expect(parseKeyPress({ key: 'Enter', code: 'NumpadEnter' })).not.toBeNull();
+    expect(parseKeyPress({ key: '/', code: 'Slash' })).toBeNull();
+    expect(parseKeyPress({ key: '.', code: 'NumpadDecimal' })).toBeNull();
+    expect(parseKeyPress({ key: 'F25', code: 'F25' })).toBeNull();
+    expect(parseKeyPress({ key: 'Up', code: 'ArrowUp' })).toBeNull();
+    expect(parseKeyPress({ key: 'PgUp', code: 'PageUp' })).toBeNull();
+  });
+});
+
+describe('keyPressOfHotkey', () => {
+  const k = (key: string, code: string, mods: { ctrl?: boolean; shift?: boolean; alt?: boolean } = {}) =>
+    ({ key, code, ctrl: mods.ctrl ?? false, shift: mods.shift ?? false, alt: mods.alt ?? false });
+
+  it('turns each of KiCad\'s key names into the code the engine reads for it', () => {
+    const cases: Array<[string, ReturnType<typeof k>]> = [
+      ['H', k('h', 'KeyH')], ['Shift+R', k('R', 'KeyR', { shift: true })], ['Ctrl+Alt+Shift+K', k('K', 'KeyK', { ctrl: true, shift: true, alt: true })],
+      ['Ctrl+Alt+7', k('7', 'Digit7', { ctrl: true, alt: true })], ['Ctrl+Alt+F1', k('F1', 'F1', { ctrl: true, alt: true })], ['F24', k('F24', 'F24')],
+      ['Ctrl+Shift+Home', k('Home', 'Home', { ctrl: true, shift: true })], ['End', k('End', 'End')], ['Ins', k('Insert', 'Insert')],
+      ['Esc', k('Escape', 'Escape')], ['Del', k('Delete', 'Delete')], ['Shift+Del', k('Delete', 'Delete', { shift: true })],
+      ['Back', k('Backspace', 'Backspace')], ['Alt+Back', k('Backspace', 'Backspace', { alt: true })], ['Return', k('Enter', 'Enter')],
+      ['Tab', k('Tab', 'Tab')], ['Shift+Tab', k('Tab', 'Tab', { shift: true })], ['Space', k(' ', 'Space')], ['Shift+Space', k(' ', 'Space', { shift: true })],
+      ['PgUp', k('PageUp', 'PageUp')], ['PgDn', k('PageDown', 'PageDown')],
+      ['Up', k('ArrowUp', 'ArrowUp')], ['Down', k('ArrowDown', 'ArrowDown')], ['Ctrl+Left', k('ArrowLeft', 'ArrowLeft', { ctrl: true })], ['Alt+Right', k('ArrowRight', 'ArrowRight', { alt: true })],
+      ['Num Pad 0', k('0', 'Numpad0')], ['Num Pad 9', k('9', 'Numpad9')], ['Num Pad +', k('+', 'NumpadAdd')], ['Num Pad -', k('-', 'NumpadSubtract')],
+      ['Num Pad *', k('*', 'NumpadMultiply')], ['Num Pad /', k('/', 'NumpadDivide')], ['Num Pad Enter', k('Enter', 'NumpadEnter')],
+      // The punctuation of KiCad's default chords, and the characters a US layout types with Shift.
+      ['Ctrl+,', k(',', 'Comma', { ctrl: true })], ['Ctrl+Shift+.', k('.', 'Period', { ctrl: true, shift: true })], ['`', k('`', 'Backquote')],
+      ['Alt+`', k('`', 'Backquote', { alt: true })], ['\\', k('\\', 'Backslash')], ["'", k("'", 'Quote')], ['-', k('-', 'Minus')], ['Ctrl+-', k('-', 'Minus', { ctrl: true })],
+      ['=', k('=', 'Equal')], [';', k(';', 'Semicolon')], ['[', k('[', 'BracketLeft')], [']', k(']', 'BracketRight')],
+      ['{', k('{', 'BracketLeft', { shift: true })], ['}', k('}', 'BracketRight', { shift: true })], ['<', k('<', 'Comma', { shift: true })],
+      ['Alt+<', k('<', 'Comma', { shift: true, alt: true })], ['Ctrl+<', k('<', 'Comma', { ctrl: true, shift: true })], ['~', k('~', 'Backquote', { shift: true })],
+      ['+', k('+', 'Equal', { shift: true })], ['Ctrl++', k('+', 'Equal', { ctrl: true, shift: true })], ['|', k('|', 'Backslash', { shift: true })],
+      ['_', k('_', 'Minus', { shift: true })], [':', k(':', 'Semicolon', { shift: true })], ['"', k('"', 'Quote', { shift: true })], ['>', k('>', 'Period', { shift: true })],
+      ['!', k('!', 'Digit1', { shift: true })], ['(', k('(', 'Digit9', { shift: true })], [')', k(')', 'Digit0', { shift: true })],
+    ];
+    for (const [name, want] of cases) expect(keyPressOfHotkey(name), name).toEqual(want);
+  });
+
+  it('answers null for a name key.press cannot carry', () => {
+    for (const name of ['/', '?', 'Ctrl+/', 'Num Pad .', 'Num Pad F1', 'Num Pad F4', 'Meta+A', 'Win+A', 'Super+A', 'AltGr+A', 'Cmd+A', 'Option+A',
+      'F25', 'Click', 'DblClick', 'Wheel', 'Ctrl+', 'Shift+', '', 'Ctrl+Foo', 'constructor', 'toString', 'é', 'Ctrl+Alt+\u00e9']) expect(keyPressOfHotkey(name), name).toBeNull();
+  });
+
+  it('carries every chord of the seeded hotkey files, both columns', () => {
+    const files = import.meta.glob(['../theme/user.hotkeys', '../theme/symedit.hotkeys', '../theme/hotkeys/*.hotkeys'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+    expect(Object.keys(files)).toEqual(expect.arrayContaining(['../theme/user.hotkeys', '../theme/symedit.hotkeys']));
+    const chords: string[] = [];
+    for (const text of Object.values(files)) {
+      for (const line of text.split('\n')) {
+        const [action, ...keys] = line.split('\t');
+        if (action === undefined || action.trim() === '') continue;
+        for (const chord of keys) if (chord !== '') chords.push(chord);
+      }
+    }
+    expect(chords.length).toBeGreaterThan(100);
+    const refused = chords.filter((c) => keyPressOfHotkey(c) == null);
+    expect(refused).toEqual([]);
+    for (const c of chords) expect(parseKeyPress(keyPressOfHotkey(c)), c).toEqual(keyPressOfHotkey(c));
   });
 });
 
