@@ -8,8 +8,9 @@
 // holds (each at most 4 MiB, at most 64 files) and lists one problem
 // { code: 'binary_model', severity: 'error', ref?, path, text } per line that
 // names a compiled model: a line starting pre_osdi or codemodel, a d_cosim
-// instance or model, or a reference to a file ending .osdi, .cm, .va, .vams,
-// .so, .dll or .dylib. sim.netlist lists them beside KiCad's own problems;
+// model or an XSPICE instance of one, or a model or include line naming a
+// file ending .osdi, .cm, .va, .vams, .so, .dll or .dylib (a net or node name
+// is never read as a file). sim.netlist lists them beside KiCad's own problems;
 // sim.run answers circuit with the first one's text and runs nothing (no run
 // is numbered, so no ev.sim is sent). The scan is pure and the island's own;
 // no engine change.
@@ -43,6 +44,11 @@ export function isBinaryName(name: string): boolean {
   const lower = name.toLowerCase();
   return BINARY_ENDINGS.some((end) => lower.endsWith(end) && lower.length > end.length);
 }
+
+/** The dot commands that read another file: their tokens are the only ones a file ending is read in, beside .model's. */
+const INCLUDE_WORDS: readonly string[] = ['.include', '.inc', '.lib'];
+/** The XSPICE co-simulation device, which loads a shared object. */
+const COSIM = 'd_cosim';
 
 /** The logical lines of a SPICE text: comments dropped, "+" continuations joined to the line before. */
 export function logicalLines(text: string): Logical[] {
@@ -78,9 +84,14 @@ export function scanText(text: string, file: string): { hits: BinaryModelProblem
   for (const line of logicalLines(text)) {
     const first = (line.tokens[0] ?? '').toLowerCase();
     const word = first.replace(/^\./, '');
-    const named = line.tokens.find(isBinaryName);
+    const model = first === '.model';
+    const include = INCLUDE_WORDS.includes(first);
+    // A file ending is read only in the tokens of a model or include line, never in a net or node name.
+    const named = model || include ? line.tokens.slice(1).find(isBinaryName) : undefined;
     const loader = word === 'pre_osdi' || word === 'codemodel';
-    const cosim = /(^|[^A-Za-z0-9_])d_cosim([^A-Za-z0-9_]|$)/i.test(line.text);
+    // d_cosim only as a model's type or as the model an XSPICE instance (an A line) names last.
+    const last = line.tokens.length > 1 ? (line.tokens[line.tokens.length - 1] ?? '').toLowerCase() : '';
+    const cosim = model ? (line.tokens[2] ?? '').toLowerCase() === COSIM : first.startsWith('a') && last === COSIM;
     if (loader || cosim || named != null) {
       const p: BinaryModelProblem = { code: BINARY_MODEL, severity: 'error', path: named ?? (loader ? line.tokens[1] : undefined) ?? file, text: line.text.slice(0, PROBLEM_TEXT_MAX) };
       // An instance line (not a dot command or a control line) names its part.
@@ -88,7 +99,7 @@ export function scanText(text: string, file: string): { hits: BinaryModelProblem
       hits.push(p);
       continue;
     }
-    if ((first === '.include' || first === '.inc' || first === '.lib') && line.tokens[1] != null) includes.push(line.tokens[1]);
+    if (include && line.tokens[1] != null) includes.push(line.tokens[1]);
   }
   return { hits, includes };
 }

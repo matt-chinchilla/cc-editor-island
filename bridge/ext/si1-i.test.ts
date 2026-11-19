@@ -81,10 +81,30 @@ describe('the scan on text', () => {
     expect(isBinaryName('model.sub')).toBe(false);
   });
 
+  it('reads file endings only in the tokens of model and include lines, never in a net or node name (RULINGS 33e)', () => {
+    for (const end of BINARY_ENDINGS) {
+      for (const line of [`R1 /bus${end} 0 1k`, `XU1 /in${end} /out mymodel`, `AU2 [ /a${end} ] [ /y ] adc1`, `V1 net${end} 0 DC 5`, `.save v(out${end})`, `.ic v(n${end})=0`]) {
+        expect(scanText(line, 'n').hits, line).toEqual([]);
+      }
+    }
+    // An instance's parameters name no compiled file the simulator would load.
+    expect(scanText('XU1 /a /b mymodel lib=models/m.cm', 'n').hits).toEqual([]);
+    // The same names on a model or include line are refused.
+    expect(scanText('.model m1 x file=models/m.cm', 'n').hits).toHaveLength(1);
+    expect(scanText('.lib models/thing.so typ', 'n').hits).toHaveLength(1);
+    expect(scanText('.INC models/thing.va', 'n').hits).toHaveLength(1);
+  });
+
+  it('reads d_cosim only as a model\'s type or an instance\'s model, never as a net or node name (RULINGS 33e)', () => {
+    expect(scanText('R1 d_cosim 0 1k', 'n').hits).toEqual([]);
+    expect(scanText('AU1 [ d_cosim ] [ /y ] adc1', 'n').hits).toEqual([]);
+    expect(scanText('.model cosim3 d_cosim(simulation="x")', 'a.lib').hits).toHaveLength(1);
+  });
+
   it('reads comments and continuations as ngspice does: one problem per logical line', () => {
     expect(scanText('* pre_osdi models/a.osdi\nR1 1 0 1k ; uses b.so\nR2 1 0 1k $ c.dll', 'n').hits).toEqual([]);
-    const cont = scanText('XU1 /a /b\n+ mymodel\n+ lib=models/m.cm', 'n').hits;
-    expect(cont).toEqual([{ code: 'binary_model', severity: 'error', ref: 'U1', path: 'models/m.cm', text: 'XU1 /a /b mymodel lib=models/m.cm' }]);
+    const cont = scanText('.model m1 x\n+ level=1\n+ file=models/m.cm', 'n').hits;
+    expect(cont).toEqual([{ code: 'binary_model', severity: 'error', path: 'models/m.cm', text: '.model m1 x level=1 file=models/m.cm' }]);
     expect(logicalLines('a\r\n+b\rc\n\n* x\n')).toEqual([{ text: 'a b', tokens: ['a', 'b'] }, { text: 'c', tokens: ['c'] }]);
   });
 
