@@ -13,7 +13,7 @@
 // Every other test boots a ds frame, which needs engine run 15.
 import { expect, test, type Page } from '@playwright/test';
 
-interface Ev { type: string; phase?: string; caps?: string[]; depth?: number; ask?: string; uuid?: string; isNew?: boolean }
+interface Ev { type: string; phase?: string; caps?: string[]; depth?: number; ask?: string; uuid?: string; isNew?: boolean; at?: number }
 interface Harness { __events: Ev[]; __bridge: { request(op: string, args?: unknown): Promise<Record<string, unknown>> } }
 interface State { token: string; open: boolean; depth: number; items: number }
 type Item = Record<string, unknown> & { kind: string; uuid: string };
