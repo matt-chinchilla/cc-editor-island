@@ -1,0 +1,11 @@
+Copyright (C) 2026 Circuit Center Inc
+SPDX-License-Identifier: CC0-1.0
+
+Drawings for graphics.import (island unit fp-i5), written by hand for the
+island and dedicated to the public domain under CC0 1.0.
+
+outline.dxf  an ASCII DXF (AC1009) in millimeters ($INSUNITS 4): one closed
+             polyline, a 20 by 10 rectangle from the origin, and one arc of
+             radius 3 centered at (10, 5) from 0 to 180 degrees.
+logo.svg     an SVG 20 by 10 mm: two closed paths, a square and a triangle,
+             stroked, no fill, no script and no external reference.
