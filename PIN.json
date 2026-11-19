@@ -1,5 +1,5 @@
 {
-  "islandId": "v0.2.3-cc24",
+  "islandId": "v0.2.3-cc25",
   "pcbjam": {
     "tag": "v0.2.3",
     "root": "7ec51c1c55aab45b21cd2956af413b4420520838",
@@ -19,8 +19,8 @@
     "toolTag": "v0.2.3",
     "build": {
       "recipe": "cc/main",
-      "pcbjam": "44e3e9f4011a8171caa84236598a31d8d3186517",
-      "kicad": "1b214bab4c341d3a0af7ce2ec4a46288df9cc443",
+      "pcbjam": "b8f251fabfd5d7da37736468c2dcd7014ea92a10",
+      "kicad": "3e13bf1210fe7ba7033b54cfe659f5c38575450f",
       "wxwidgets": "d235efd78f89a26b44b7785bf14f1b6c6c465939",
       "shared": "7791275bdfbf54e1500e303121dacaa2c3fd7d00",
       "patches": [
@@ -49,7 +49,23 @@
         "The symbol editor frame in the island: no library walk and no progress box at boot, a host mode opening a symbol the host parsed with no library row (kicad cc/main 8cc0bdd9), the checker's findings as records (kicad cc/main 4cca1e74), the symbol editor's dialogs asking the host first (kicad cc/main be322767), and its exports kicadSymEditOpen through kicadSymbolLibConvert, kicadSymbolForEditor and kicadSymbolPushToSchematic and the marker kicadHostSymEdit (pcbjam cc/main 1e9ab40, 671c64c; the island's symedit ops, the symedit, symbolConvert, symbolEdit and symeditHeld caps)",
         "The simulator: SCH_INSPECTION_TOOL::RunSimulation asks the host before KiCad's Simulator window is made (kicad cc/main e75ebe77), and the exports kicadSimModelCatalog through kicadSimOpOnSheet through KiCad's own SIM_MODEL tables and the NGSPICE client, with pegtl on the include path (pcbjam cc/main d45efd2, bf3d793; the island's sim ops, the sim and simModel caps, the separate ngspice_service files)",
         "Outputs: kicadOutputJobs, kicadExportSchematicOutput, kicadExportBoardOutput and kicadResolveRules (pcbjam cc/main 94b8da2, 1acc0b1, 598e368), with the IDF, Hyperlynx and Allegro netlist exporters reporting in place of message boxes (kicad cc/main 42b16c34, 03537007, ddc90fe3), the real VRML exporter compiled (kicad cc/main 9a513448), the schematic plot jobs linked (pcbjam cc/main 1f335b2), the enum setting and BOM delimiter repairs (pcbjam cc/main 980faba, 39e7c0f), and a VRML file holding only its header refused as a failed output (pcbjam cc/main 44e3e9f; the island's project.export and board.rules, the export and rules caps)",
-        "Properties and rules: kicadSymbolsGet, kicadSymbolsSet, kicadSymbolsExchange, kicadSchEdit and the schematic settings (pcbjam cc/main 1ea64a7), kicadBoardFootprints, kicadBoardEdit, kicadFootprintsExchange and the board settings (pcbjam cc/main bfa82d1), the custom rules parse error caught by non-const reference (pcbjam cc/main efe58fb; the island's symbols, symbolExchange, schEdit, boardFootprints, boardEdit, footprintExchange and settings caps)"
+        "Properties and rules: kicadSymbolsGet, kicadSymbolsSet, kicadSymbolsExchange, kicadSchEdit and the schematic settings (pcbjam cc/main 1ea64a7), kicadBoardFootprints, kicadBoardEdit, kicadFootprintsExchange and the board settings (pcbjam cc/main bfa82d1), the custom rules parse error caught by non-const reference (pcbjam cc/main efe58fb; the island's symbols, symbolExchange, schEdit, boardFootprints, boardEdit, footprintExchange and settings caps)",
+        "Engine run 15, the seams: every author lane's faces as inc files, each in its own namespace with its own bindings block, included once from the binding units, with the export check and the syntax check that guard them (pcbjam cc/main 4ed5328, b8eeea4, b4c97d3, 741cf62), and the early headers the lanes share (kicad cc/main 54afb1c8, c57840f9, 79c5c7af; pcbjam cc/main 9b8bcd7, 7181009)",
+        "Engine run 15, the start-up (boot-e1): with the input window.kicadBoot {chrome: false} the frame boots with KiCad's chrome already hidden, so it is never laid out or painted, kicadSetChrome paints before it returns, the empty drawing area takes the drawing's background, and the marker kicadBootCanvasOnly says so (kicad cc/main 4e344ff1; pcbjam cc/main 5dd58ae, with fix boot-1 pcbjam cc/main 3197d6d; the island's reveal)",
+        "Engine run 15, lane e1, menus, holds, prompts and tables (m1x-e1, st-hold-e, m1-e, m1x-e2, m12-e, st-keys-e, m6-e3): KiCad's canvas menus, its entry, layer, message and net class dialogs and its table forms ask the host first, held menu and toolbar presses ask by action name, with the exports to answer a parked menu or prompt, run an action, take a table as CSV, read and set hotkeys and the selection filter (kicad cc/main dc64b438; pcbjam cc/main 940807a, with fix e1-1 pcbjam cc/main 643b408)",
+        "Engine run 15, lane e2, placement, the zone and convert dialogs, the microwave tools and the auto-placer (st-mw-e, m6-e2, m6-e1, m3-e1, st-ap-e, m3-e2) (kicad cc/main 4dd7053e, with fixes e2-1 kicad cc/main 44194cbc and e2-2 kicad cc/main 79481591; pcbjam cc/main 29d09f5)",
+        "Engine run 15, lane e3, the footprint editor's and the board's item asks (fp-e1a, fp-e1b, fp-e1c, m4-e, fp-f1) (kicad cc/main 04a3fdb7, with fixes e3-1 kicad cc/main 7169cafb, e3-2 kicad cc/main c87b99c4 and fp-f1 kicad cc/main 4bc782a0; pcbjam cc/main 1a98d69)",
+        "Engine run 15, lane e4, the footprint editor's core, the item kinds and the pads (fp-e2, fp-e-items, fp-e3, fp-e4a): a footprint opened from its text with no library row and taken back as text, its items read, set, added and removed as one undo step a change (pcbjam cc/main af3d036, ccfd95a, b56c409, with fixes e4-1, e4-2 and e4-3 pcbjam cc/main 3f25893)",
+        "Engine run 15, lane e5, footprint shapes, body, check and embedded files, the board round trip and place from a file (fp-e4b, fp-e5, fp-e6, fp-e7, m13-e, st-placefile-e) (pcbjam cc/main 754cedb, with fixes e5-1 and e5-2 pcbjam cc/main 963f309)",
+        "Engine run 15, lane e6, the drawing sheet editor in the merged image and Import a drawing (ds-e1, ds-e2, fp-e8) (kicad cc/main 50a84e26, 6923bec3, with fix e6-1 kicad cc/main c01ee866; pcbjam cc/main a23525a, 2eecb2c, 1d25094)",
+        "Engine run 15, lane e7, design blocks, library rows, path variables, paste special and the drawing sheet reload (e-librows, e-block-save, e-block-layout, e-block-place, e-sheetreload, st-paste-e) (kicad cc/main caf17fbe, 40e5dcaf; pcbjam cc/main ed56f98, 020783b, with fixes e7-1 pcbjam cc/main 72217b0 and e7-2 pcbjam cc/main af9a2fe, which admits KiCad 10's 3rd party variable and adds the marker kicadPathVarsThirdParty)",
+        "Engine run 15, lane e8, schematic items, sheet pins, net names onto the schematic and the symbol editor's faults (m5-e, sy4-e, m9-e, lo-e4-e, st-incanno-e, e-block-place-sch) (kicad cc/main 29ef64bd, with fix e8-1 kicad cc/main df9d694d; pcbjam cc/main fcf9f41, 84936da)",
+        "Engine run 15, lane e9, legacy imports, rescue, bus migration and routed sessions (st-open-kicad5-e, st-ses-e, st-rescue-e, m10-e) (kicad cc/main b49e4476, 5777be95, with fix e9-2 kicad cc/main c8e04682; pcbjam cc/main 9f3a5d9, 7cbdf27, with fix e9-1 pcbjam cc/main 88b68c5)",
+        "Engine run 15, lane e10, Compare with source, find and replace, the net report, board corners and model files for 3D (st-compare-e, st-find-e-e, st-len-e-e, m3-e3, 3d-e3) (kicad cc/main 69ba698f; pcbjam cc/main 71bda53, with fix e10-3 pcbjam cc/main c6ab9ed, which serves the corners in the footprint editor)",
+        "Engine run 15, lane e11, 3D and outputs (3d-e1, 3d-e2, 3d-e4, 3d-e5, lo-e3o-e, lo-e3r-e): KiCad's render job compiled in with its picture bounded, the 3D exports through the separate occ_service files, and the output repairs e11-1 to e11-9, the ODB++ save and the IPC-D-356 via field among them (kicad cc/main e4e0860a, be164203, f671d9b4, d8ec20a0, 470249c6, 91c0d366, c11e0170, 3e13bf12; pcbjam cc/main 68459e7, 3f681e5, 403a879, 25b0f7a)",
+        "Engine run 15, lane e12, rules and settings sections (lo-e3s-e, m7-e, m8-e, st-editprefs-e, st-origins-e, st-routing-e) (kicad cc/main dac862f0; pcbjam cc/main 35d5d3d, with fixes e12-1 pcbjam cc/main 6d5a189 and e12-2 pcbjam cc/main 9758a69, which takes UNDEFINED for a tuning profile's reference layers)",
+        "Engine run 15, lane e13, simulator faults, user signals, the ngspice service and multichannel (lo-e2-e, m11-e, st-mc-e, lo-e2-svc-e) (pcbjam cc/main 95831fd, e00e4c3)",
+        "Engine run 15, the build recipe: the binding units compiled outside CMake take -DKICAD_IPC_API as the core does, so PGM_BASE's virtuals after GetPluginManager are called at their own slots and kicadPathVarsSet really sets the variable (pcbjam cc/main b8f251f; no build of run 15 before this one applied a path variable), and they reach KiCad's DXF importer header (pcbjam cc/main dca68eb)"
       ],
       "reproduction": {
         "pristine": {
@@ -63,45 +79,55 @@
     },
     "files": {
       "kicad_editor.js": {
-        "sha256": "d41c1a34bf1fc2ef1f14617adcc88396d1dcc4075587392d2acc75d2e65d6256",
-        "bytes": 489931,
-        "source": "44e3e9f4011a8171caa84236598a31d8d3186517"
+        "sha256": "1242d01d531e427542269c56f234fefe8ace42df806a7a8258d86ff3b3f78c0a",
+        "bytes": 492435,
+        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
       },
       "kicad_editor.wasm": {
-        "sha256": "173ce515ecbc352a06b140960e14efe7829de12f3d4ca9b188252f968c611cd2",
-        "bytes": 64202030,
-        "source": "44e3e9f4011a8171caa84236598a31d8d3186517"
+        "sha256": "8c494e41a4b95f5f21b32cf923434ebdd6863c5a03d0b6685ee8e9d10fbe5307",
+        "bytes": 65867175,
+        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
       },
       "wx.js": {
         "sha256": "42d6b547f9a024f187f1b7812b64a3f76ca322d35393531340cb316ff88da351",
         "bytes": 79808,
-        "source": "44e3e9f4011a8171caa84236598a31d8d3186517"
+        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
       },
       "wx-dom.js": {
         "sha256": "7edabd5571c9f2fd0ea1acf7005fb3628f2e3cf6b8f430f8e473c328fb042a10",
         "bytes": 68699,
-        "source": "44e3e9f4011a8171caa84236598a31d8d3186517"
+        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
       },
       "images.tar.gz": {
-        "sha256": "d5d297d41f4cb9780d8c673fe83ed243f5baad3ee3368c83a77187bd8892dc24",
-        "bytes": 5369698,
-        "source": "44e3e9f4011a8171caa84236598a31d8d3186517"
+        "sha256": "8fe4ec15b594473c81418743a05fbbb3fb016455b420ed234f748b6f24a56f13",
+        "bytes": 5369636,
+        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
       },
       "ngspice_service.js": {
-        "sha256": "f4cad030845b182dc17e88818fda38ce93bb2757aac63906a0d94e988cd96dc6",
+        "sha256": "bbc8828928d97cfe14a6a3f98020fecf02d874b326efcd1cd8c5a47bcfdbd739",
         "bytes": 117051,
-        "source": "44e3e9f4011a8171caa84236598a31d8d3186517"
+        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
       },
       "ngspice_service.wasm": {
-        "sha256": "ffad30a50e50c1c1a86efad20a409e7ea0790c2cb85d691e69c15ab1e184867b",
-        "bytes": 5666939,
-        "source": "44e3e9f4011a8171caa84236598a31d8d3186517"
+        "sha256": "11f878dcb08b399b592b21decd6903c479a8627d58140b969cb328781e9fc6e1",
+        "bytes": 5666867,
+        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
+      },
+      "occ_service.js": {
+        "sha256": "5083844d456e0ddf39b84c5424a60290d340bec41198e3e1919c284d25534141",
+        "bytes": 266702,
+        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
+      },
+      "occ_service.wasm": {
+        "sha256": "4bf9e9a249ffb05bbf6228539677a261a09fbd424af4e4420389ea3fbc4c069c",
+        "bytes": 60924886,
+        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
       }
     }
   },
   "icons": {
-    "stockArchiveSha256": "d5d297d41f4cb9780d8c673fe83ed243f5baad3ee3368c83a77187bd8892dc24",
-    "repackedSha256": "d049a6d71ea10940ba241a1238dc826d43a02f75e748164c6854afd05f3e8908",
+    "stockArchiveSha256": "8fe4ec15b594473c81418743a05fbbb3fb016455b420ed234f748b6f24a56f13",
+    "repackedSha256": "2890b84017e6bae0eb75f36eae053447ba2e2441f239aa10fa1a1ea00634356c",
     "inputs": {
       "theme/icons/src/add_component.svg": "d8d2dfa56f179658a3b2bd458090683161f188ad13d84d89fdb82f1a0f2a12e6",
       "theme/icons/src/add_line.svg": "64db6c023211cd897ea1f3613fcc4d338bf86fbca3086cf832bf3bf25dd516f0",
