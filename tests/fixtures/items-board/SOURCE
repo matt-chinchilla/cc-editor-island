@@ -1,0 +1,33 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (C) 2026 Circuit Center Inc
+
+Written by hand for this repository on 2026-11-19 (CC0 1.0: no rights
+reserved), no third-party content, for unit m4-i (board item properties,
+properties addendum 3.3 and 17; ledger row M4). The board was written as
+KiCad s-expressions by hand, then loaded and saved by KiCad 10.0.8's own
+board writer (pcbnew's LoadBoard and SaveBoard), which also wrote
+items-board.kicad_pro; nothing else was changed by hand after that save.
+
+items-board.kicad_pcb holds, each uuid 4d000000-0000-4000-8000-0000000000NN:
+- footprint U1 "items:Mixed" (01) at 120, 80 with an SMD rect pad 1 on GND
+  (02), a through hole circle pad 2 on /SIG (03) and an SMD custom pad 3 on
+  GND with one polygon primitive (04);
+- board shapes: a segment (21), a rectangle (22) and a circle (23) on
+  F.SilkS; an arc (24), a polygon (25) and a bezier (26) on User.1;
+- one dimension of each type: aligned (31), orthogonal (32), leader (33),
+  center (34), radial (35, on the circle);
+- a text box (51); a 2 by 2 table (52) whose first cell spans both columns
+  (cells 53 to 56); a QR barcode (57); a reference picture (58, the 64 by 64
+  PNG mark64.png, drawn by a short script for this fixture:
+  eight pixel checks crossed by two diagonals, in the brand green);
+- a rule area with no tracks (61), a keepout of footprints (62) and a non
+  copper zone on F.SilkS (63);
+- a point (64); a target mark (65); a group "pair" (68) of two silk
+  segments (66, 67);
+- a track on /SIG (71) and a single track tuning pattern over it (72);
+- the board outline (81).
+
+mark64.png is also the picture the e2e places with board.image.place.
+files.json lists the files the e2e harness opens. Read by
+tests/e2e/board-items.spec.ts. The files carry no comment, so this file
+holds their license.
