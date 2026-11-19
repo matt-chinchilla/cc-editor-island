@@ -1,0 +1,19 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (C) 2026 Circuit Center Inc
+
+Written by hand for this repository on 2026-11-19 (CC0 1.0: no rights
+reserved; unit st-open-foreign-i), in the LTspice schematic and symbol text
+formats as KiCad's LTspice importer reads them
+(eeschema/sch_io/ltspice/ltspice_schematic.cpp: SHEET, WIRE, FLAG, SYMBOL,
+SYMATTR and TEXT in the .asc; LINE, CIRCLE, WINDOW, SYMATTR, PIN and PINATTR
+in the .asy):
+- divider.asc: a 5 V source V1 and two 10k resistors R1 and R2 in series, the
+  divider's middle labeled "out", the bottom on ground ("0"), and the
+  directive .op.
+- res.asy and voltage.asy: the two symbols it places, drawn here (no file of
+  LTspice's own is copied). KiCad's importer looks for a symbol's .asy beside
+  the .asc first, so the import finds them without an LTspice install.
+
+files.json lists the files staged together. Read by
+tests/e2e/st/st-open-foreign-i.spec.ts. The files carry no comment, so this
+file holds their license.

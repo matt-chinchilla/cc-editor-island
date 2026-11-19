@@ -1,0 +1,44 @@
+(CADSTARSCM
+ (HEADER
+  (FORMAT SCHEMATIC 2 21)
+  (JOBFILE "minimal.scm")
+  (JOBTITLE "minimal")
+  (GENERATOR "written by hand")
+  (RESOLUTION
+   (METRIC HUNDREDTH MICRON)
+  )
+  (TIMESTAMP 2026 11 19 0 0 0)
+ )
+ (ASSIGNMENTS
+  (CODEDEFS
+   (TEXTCODE TC1 "Default" 25400 250000 0)
+  )
+  (SETTINGS
+   (DESIGNORIGIN
+    (PT 0 0)
+   )
+   (DESIGNLIMIT
+    (PT 42000000 29700000)
+   )
+  )
+  (GRIDS
+   (WORKINGGRID
+    (STEPGRID "Working" 127000 127000)
+   )
+   (SCREENGRID
+    (STEPGRID "Screen" 254000 254000)
+   )
+  )
+ )
+ (SHEETS
+  (SHEET LAY1 "Sheet1")
+ )
+ (SCHEMATIC
+  (TEXT TEXT1 "Divider" TC1 LAY1
+   (PT 1000000 1000000)
+  )
+  (TEXT TEXT2 "A minimal CADSTAR schematic" TC1 LAY1
+   (PT 1000000 2000000)
+  )
+ )
+)

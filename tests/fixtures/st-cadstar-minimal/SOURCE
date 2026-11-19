@@ -1,0 +1,18 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (C) 2026 Circuit Center Inc
+
+Written by hand for this repository on 2026-11-19 (CC0 1.0: no rights
+reserved; unit st-open-foreign-i). KiCad's qa holds no CADSTAR schematic
+archive, so this one follows the grammar KiCad's own parser reads
+(common/io/cadstar/cadstar_archive_parser.cpp: LoadArchiveFile, HEADER,
+TEXTCODE, SETTINGS, GRIDS, TEXT; eeschema/sch_io/cadstar/cadstar_sch_archive_parser.cpp:
+the CADSTARSCM root, ASSIGNMENTS, SHEETS, SCHEMATIC): one sheet LAY1 holding
+two texts in text code TC1, at a resolution of a hundredth of a micron,
+with a working grid of 1.27 mm and a screen grid of 2.54 mm. The screen grid
+is needed: KiCad's loader divides by it when it sizes each sheet, and a file
+without one stops the engine (measured 2026-11-19: "RuntimeError: divide by
+zero").
+
+files.json lists the file staged. Read by
+tests/e2e/st/st-open-foreign-i.spec.ts. The file carries no comment, so this
+file holds its license.

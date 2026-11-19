@@ -50,9 +50,28 @@ import { isProgressDialog, plainLabel, visibleDialogs, type DialogView, type Mod
  */
 export const IMPORT_EXTENSIONS_PCB = ['.brd', '.cpa', '.json', '.zip', '.asc', '.pcb', '.txt', '.fab', '.pcbdoc', '.cmpcbdoc', '.cspcbdoc', '.swpcbdoc'] as const;
 /**
- * The importer each schematic extension names, as KiCad's own type string
- * (SCH_IO_MGR::ShowType, the string kicadImportSchematic reads): Altium,
- * Eagle, CADSTAR, LTspice, EasyEDA Std and EasyEDA Pro.
+ * Every schematic importer the engine runs, as KiCad's own type string
+ * (SCH_IO_MGR::ShowType, the string kicadImportSchematic reads; the engine
+ * refuses any other). A `format` that is one of these picks the importer in a
+ * sch frame, whatever the file's extension (st-open-foreign-i): a gEDA `.sch`
+ * is not read as Eagle, a PADS Logic `.asc` is not read as LTspice.
+ */
+export const SCHEMATIC_FORMATS = Object.freeze([
+  'Altium',
+  'CADSTAR Schematic Archive',
+  'EAGLE',
+  'EasyEDA (JLCEDA) Std',
+  'EasyEDA (JLCEDA) Pro',
+  'gEDA / Lepton EDA',
+  'LTspice',
+  'PADS Logic',
+] as const);
+export type SchematicFormat = (typeof SCHEMATIC_FORMATS)[number];
+/**
+ * The importer each schematic extension names when no `format` does (the
+ * fallback): Altium, Eagle, CADSTAR, LTspice, EasyEDA Std and EasyEDA Pro.
+ * A `.sch` is Eagle's and an `.asc` LTspice's unless the format says gEDA or
+ * PADS Logic (KiCad's PADS Logic importer reads `.asc` and `.txt`).
  */
 export const SCHEMATIC_TYPES = Object.freeze({
   '.schdoc': 'Altium',
@@ -61,7 +80,7 @@ export const SCHEMATIC_TYPES = Object.freeze({
   '.asc': 'LTspice',
   '.json': 'EasyEDA (JLCEDA) Std',
   '.zip': 'EasyEDA (JLCEDA) Pro',
-} as const);
+} as const satisfies Readonly<Record<string, SchematicFormat>>);
 /** The extensions a sch frame imports. */
 export const IMPORT_EXTENSIONS_SCH = Object.keys(SCHEMATIC_TYPES) as ReadonlyArray<keyof typeof SCHEMATIC_TYPES>;
 /** An Altium project's sheets and its project file. */
@@ -149,16 +168,17 @@ export type ImportCall = { name: 'kicadOpenFile'; args: [path: string] } | { nam
 
 /**
  * The engine call for a source staged under `root` (paths relative to it): a
- * board through kicadOpenFile; a schematic through kicadImportSchematic with
- * KiCad's type for its extension and no properties; an Altium project through
+ * board through kicadOpenFile (the engine tells Eagle, Allegro and a KiCad 4
+ * board apart by content; `format` is not read); a schematic through
+ * kicadImportSchematic with the type `format` names, else KiCad's type for its
+ * extension (schematicType), and no properties; an Altium project through
  * kicadImportSchematic("", "Altium", props), the props as KiCad's own project
  * import builds them (kicad/import_proj.cpp at the pin): `project_file`, the
  * `.PrjPcb`'s absolute path, then `sch0`, `sch1`, ... over every sheet's
  * absolute path, each once, in a std::set's order (code point order).
  */
-// `format` is project.import's optional format name, passed through by the responder (the import units read it here).
+// `format` is project.import's optional format name, passed through by the responder.
 export function importCall(frame: Frame, root: string, source: string, altium?: { project: string; sheets: readonly string[] }, format?: string): ImportCall {
-  void format;
   const abs = (p: string): string => `${root}/${p}`;
   if (frame === 'pcb') return { name: 'kicadOpenFile', args: [abs(source)] };
   if (altium != null) {
@@ -166,8 +186,24 @@ export function importCall(frame: Frame, root: string, source: string, altium?: 
     [...new Set(altium.sheets.map(abs))].sort(byCodePoint).forEach((p, i) => { props[`sch${i}`] = p; });
     return { name: 'kicadImportSchematic', args: ['', SCHEMATIC_TYPES[ALTIUM_SHEET], JSON.stringify(props)] };
   }
+  return { name: 'kicadImportSchematic', args: [abs(source), schematicType(source, format), '{}'] };
+}
+
+/** One of the engine's schematic importers, spelled exactly as KiCad spells it. */
+export function isSchematicFormat(format: unknown): format is SchematicFormat {
+  return typeof format === 'string' && (SCHEMATIC_FORMATS as readonly string[]).includes(format);
+}
+
+/**
+ * The importer a schematic is read with: `format` when it names one of the
+ * engine's importers (authoritative), else the one its extension names, else ''
+ * (which the engine refuses). Any other `format` (a hint the island does not
+ * know) leaves the extension to choose, as before the format was read.
+ */
+export function schematicType(source: string, format?: string): SchematicFormat | '' {
+  if (isSchematicFormat(format)) return format;
   const ext = IMPORT_EXTENSIONS_SCH.find((e) => hasExtension(source, e));
-  return { name: 'kicadImportSchematic', args: [abs(source), ext == null ? '' : SCHEMATIC_TYPES[ext], '{}'] };
+  return ext == null ? '' : SCHEMATIC_TYPES[ext];
 }
 
 type DomRect = { left: number; top: number; width: number; height: number };
