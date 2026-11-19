@@ -156,6 +156,22 @@ export const MAX_WRITE_BYTES = 32 * 1024 * 1024;
 /** project.write takes a file under this folder in every frame: a file the reader brings for place.file, not yet part of the design. */
 export const IMPORTS_FOLDER = 'imports/';
 /**
+ * A design block's own file, inside its block folder at any depth of the
+ * project: `<lib>.kicad_blocks/<name>.kicad_block/<file>`, the folder names
+ * spelled as KiCad writes them. project.write takes it in every frame: it is
+ * a block's stored copy (KiCad reads it when the block is placed or its
+ * layout applied, and writes it when a block is saved), never a document the
+ * frame holds open, so a host that saves a block can give its schematic to
+ * the schematic frame and its layout to the board frame.
+ */
+export function isBlockFile(path: string): boolean {
+  const parts = path.split('/');
+  if (parts.length < 3) return false;
+  const lib = parts[parts.length - 3]!;
+  const block = parts[parts.length - 2]!;
+  return lib.length > '.kicad_blocks'.length && lib.endsWith('.kicad_blocks') && block.length > '.kicad_block'.length && block.endsWith('.kicad_block');
+}
+/**
  * The bridge's waits, in ms: the bound on each engine call (so no call can
  * hold the serial request chain, shutdown included), the chrome watch that
  * runs on behind an open's answer (bridge/chromeWatch.ts; no answer waits for
@@ -1310,7 +1326,8 @@ export function startResponder(opts: {
    * relative one, a text that is not a string, more than MAX_WRITE_BYTES of
    * UTF-8), the frame's own documents (open_document: every .kicad_sch in a
    * sch frame, which holds the whole sheet hierarchy, the .kicad_pcb in a pcb
-   * frame, but never a file under imports/, which place.file reads), the engine up (not_ready before ev.ready), then the file system
+   * frame, but never a file under imports/, which place.file reads, nor a
+   * design block's own file in its block folder, isBlockFile), the engine up (not_ready before ev.ready), then the file system
    * (bad_args: a path that names a folder or runs through a file). Needs no
    * document: the file system exists from boot on.
    */
@@ -1340,7 +1357,8 @@ export function startResponder(opts: {
     // A symedit frame holds no document (its symbol lives in the engine): every file is taken.
     // A file under imports/ is a file the reader brings for place.file, not part of the open
     // design until it is placed: taken in every frame.
-    const held = own == null ? undefined : files.find((f) => !f.path.startsWith(IMPORTS_FOLDER) && f.path.toLowerCase().endsWith(own));
+    // A design block's own file in its block folder is the block's stored copy, never an open document: taken in every frame.
+    const held = own == null ? undefined : files.find((f) => !f.path.startsWith(IMPORTS_FOLDER) && !isBlockFile(f.path) && f.path.toLowerCase().endsWith(own));
     if (held != null) return fail('open_document', held.path);
     const FS = win?.FS;
     if (FS == null) return fail('not_ready', op);

@@ -3445,6 +3445,38 @@ describe('project.write', () => {
     expect(pcb.text('imports/a.kicad_pcb')).toBeNull();   // nothing of a refused request is written
   });
 
+  it('takes a design block\'s own schematic and layout inside its block folder, in a sch and a pcb frame (the page saved a block and the frame of its kind refused the write); only that folder shape exempts', async () => {
+    const block = 'glasgow_blocks.kicad_blocks/iobuf.kicad_block';
+    const sch = writing({ frame: 'sch' });
+    expect(await sch.request('project.write', { files: [
+      { path: `${block}/iobuf.kicad_sch`, text: '(kicad_sch iobuf)' },
+      { path: `${block}/iobuf.json`, text: '{}' },
+      { path: 'design-block-lib-table', text: '(design_block_lib_table)' },
+    ] })).toMatchObject({ ok: true, result: { written: [`${block}/iobuf.kicad_sch`, `${block}/iobuf.json`, 'design-block-lib-table'] } });
+    expect(sch.text(`${block}/iobuf.kicad_sch`)).toBe('(kicad_sch iobuf)');
+    // A design dropped inside a folder keeps its blocks under that folder.
+    expect(await sch.request('project.write', { files: [{ path: `hw/${block}/iobuf.kicad_sch`, text: '(kicad_sch)' }] }))
+      .toMatchObject({ ok: true, result: { written: [`hw/${block}/iobuf.kicad_sch`] } });
+    for (const p of [
+      'glasgow_blocks.kicad_blocks/iobuf.kicad_sch',            // no block folder
+      'iobuf.kicad_block/iobuf.kicad_sch',                      // no folder of blocks around it
+      `${block}/sub/iobuf.kicad_sch`,                           // deeper than a block's own files
+      'glasgow_blocks.KICAD_BLOCKS/iobuf.kicad_block/a.kicad_sch', // not the spelling KiCad writes
+      'kicad_blocks/kicad_block/a.kicad_sch',                   // folders that only carry the words
+    ]) {
+      expect(await sch.request('project.write', { files: [{ path: p, text: '(kicad_sch)' }] }))
+        .toMatchObject({ ok: false, error: { code: 'open_document', message: p } });
+    }
+    const pcb = writing({ frame: 'pcb' });
+    expect(await pcb.request('project.write', { files: [{ path: `${block}/iobuf.kicad_pcb`, text: '(kicad_pcb iobuf)' }, { path: `${block}/iobuf.kicad_sch`, text: '(kicad_sch)' }] }))
+      .toMatchObject({ ok: true, result: { written: [`${block}/iobuf.kicad_pcb`, `${block}/iobuf.kicad_sch`] } });
+    expect(pcb.text(`${block}/iobuf.kicad_pcb`)).toBe('(kicad_pcb iobuf)');
+    // The frame's own board beside a block's layout is still refused, and nothing of that request is written.
+    expect(await pcb.request('project.write', { files: [{ path: `${block}/other.kicad_pcb`, text: '' }, { path: 'blink.kicad_pcb', text: '' }] }))
+      .toMatchObject({ ok: false, error: { code: 'open_document', message: 'blink.kicad_pcb' } });
+    expect(pcb.text(`${block}/other.kicad_pcb`)).toBeNull();
+  });
+
   it('bad_args for an empty list, a path that is not a plain relative path inside the project, a text that is not a string, or an unknown key; nothing of the request is written', async () => {
     const s = writing({ frame: 'pcb' });
     const good = { path: 'ok.kicad_pro', text: '{}' };
