@@ -1,0 +1,21 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (C) 2026 Circuit Center Inc
+
+Written by hand for this repository on 2026-11-19 (CC0 1.0: no rights
+reserved), no third-party content but the shape of KiCad's Device:R as the
+variants fixture carries it. A KiCad 10 design for net names from the board
+onto the schematic (board.padNets and sch.renameNets,
+tests/e2e/lo/rename-nets.spec.ts):
+- rename-nets.kicad_sch, one sheet: R1 and R2 (10k, 0603) and a local label
+  SIG on the wire that joins R1 pin 2 and R2 pin 1 (the label's uuid
+  cc0e4a11-0000-4000-8000-000000000c10); R1 pin 1 and R2 pin 2 are left
+  unconnected;
+- rename-nets.kicad_pcb, its board as if that net were renamed DATA on the
+  board: the two footprints with their schematic paths, R1 pad 2 and R2 pad 1
+  on the net DATA, the other two pads on no net, a 14 by 10 mm outline;
+- rename-nets.kicad_pro names the root sheet.
+Read by kicad-cli 10.0 (kicad/kicad:10.0, 2026-11-19): the board check with
+schematic parity reports R1 pad 2 and R2 pad 1 on DATA where the schematic
+gives /SIG, and nothing else of the nets. files.json lists what the e2e
+harness opens. The KiCad files carry no comment (their formats have none),
+so this file holds their license.
