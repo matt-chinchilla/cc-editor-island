@@ -10,6 +10,7 @@ import sch from './toolbars/eeschema-toolbars.json?raw';
 import hotkeys from './user.hotkeys?raw';
 import symeditHotkeys from './symedit.hotkeys?raw';
 import type { Seeds } from '../loader/src/wasm/boot';
+import { SHEET_THEME, sheetThemeOf } from './sheet-theme';
 import type { Theme } from '../src/types';
 
 /**
@@ -30,6 +31,8 @@ export function seedsFor(theme: Theme): Seeds {
       { name: 'circuitcenter.json', json: palette },
       { name: 'circuitcenter-light.json', json: light },
       { name: 'circuitcenter-dark.json', json: dark },
+      // The drawing sheet editor's own: the palette with the drawing sheet in a color that shows (sheet-theme.ts).
+      { name: `${SHEET_THEME}.json`, json: sheetThemeOf(palette) },
     ],
     colorTheme: 'circuitcenter',
     toolbars: [{ name: 'pcbnew-toolbars.json', json: pcb }, { name: 'eeschema-toolbars.json', json: sch }],

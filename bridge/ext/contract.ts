@@ -195,6 +195,14 @@ export interface ToolKind {
    * pcbnew.json are (loader/src/wasm/boot.ts). Only with needsConfigSeed.
    */
   appearanceFiles?: readonly string[];
+  /**
+   * The seeded canvas color theme (theme/seeds.ts, a file name's stem under
+   * the config's colors folder) the tool's appearanceFiles select in place of
+   * the viewer's palette: the drawing sheet editor's, whose items are drawn
+   * in the one color the palette makes transparent. Only with appearanceFiles;
+   * absent, the palette as every other tool.
+   */
+  colorTheme?: string;
 }
 
 /** A frame a unit's file adds (the footprint editor fpedit, the drawing sheet editor ds). */

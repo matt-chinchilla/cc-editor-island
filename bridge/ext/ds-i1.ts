@@ -15,6 +15,7 @@ import {
   DS_FRAME, DS_FRAME_ONLY, DS_HELD, DS_REFUSAL, DS_WORKS, DSEDIT_CAP, DSEDIT_EXPORTS,
   dsMarkSaved, dsOpen, dsSelect, dsSelectionRead, dsSheetOpen, dsShow, dsState, dsTake, dsUndoDepth,
 } from '../dsedit';
+import { SHEET_THEME } from '../../theme/sheet-theme';
 
 declare module '../../src/types' {
   interface ExtFrames { ds: true }
@@ -41,8 +42,10 @@ export default {
   defineFrames: {
     ds: {
       token: 'ds',
-      // pl_editor reads its own pl_editor.json: seeded with the viewer's appearance, the frame draws in the viewer's palette.
-      tool: { name: 'pl_editor', bundle: 'kicad_editor', argv0: '/usr/bin/pl_editor', needsConfigSeed: true, libKind: null, appearanceFiles: ['pl_editor.json'] },
+      // pl_editor reads its own pl_editor.json: seeded with the viewer's appearance, the frame draws in the viewer's palette,
+      // but for the drawing sheet's own color: the palette makes it transparent (no page frame on a schematic) and it is the
+      // color every item of a sheet is drawn in here, so the frame selects the sheet theme (theme/sheet-theme.ts).
+      tool: { name: 'pl_editor', bundle: 'kicad_editor', argv0: '/usr/bin/pl_editor', needsConfigSeed: true, libKind: null, appearanceFiles: ['pl_editor.json'], colorTheme: SHEET_THEME },
       // A drawing sheet holds no document: project.write is refused whole (below), so no kind of its own.
       document: null,
       extension: '.kicad_wks',

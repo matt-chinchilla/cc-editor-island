@@ -14,7 +14,9 @@ import { buildRegistry, heldActions, REGISTRY } from './registry';
 import { bootFrame, documentExtension, extTool, framePicks, frameToken, frameTool, ownDocument, unitsPerMm } from '../../src/frames';
 import { DS_HELD, DS_REFUSAL, DS_WORKS, DSEDIT_EXPORTS } from '../dsedit';
 import unit from './ds-i1';
-import { toolAppearanceFiles, toolNeedsConfigSeed } from '../../loader/src/wasm/constants';
+import { toolAppearanceFiles, toolColorTheme, toolNeedsConfigSeed } from '../../loader/src/wasm/constants';
+import { seedsFor } from '../../theme/seeds';
+import { SHEET_THEME } from '../../theme/sheet-theme';
 
 const PARENT = 'http://localhost';
 const U1 = '33333333-0000-4000-8000-000000000001';
@@ -149,13 +151,27 @@ describe('the ds frame in the registry', () => {
     expect(bootFrame('ds', reg)).toBe('ds');
     expect(frameToken('ds' as never, reg)).toBe('ds');
     expect(frameTool('ds' as never, reg)).toBe('pl_editor');
-    expect(extTool('pl_editor', reg)).toEqual({ name: 'pl_editor', bundle: 'kicad_editor', argv0: '/usr/bin/pl_editor', needsConfigSeed: true, libKind: null, appearanceFiles: ['pl_editor.json'] });
+    expect(extTool('pl_editor', reg)).toEqual({ name: 'pl_editor', bundle: 'kicad_editor', argv0: '/usr/bin/pl_editor', needsConfigSeed: true, libKind: null, appearanceFiles: ['pl_editor.json'], colorTheme: 'circuitcenter-sheet' });
     expect([ownDocument('ds' as never, reg), documentExtension('ds' as never, reg), unitsPerMm('ds' as never, reg), framePicks('ds' as never, reg)]).toEqual([null, '.kicad_wks', 1e3, false]);
   });
 
   it('seeds pl_editor.json with the viewer\'s appearance, and no other tool gains a file', () => {
     expect([toolNeedsConfigSeed('pl_editor'), toolAppearanceFiles('pl_editor')]).toEqual([true, ['pl_editor.json']]);
     expect([toolAppearanceFiles('pcbnew'), toolAppearanceFiles('eeschema')]).toEqual([[], []]);
+  });
+
+  it('selects the sheet theme in pl_editor.json, a theme the seeds carry; every other tool keeps the palette', () => {
+    // The palette's drawing sheet color is transparent, and it is the color the editor draws a sheet's items in.
+    expect(toolColorTheme('pl_editor')).toBe(SHEET_THEME);
+    expect(seedsFor('day').colors.map((c) => c.name)).toContain(`${toolColorTheme('pl_editor')}.json`);
+    expect([toolColorTheme('pcbnew'), toolColorTheme('eeschema'), toolColorTheme('footprint_editor' as never)]).toEqual([null, null, null]);
+  });
+
+  it('a frame whose tool names a color theme with no settings file to select it in is refused', () => {
+    const bad = { ...unit, defineFrames: { ds: { ...unit.defineFrames.ds, tool: { ...unit.defineFrames.ds.tool, appearanceFiles: undefined } } } };
+    expect(buildRegistry(mods(bad as never)).problems.join(' ')).toContain('colorTheme');
+    const odd = { ...unit, defineFrames: { ds: { ...unit.defineFrames.ds, tool: { ...unit.defineFrames.ds.tool, colorTheme: '../x' } } } };
+    expect(buildRegistry(mods(odd as never)).problems.join(' ')).toContain('colorTheme');
   });
 
   it('holds the frame\'s twelve actions in a ds frame under dsedit, and nothing in another frame', () => {

@@ -150,6 +150,40 @@ test('opens KiCad\'s basic_test sheet; take, open, take is byte stable; every fi
   measure('dsedit.open and take, custom_ds', `open median ${median(opens)} ms of ${opens.join(', ')}; take median ${median(takes)} ms of ${takes.join(', ')}`);
 });
 
+test('draws a sheet\'s items with nothing selected, in the sheet theme\'s color (the palette paints that color transparent)', async ({ page }) => {
+  const { frame } = await boot(page, 'ds');
+  expect(frame).not.toBeNull();
+  // The frame's own settings file selects the sheet theme, and the theme is seeded.
+  const seeded = await frame!.evaluate(() => {
+    const FS = (window as unknown as { FS: { readFile(p: string, o: { encoding: 'utf8' }): string } }).FS;
+    const dir = '/home/kicad/.config/kicad/kicad/10.0';
+    const theme = (JSON.parse(FS.readFile(`${dir}/pl_editor.json`, { encoding: 'utf8' })) as { appearance?: { color_theme?: string } }).appearance?.color_theme ?? '';
+    const colors = JSON.parse(FS.readFile(`${dir}/colors/${theme}.json`, { encoding: 'utf8' })) as { schematic: { worksheet: string } };
+    return { theme, worksheet: colors.schematic.worksheet };
+  });
+  expect(seeded).toEqual({ theme: 'circuitcenter-sheet', worksheet: 'rgb(100, 190, 203)' });
+  // The drawing: pixels of the sheet's own color, counted over the whole canvas.
+  const inSheetColor = (): Promise<number> => frame!.evaluate(() => {
+    const gls = [...document.querySelectorAll('canvas.gl-canvas')] as HTMLCanvasElement[];
+    const src = gls.filter((c) => c.style.display !== 'none' && c.width > 0).sort((a, b) => b.width * b.height - a.width * a.height)[0] ?? (document.getElementById('canvas') as HTMLCanvasElement);
+    const c = document.createElement('canvas');
+    c.width = src.width;
+    c.height = src.height;
+    const ctx = c.getContext('2d', { willReadFrequently: true })!;
+    ctx.drawImage(src, 0, 0);
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (Math.abs(d[i]! - 100) <= 6 && Math.abs(d[i + 1]! - 190) <= 6 && Math.abs(d[i + 2]! - 203) <= 6) n += 1;
+    return n;
+  });
+  const before = await inSheetColor();
+  const s = await openText(page, `${BASIC}/custom_ds.kicad_wks`, 'custom_ds.kicad_wks', false);
+  expect(s.items).toBeGreaterThan(0);
+  await request(page, 'select', { uuids: [], zoom: false });
+  // The title block's lines and texts, the border and its marks: thousands of pixels once drawn, none before a sheet is open.
+  await expect.poll(inSheetColor, { timeout: 15_000 }).toBeGreaterThan(before + 500);
+});
+
 test('refuses an unreadable sheet with KiCad\'s line and changes nothing', async ({ page }) => {
   await boot(page, 'ds');
   const before = await openText(page, `${BASIC}/custom_ds.kicad_wks`, 'custom_ds.kicad_wks');

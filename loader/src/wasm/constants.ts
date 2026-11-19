@@ -10,6 +10,8 @@
 // Modified by Circuit Center on 2026-11-18: toolAppearanceFiles answers the
 // settings files a wave unit's tool takes the viewer's appearance in
 // (pl_editor.json for the drawing sheet editor), from its frame's descriptor.
+// Modified by Circuit Center on 2026-11-19: toolColorTheme answers the canvas
+// color theme such a tool selects there in place of the viewer's palette.
 import type { BuiltinTool, Tool } from "../../../src/types";
 import { extTool } from "../../../src/frames";
 
@@ -134,6 +136,16 @@ export function toolNeedsConfigSeed(tool: Tool): boolean {
 export function toolAppearanceFiles(tool: Tool): readonly string[] {
   if ((TOOL_NEEDS_CONFIG_SEED as Readonly<Record<string, boolean>>)[tool] !== undefined) return [];
   return extTool(tool)?.appearanceFiles ?? [];
+}
+
+/**
+ * The canvas color theme a wave unit's tool selects in its appearance files
+ * in place of the one every tool takes (the drawing sheet editor's own, from
+ * its frame's descriptor); null for the seeds' theme.
+ */
+export function toolColorTheme(tool: Tool): string | null {
+  if ((TOOL_NEEDS_CONFIG_SEED as Readonly<Record<string, boolean>>)[tool] !== undefined) return null;
+  return extTool(tool)?.colorTheme ?? null;
 }
 
 /** The library kind a tool consumes. */

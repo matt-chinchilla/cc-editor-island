@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Chirichella Inc.
 import { describe, expect, it } from 'vitest';
 import { seedsFor } from './seeds';
+import { SHEET_THEME, sheetThemeOf } from './sheet-theme';
 import ledger from './user.hotkeys?raw';
 import symedit from './symedit.hotkeys?raw';
 import defaultsJson from './pencil-tools.defaults.json?raw';
@@ -12,7 +13,7 @@ describe('the seeds', () => {
     const s = seedsFor(theme);
     expect(s.colorTheme).toBe('circuitcenter');
     const names = s.colors.map((c) => c.name);
-    expect(names).toEqual(['circuitcenter.json', 'circuitcenter-light.json', 'circuitcenter-dark.json']);
+    expect(names).toEqual(['circuitcenter.json', 'circuitcenter-light.json', 'circuitcenter-dark.json', 'circuitcenter-sheet.json']);
     const t = JSON.parse(s.colors[0].json);
     expect(t.meta).toEqual({ name: 'Circuit Center', version: 5 });
     // The viewer's Witch Hazel: its schematic paper, the black its board canvas
@@ -20,6 +21,27 @@ describe('the seeds', () => {
     expect(t.schematic.background).toBe('rgb(19, 18, 24)');
     expect(t.board.background).toBe('rgb(0, 0, 0)');
     expect(t.board.copper.f).toBe('rgb(226, 114, 153)');
+  });
+
+  it('carry the drawing sheet editor\'s theme: the palette with the drawing sheet in a color that shows', () => {
+    // The palette paints schematic.worksheet transparent (no page frame on a schematic),
+    // and that one color is what KiCad's drawing sheet editor draws every item of a sheet
+    // in (DS_RENDER_SETTINGS::LoadColors): with the palette itself a sheet's lines and
+    // texts showed only while selected.
+    const s = seedsFor('day');
+    const palette = JSON.parse(s.colors[0].json);
+    const sheet = JSON.parse(s.colors.find((c) => c.name === `${SHEET_THEME}.json`)!.json);
+    expect(palette.schematic.worksheet).toBe('rgba(0, 0, 0, 0)');
+    expect(sheet.schematic.worksheet).toBe('rgb(100, 190, 203)');
+    expect(sheet.schematic.worksheet).toBe(palette.board.worksheet);
+    expect(sheet.schematic.page_limits).toBe(palette.board.page_limits);
+    expect(sheet.meta).toEqual({ name: 'Circuit Center sheet', version: palette.meta.version });
+    // Everything else is the viewer's palette, key for key.
+    const rest = (t: { schematic: Record<string, unknown> }) => ({ ...t, meta: null, schematic: { ...t.schematic, worksheet: null, page_limits: null } });
+    expect(rest(sheet)).toEqual(rest(palette));
+    // The editors of a design keep the palette.
+    expect(s.colorTheme).toBe('circuitcenter');
+    expect(sheetThemeOf('not json')).toBe('not json');
   });
 
   it('turn the anti-aliasing off, so the full-frame canvas keeps up with the cursor', () => {

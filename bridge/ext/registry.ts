@@ -246,6 +246,7 @@ function frameKindProblem(k: FrameKind): string | null {
   if (typeof k.token !== 'string' || !/^[a-z][a-z0-9]{0,15}$/.test(k.token)) return 'token';
   if (typeof k.tool === 'string' ? !['pcbnew', 'eeschema'].includes(k.tool) : (k.tool == null || typeof k.tool.name !== 'string' || !/^[a-z][a-z_]{0,31}$/.test(k.tool.name) || ['pcbnew', 'eeschema'].includes(k.tool.name) || k.tool.bundle !== 'kicad_editor' || typeof k.tool.argv0 !== 'string')) return 'tool';
   if (typeof k.tool !== 'string' && k.tool.appearanceFiles !== undefined && (!strings(k.tool.appearanceFiles) || !k.tool.needsConfigSeed || !k.tool.appearanceFiles.every((f) => /^[a-z][a-z0-9_]{0,31}\.json$/.test(f) && !SEEDED_ELSEWHERE.includes(f)))) return 'appearanceFiles';
+  if (typeof k.tool !== 'string' && k.tool.colorTheme !== undefined && (typeof k.tool.colorTheme !== 'string' || !/^[a-z][a-z0-9-]{0,31}$/.test(k.tool.colorTheme) || !strings(k.tool.appearanceFiles) || k.tool.appearanceFiles.length === 0)) return 'colorTheme';
   if (k.document !== null && (typeof k.document !== 'string' || !/^\.[a-z_]+$/.test(k.document))) return 'document';
   if (typeof k.extension !== 'string' || !/^\.[a-z_]+$/.test(k.extension)) return 'extension';
   if (typeof k.unitsPerMm !== 'number' || !(k.unitsPerMm > 0)) return 'unitsPerMm';

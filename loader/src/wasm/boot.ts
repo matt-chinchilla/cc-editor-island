@@ -31,6 +31,8 @@
 // Modified by Circuit Center on 2026-11-18: a wave unit's tool also gets the
 // appearance seed in its own settings files (toolAppearanceFiles: the drawing
 // sheet editor's pl_editor.json), so its frame draws in the viewer's palette.
+// Modified by Circuit Center on 2026-11-19: a wave unit's tool that names a
+// canvas color theme of its own (toolColorTheme) selects it in those files.
 import type { Tool } from "../../../src/types";
 import {
   KICAD_CONFIG_DIR,
@@ -38,6 +40,7 @@ import {
   toolAppearanceFiles,
   toolArgv0,
   toolBundle,
+  toolColorTheme,
   toolLibKind,
   toolNeedsConfigSeed,
   type Bundle,
@@ -625,10 +628,10 @@ async function doBoot(opts: BootOptions): Promise<void> {
     for (const { name, json } of opts.seeds.colors) {
       writeIfAbsent(`${KICAD_CONFIG_DIR}/colors/${name}`, json);
     }
-    const appearance = JSON.stringify(
+    const appearanceOf = (colorTheme: string): string => JSON.stringify(
       {
         appearance: {
-          color_theme: opts.seeds.colorTheme,
+          color_theme: colorTheme,
           custom_toolbars: true,
         },
         // The cursor seed pins KiCad's defaults except one key: the small
@@ -641,11 +644,15 @@ async function doBoot(opts: BootOptions): Promise<void> {
       null,
       2,
     );
+    const appearance = appearanceOf(opts.seeds.colorTheme);
     // writeIfAbsent by design: a same-session relaunch after the user
     // switched themes in-app (F4 persists into these files) must win.
     writeIfAbsent(`${KICAD_CONFIG_DIR}/eeschema.json`, appearance);
     writeIfAbsent(`${KICAD_CONFIG_DIR}/pcbnew.json`, appearance);
-    for (const file of toolAppearanceFiles(tool)) writeIfAbsent(`${KICAD_CONFIG_DIR}/${file}`, appearance);
+    // A wave unit's tool selects its own seeded theme there when it names one
+    // (the drawing sheet editor's: the palette with the sheet in a color that shows).
+    const own = appearanceOf(toolColorTheme(tool) ?? opts.seeds.colorTheme);
+    for (const file of toolAppearanceFiles(tool)) writeIfAbsent(`${KICAD_CONFIG_DIR}/${file}`, own);
     FS.mkdirTree(`${KICAD_CONFIG_DIR}/toolbars`);
     for (const { name, json } of opts.seeds.toolbars) {
       writeIfAbsent(`${KICAD_CONFIG_DIR}/toolbars/${name}`, json);
