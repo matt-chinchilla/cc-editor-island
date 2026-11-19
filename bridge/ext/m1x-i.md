@@ -1,0 +1,31 @@
+<!-- Copyright (C) 2026 Circuit Center Inc -->
+<!-- SPDX-License-Identifier: MIT -->
+<!-- part: requests -->
+| `prompt.answer` | `{ token: number, ...answer }` (the ask's answer keys beside `token`) | `{ accepted: true }` or `{ accepted: false, field: string, message: string }` |
+| `prompt.cancel` | `{ token: number }` | `{}` |
+| `prompt.pick` | `{ token: number, kind: "item" \| "point" }` | `{}` |
+<!-- part: codes -->
+| `no_picker` | `prompt.pick` of a kind the prompt's dialog has no picker for (only the placement asks have pickers): nothing ran; `message` names the ask and the kind. |
+<!-- part: events -->
+- `ev.prompt { token: number, ask: string, modal: boolean, frame: string, record: object }` (island `v0.2.3-cc25`, the `prompts` cap): a dialog of KiCad's asked the host in place of its window (Prompts, below), and the frame parked it for the host's card. `record` is the ask's own closed shape. Exactly these keys.
+- `ev.promptUpdate { token: number, record: object }` (island `v0.2.3-cc25`): a parked modeless prompt's new record (a pick's result, KiCad showing the dialog again). Exactly these keys.
+- `ev.promptEnd { token: number, reason: "canceled" | "gone" }` (island `v0.2.3-cc25`): the parked prompt `token` ended without the host's answer or cancel: `canceled` when KiCad canceled it (its tool ended), `gone` when its dialog went (destroyed, or the document forgotten by `project.forget`). The host closes its card. Never sent for the host's own `prompt.answer` or `prompt.cancel`. Exactly these keys.
+<!-- part: section -->
+### Prompts (`prompts`)
+
+Island `v0.2.3-cc25`. Our engine from run 15 (kicad `cc/main` K-PROMPT, `include/host_prompt.h`) asks the frame before a hooked dialog of KiCad's shows, in every editor frame (`sch`, `pcb`, `symedit`, `fpedit`, `ds`). The frame takes the ask while `ev.ready` listed the pseudo-cap `prompts`, a document is open, no `project.import` runs, the host is connected, and an island unit reads the ask's record (an ask no unit reads, or a record of another shape, is declined); KiCad then waits in its own modal wait (a modal ask) or keeps its dialog open unseen (a modeless one), and the frame sends `ev.prompt`. Otherwise KiCad's dialog shows as before. `ev.ready` lists `prompts` exactly when the engine has `kicadHostPrompts`, `kicadPromptAnswer`, `kicadPromptCancel` and `kicadPromptPick`; on an older engine (run 14 and before) the cap is absent and every op below answers `unsupported` naming the export.
+
+The generic asks and their records (lengths in millimeters, angles in degrees, layers by canonical name, as the board records):
+
+- `entry` (KiCad's unit, point, text and multi value entry dialogs: Fillet Tracks, Fillet and Chamfer Lines, Simplify and Heal Shapes, Dogbone Corners, Move Corner To and Move Midpoint To, Grid Origin, the microwave values): `{ title, fields: [{ key, label, kind, value, tip }] }`, `kind` `length`, `angle`, `text`, `check` or `point` (`value` `{ x, y }`), `key` `value` for a one value dialog, `point` for the point dialog, `f0`, `f1` and on for the multi dialog. Answer `{ values: { <key>: number | string | boolean | { x, y } } }`; a key left out keeps the dialog's value.
+- `layer` (KiCad's one layer chooser: Select Layer and Place Via, Create Tracks from a selection off copper): `{ current, layers: [{ canonical, name, color }] }`, the layers the dialog allows, `color` `#rrggbbaa`. Answer `{ layer }`.
+- `message` (KiCad's message boxes and confirmations: the locked item confirmations of Drag and Break Track, errors and notes): `{ title, text, extra, icon, buttons: [{ id, label }], dontAsk }`, `icon` `info`, `warning`, `error` or `question`, `id` `ok`, `cancel`, `yes` or `no`, buttons in KiCad's order with KiCad's labels, `dontAsk` true when KiCad offers its "do not show again". Answer `{ button, dontAsk }`. A message KiCad raises while an answer is applied is never asked: it is that answer's refusal `message`.
+- `assignNetclass` (Assign Netclass, both editors): `{ pattern, netclass, netclasses }`. Answer `{ pattern, netclass }`, either left out keeps the dialog's value.
+
+The placement, convert, zone and table asks (`moveExact`, `offset`, `array`, `positionRelative`, `filterSelection`, `findFootprint`, `convert`, `outset`, `zoneSettings`, `table`, `tableCell`) are declared, read and described by their own units.
+
+`prompt.answer { token, ...answer }` gives the parked prompt `token` its answer: the ask's answer keys beside `token` (`{ token: 7, values: { value: 1 } }`). KiCad writes the values into its dialog's own controls and runs its own checks and transfer. It answers `{ accepted: true }` (a modal dialog closes as with its OK and the edit is one undo step; a modeless one may stay open, as KiCad's Apply), or `{ accepted: false, field, message }`: KiCad refused it, `field` the answer key it names (empty when none) and `message` KiCad's own sentence (empty when none); the prompt stays parked for another answer. Failures: `stale` (no prompt parked with that token; the host closes its card), `bad_args` (no token, or keys or types this unit's ask does not take). `prompt.cancel { token }` closes it with nothing changed, as KiCad's Cancel: `{}` or `stale`. `prompt.pick { token, kind }` runs the dialog's own picker (`item` or `point`, the placement asks only), the result arriving as `ev.promptUpdate`: `{}`, `stale` or `no_picker`. The three are answered as they arrive, outside the one-at-a-time order (KiCad is parked in the prompt, so a queued request would wait on it forever); no `ev.promptEnd` follows them.
+
+While a modal prompt is parked the frame counts it as a dialog over the canvas: `key.press`, `view.fit` and `action.run` answer `busy`, `project.save` answers `busy`, the picker waits, and `ev.menu` stays quiet (nothing of KiCad's is drawn). A modeless prompt leaves the canvas to the reader. `project.forget` ends every parked prompt (`ev.promptEnd` `gone`) before it forgets the document.
+
+KiCad's Clearance Resolution and Constraints Resolution reports (`pcbnew.InspectionTool.InspectClearance`, `pcbnew.InspectionTool.InspectConstraints`) are held in a `pcb` frame under the `rules` cap: their window never opens, the frame sends `ev.held`, and the host opens the board form's Rules block (`board.rules`) for the selection.
