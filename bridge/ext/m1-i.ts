@@ -210,6 +210,8 @@ export default {
         try { r = code(engineCall(ctx, 'kicadContextMenuChoose', c.token, c.id)); } catch { return fail('island_error', op); }
         // Chosen or canceled by the host, or already gone: the host closed its menu, nothing is sent.
         if (r === 0 || r === 1) end(ctx, c.st, null, false);
+        // A chosen item may change the selection inside the engine (Select the rest of its sheet) with no canvas event: read it.
+        if (r === 0 && c.id !== -1) ctx.nudgeSelection();
         return menuAnswer(op, r);
       },
     },

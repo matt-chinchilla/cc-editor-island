@@ -80,6 +80,7 @@ function fakeCtx(frame: string, mod: Record<string, unknown>, state: Partial<{ c
   const s = { caps: [CONTEXT_MENU_CAP, 'heldKeys'], doc: true, importing: false, ready: true, closed: false, busy: false, hanging: false, ...state };
   const emitted: Array<{ type: string } & Record<string, unknown>> = [];
   let held = 0;
+  let nudged = 0;
   const ctx = {
     frame, root: '/p', timing: {},
     win: () => w, mod: () => w.Module, fs: () => null, has: (n: readonly string[]) => n.every((x) => typeof w.Module[x] === 'function'),
@@ -88,12 +89,13 @@ function fakeCtx(frame: string, mod: Record<string, unknown>, state: Partial<{ c
     engineBusy: () => s.busy, keysBlocked: () => keysBlocked(w as never), placeHanging: () => s.hanging, importing: () => s.importing,
     checking: () => false, simRun: () => null, heldRows: () => heldActions(), readAsk: () => null, inFlight: () => 0,
     holdMenus: (on: boolean) => { held = Math.max(0, held + (on ? 1 : -1)); },
+    nudgeSelection: () => { nudged += 1; },
     emitExt: (type: string, payload: Record<string, unknown>) => { emitted.push({ type, ...payload }); },
     emit: (ev: { type: string }) => { emitted.push(ev); },
     log: () => {},
   } as unknown as ResponderCtx;
   const stop = unit.install!(ctx) as () => void;
-  return { ctx, w, s, emitted, stop, held: () => held };
+  return { ctx, w, s, emitted, stop, held: () => held, nudged: () => nudged };
 }
 
 const item = (o: Partial<EngineItem>): EngineItem => ({ id: 1, kind: 'normal', label: 'x', enabled: true, checked: false, action: '', key: '', ...o });
@@ -335,6 +337,22 @@ describe('contextMenu.choose and contextMenu.highlight', () => {
     vi.advanceTimersByTime(200);
     expect(t.held()).toBe(0);
     expect(await choose.run({ token: 7, id: 101 }, t.ctx)).toEqual({ ok: false, code: 'stale', message: 'contextMenu.choose' });
+  });
+
+  it('a chosen item has the selection read again; a cancel, a refusal and a stale token do not', async () => {
+    // Select the rest of its sheet, chosen in the host's menu, changes the selection inside the engine. The press
+    // was on the host's menu, so no pointer or key release in the frame follows: the frame reads the selection itself.
+    const mod = RUN15();
+    const t = fakeCtx('sch', mod);
+    t.w.kicadHostMenu!.onMenu!(SCH_MENU());
+    expect(await choose.run({ token: 7, id: 999 }, t.ctx)).toMatchObject({ ok: false, code: 'no_item' });
+    expect(t.nudged()).toBe(0);
+    expect(await choose.run({ token: 7, id: 101 }, t.ctx)).toEqual({ ok: true, result: {} });
+    expect(t.nudged()).toBe(1);
+    expect(await choose.run({ token: 7, id: 101 }, t.ctx)).toMatchObject({ ok: false, code: 'stale' });
+    t.w.kicadHostMenu!.onMenu!(SCH_MENU(8));
+    expect(await choose.run({ token: 8, id: -1 }, t.ctx)).toEqual({ ok: true, result: {} });
+    expect(t.nudged()).toBe(1);
   });
 
   it('id -1 cancels with no edit and no end event', async () => {
