@@ -32,7 +32,7 @@ const pad = (uuid: string, number: string, x: number) => ({
   backdrill: { front: null, back: null },
   postMachining: { front: { mode: 'none', size: 0, depth: 0, angle: 0 }, back: { mode: 'none', size: 0, depth: 0, angle: 0 } },
 });
-const line = (uuid: string) => ({ kind: 'shape', uuid, layer: 'F.SilkS', shape: 'segment', points: [[0, 0], [1, 0]], width: 0.12, style: 'solid', filled: false, locked: false });
+const line = (uuid: string) => ({ kind: 'shape', uuid, layer: 'F.SilkS', shape: 'segment', points: [[0, 0], [1, 0]], width: 0.12, style: 'solid', filled: false, fill: 'none', locked: false, hasSolderMask: false, solderMaskMargin: null });
 
 type Item = Record<string, unknown> & { kind: string; uuid: string };
 const merge = (into: Record<string, unknown>, patch: Record<string, unknown>): void => {

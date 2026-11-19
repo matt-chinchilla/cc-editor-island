@@ -145,7 +145,7 @@ test('add one item of each kind with page made uuids, one undo step, each read b
     { kind: 'text', uuid: uuid(2), text: 'T', layer: 'F.SilkS', x: 1, y: 1 },
     { kind: 'textbox', uuid: uuid(3), text: 'B', layer: 'F.SilkS', points: [[0, 0], [5, 3]] },
     { kind: 'table', uuid: uuid(4), layer: 'F.SilkS', colWidths: [5, 5], rowHeights: [2, 2], cells: [['a', 'b'], ['c', 'd']] },
-    { kind: 'barcode', uuid: uuid(5), layer: 'F.SilkS', text: 'CC' },
+    { kind: 'barcode', uuid: uuid(5), layer: 'F.SilkS', text: 'CC', symbology: 'code128' },
     { kind: 'shape', uuid: uuid(6), layer: 'F.SilkS', shape: 'segment', points: [[0, 0], [2, 0]] },
     { kind: 'shape', uuid: uuid(7), layer: 'F.SilkS', shape: 'rect', points: [[0, 0], [2, 1]] },
     { kind: 'shape', uuid: uuid(8), layer: 'F.SilkS', shape: 'arc', points: [[0, 0], [1, 1], [2, 0]] },
@@ -154,21 +154,36 @@ test('add one item of each kind with page made uuids, one undo step, each read b
     { kind: 'shape', uuid: uuid(11), layer: 'F.SilkS', shape: 'bezier', points: [[0, 0], [1, 1], [2, 1], [3, 0]] },
     { kind: 'image', uuid: uuid(12), layer: 'User.1', png },
     { kind: 'pad', uuid: uuid(13), number: '9' },
+    { kind: 'dimension', uuid: uuid(14), dimType: 'aligned', layer: 'F.Fab', start: [0, 0], end: [3, 0], height: 1 },
+    { kind: 'zone', uuid: uuid(15), layers: ['F.Cu'], points: [[-1, -1], [1, -1], [1, 1]], name: 'K' },
+    { kind: 'point', uuid: uuid(16), layer: 'F.Fab' },
   ] })).items as Item[];
-  expect(added.map((i) => i.uuid)).toEqual(Array.from({ length: 13 }, (_, i) => uuid(i + 1)));
+  expect(added.map((i) => i.uuid)).toEqual(Array.from({ length: 16 }, (_, i) => uuid(i + 1)));
   expect(await depth(page), 'the add is one undo step').toBe(d0 + 1);
   expect((added[3].cells as unknown[][]).map((r) => r.length)).toEqual([2, 2]);
-  expect(added[11].png ?? added[11].bytes).toBeDefined();
+  expect(added[4]).toMatchObject({ kind: 'barcode', symbology: 'code128', margin: expect.any(Array) });
+  expect(added[6]).toMatchObject({ shape: 'rect', cornerRadius: 0, fill: 'none', filled: false });
+  expect(added[11], 'the picture reads its PNG\'s own bytes').toMatchObject({ bytes: markPng().length, png });
+  expect(added[12]).toMatchObject({ kind: 'pad', number: '9' });
+  expect(added[13]).toMatchObject({ kind: 'dimension', dimType: 'aligned', start: [0, 0], end: [3, 0] });
+  expect(added[14]).toMatchObject({ kind: 'zone', ruleArea: true, layers: ['F.Cu'] });
+  expect(added[15]).toMatchObject({ kind: 'point', layer: 'F.Fab' });
   const sets: Record<string, Array<Record<string, unknown>>> = {
     field: [{ text: 'X2' }, { visible: false }, { size: [1.2, 1.2] }],
     text: [{ text: 'U' }, { angle: 90 }, { bold: true }, { hJustify: 'left' }, { layer: 'B.SilkS' }],
     textbox: [{ text: 'C' }, { border: false }],
     table: [{ cells: [['e', 'f'], ['g', 'h']] }, { borderExternal: false }],
-    barcode: [{ text: 'DD' }, { errorCorrection: 'H' }],
+    barcode: [{ text: 'DD' }, { errorCorrection: 'H' }, { symbology: 'datamatrix' }],
     shape: [{ width: 0.2 }, { style: 'dash' }],
     image: [{ scale: 2 }],
+    dimension: [{ precision: 3 }, { units: 'mils' }],
+    zone: [{ noVias: false }, { hatchPitch: 1 }],
+    point: [{ size: 2 }],
   };
   for (const it of added) for (const set of sets[it.kind] ?? []) await setThenUndo(page, it, set);
+  expect(await refusal(page, 'fpedit.items.set', { uuids: [uuid(5)], set: { kind: 'qr' } })).toMatch(/^bad_args/);
+  expect(await refusal(page, 'fpedit.items.set', { uuids: [uuid(6)], set: { fill: 'solid' } })).toMatch(/^bad_args/);
+  expect(await refusal(page, 'fpedit.items.set', { uuids: [uuid(12)], set: { locked: true } })).toBe('bad_args: fpedit.items.set: locked does not fit a image');
   expect(await refusal(page, 'fpedit.items.add', { items: [{ kind: 'shape', uuid: uuid(6), layer: 'F.SilkS', shape: 'segment', points: [[0, 0], [1, 0]] }] })).toBe(`bad_args: fpedit.items.add: ${uuid(6)} is taken`);
   const reference = (await items(page, { kinds: ['field'] })).find((f) => f.name === 'Reference') as Item;
   expect(await refusal(page, 'fpedit.items.remove', { uuids: [reference.uuid] })).toBe('bad_args: fpedit.items.remove: Reference is a field every footprint keeps');

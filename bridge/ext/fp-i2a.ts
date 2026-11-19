@@ -182,8 +182,13 @@ async function readBack<T>(ctx: ResponderCtx, ms: number, read: () => T | null):
 
 /** Every item of the open footprint, null for an answer of another shape. */
 const allItems = (mod: Record<string, unknown>): ItemRecord[] | null => readFpItems(callText(mod, 'kicadFpEditItemsGet', '{}'));
-/** The items of `uuids` as the engine reads them now: null while one is missing or the answer is of another shape. */
-const itemsOf = (mod: Record<string, unknown>, uuids: string[]): ItemRecord[] | null => readFpItems(callText(mod, 'kicadFpEditItemsGet', JSON.stringify({ uuids })));
+/** The items of `uuids` as the engine reads them now, in the order asked (the engine answers in KiCad's child order): null while one is missing or the answer is of another shape. */
+function itemsOf(mod: Record<string, unknown>, uuids: string[]): ItemRecord[] | null {
+  const items = readFpItems(callText(mod, 'kicadFpEditItemsGet', JSON.stringify({ uuids })));
+  if (items == null) return null;
+  const byUuid = new Map(items.map((i) => [i.uuid, i]));
+  return uuids.every((u) => byUuid.has(u)) ? uuids.map((u) => byUuid.get(u) as ItemRecord) : null;
+}
 
 /** The items of `uuids`, every one of them in the order asked, or the refusal: not_found naming the first the footprint does not hold. */
 function heldItems(op: string, mod: Record<string, unknown>, uuids: string[]): ItemRecord[] | Answer {

@@ -6,13 +6,14 @@
 // key the kind takes and no other, each in its type and bounds, a string at
 // most 1,024 characters unless named, a number finite, a uuid lower case,
 // a layer a KiCad layer name. Any other shape reads as null (the op answers
-// island_error). The keys are the engine's, as its kind rows write them:
-// the pad from DIALOG_PAD_PROPERTIES (with the dialog's unconnected layers,
-// teardrop, backdrill and post machining), the field, text, text box, table
-// and barcode from their KiCad dialogs, the shape and the picture from FP
-// spec 7.2. The dimension, the rule area and the point have no reader yet:
-// their keys are written by the engine's shape kinds, which this file
-// mirrors once they exist.
+// island_error). The keys are the engine's, as its kind rows write them
+// (engine run 15, pcbjam wasm/bindings cc_item_pad.h, cc_item_text.h and
+// cc_item_shape.h): the pad from DIALOG_PAD_PROPERTIES (with the dialog's
+// unconnected layers, teardrop, backdrill and post machining), the field,
+// text, text box, table and barcode (its type the key `symbology`) from their
+// KiCad dialogs, the shape (with its fill, corner radius and solder mask), the
+// dimension, the zone (a rule area or a zone on no copper layer), the picture
+// (`bytes` its PNG's own size, `locked` in the board frame) and the point.
 import { LAYER_RE } from './boardCheck';
 import { UUID_RE } from './symbol';
 import { isText } from './symedit';
@@ -70,6 +71,24 @@ export const V_JUSTIFY = ['top', 'center', 'bottom'] as const;
 export const LINE_STYLES = ['solid', 'dash', 'dot', 'dash_dot', 'dash_dot_dot'] as const;
 export const SHAPE_NAMES = ['segment', 'rect', 'arc', 'circle', 'polygon', 'bezier'] as const;
 export const ERROR_CORRECTIONS = ['L', 'M', 'Q', 'H'] as const;
+export const SYMBOLOGIES = ['code39', 'code128', 'datamatrix', 'qr', 'microqr'] as const;
+export const FILLS = ['none', 'solid', 'hatch', 'reverse_hatch', 'cross_hatch'] as const;
+export const DIM_TYPES = ['aligned', 'orthogonal', 'center', 'radial', 'leader'] as const;
+export const DIM_ARROWS = ['inward', 'outward'] as const;
+export const DIM_UNITS = ['inch', 'mils', 'mm', 'auto'] as const;
+export const DIM_UNITS_FORMATS = ['none', 'bare', 'paren'] as const;
+export const DIM_TEXT_POSITIONS = ['outside', 'inline', 'manual'] as const;
+export const DIM_ORIENTATIONS = ['horizontal', 'vertical'] as const;
+export const DIM_TEXT_BORDERS = ['none', 'rectangle', 'circle', 'roundrect'] as const;
+export const ZONE_BORDER_STYLES = ['none', 'edge', 'full'] as const;
+export const PLACEMENT_SOURCES = ['sheet', 'componentClass', 'group', 'designBlock'] as const;
+/** A barcode's text (the engine's bound). */
+export const BARCODE_TEXT_MAX = 4096;
+/** A dimension's precision: KiCad's list, 0 to 9. */
+export const DIM_PRECISION_MAX = 9;
+/** A rule area's hatch pitch on a set (KiCad's ZONE_BORDER_HATCH_MINDIST_MM and MAXDIST_MM). */
+export const HATCH_PITCH_MIN_MM = 0.1;
+export const HATCH_PITCH_MAX_MM = 2;
 
 export type Point = [number, number];
 export interface PadPrimRecord { shape: typeof PRIM_SHAPES[number]; points: Point[]; width: number; filled: boolean }
@@ -112,24 +131,45 @@ export interface TextboxItemRecord extends TextStyleRecord {
 export interface TableItemRecord {
   kind: 'table'; uuid: string; x: number; y: number; layer: string; locked: boolean; cells: Array<Array<string | null>>;
   borderExternal: boolean; borderHeader: boolean; borderWidth: number | null; borderStyle: typeof LINE_STYLES[number];
-  rowSeparators: boolean; colSeparators: boolean; separatorsWidth: number; separatorsStyle: typeof LINE_STYLES[number];
+  rowSeparators: boolean; colSeparators: boolean; separatorsWidth: number | null; separatorsStyle: typeof LINE_STYLES[number];
   rows: number; cols: number; colWidths: number[]; rowHeights: number[];
 }
-/** A barcode; its symbology has no key yet (the engine writes it under `kind`, which the item's own kind overwrites). */
+/** A barcode: its type is the key `symbology` (`kind` is the item record's own), its margin [x, y]. */
 export interface BarcodeItemRecord {
   kind: 'barcode'; uuid: string; text: string; layer: string; locked: boolean; x: number; y: number; width: number; height: number;
-  textSize: number; angle: number; knockout: boolean; margin: number; showText: boolean; errorCorrection: typeof ERROR_CORRECTIONS[number];
+  textSize: number; angle: number; knockout: boolean; margin: Point; showText: boolean; symbology: typeof SYMBOLOGIES[number];
+  errorCorrection: typeof ERROR_CORRECTIONS[number];
 }
+/** A shape: `filled` is `fill` as a yes or no; `cornerRadius` on a rectangle only; `solderMaskMargin` null for the board's. */
 export interface ShapeItemRecord {
   kind: 'shape'; uuid: string; layer: string; shape: typeof SHAPE_NAMES[number]; points: Point[]; width: number;
-  style: typeof LINE_STYLES[number]; filled: boolean; locked: boolean;
+  style: typeof LINE_STYLES[number]; filled: boolean; fill: typeof FILLS[number]; locked: boolean; cornerRadius?: number;
+  hasSolderMask: boolean; solderMaskMargin: number | null;
 }
-/** A reference picture: `png` base64 while it is at most 64 KiB, else `bytes` its size and no png. */
-export interface ImageItemRecord { kind: 'image'; uuid: string; x: number; y: number; scale: number; layer: string; png?: string; bytes?: number }
-export type ItemRecord = PadRecord | TextItemRecord | TextboxItemRecord | TableItemRecord | BarcodeItemRecord | ShapeItemRecord | ImageItemRecord;
+/** A dimension: the keys its type has (height and extensionHeight aligned and orthogonal, orientation orthogonal, leaderLength radial, textBorder leader). */
+export interface DimensionItemRecord {
+  kind: 'dimension'; uuid: string; dimType: typeof DIM_TYPES[number]; layer: string; start: Point; end: Point;
+  height?: number; extensionHeight?: number; orientation?: typeof DIM_ORIENTATIONS[number]; leaderLength?: number;
+  textBorder?: typeof DIM_TEXT_BORDERS[number]; override: boolean; value: string; prefix: string; suffix: string;
+  arrowDirection: typeof DIM_ARROWS[number]; units: typeof DIM_UNITS[number]; unitsFormat: typeof DIM_UNITS_FORMATS[number];
+  precision: number; suppressZeroes: boolean; textPosition: typeof DIM_TEXT_POSITIONS[number]; textPos: Point; keepAligned: boolean;
+  angle: number; size: Point; thickness: number; bold: boolean; italic: boolean; hJustify: typeof H_JUSTIFY[number]; mirrored: boolean;
+  font: string; lineThickness: number; arrowLength: number; extensionOffset: number; locked: boolean;
+}
+/** A zone of the footprint: a rule area (its rule keys) or a zone on no copper layer; `points` its main outline. */
+export interface ZoneItemRecord {
+  kind: 'zone'; uuid: string; ruleArea: boolean; name: string; layers: string[]; locked: boolean; points: Point[];
+  borderStyle: typeof ZONE_BORDER_STYLES[number]; hatchPitch: number; noTracks?: boolean; noVias?: boolean; noPads?: boolean;
+  noCopperPour?: boolean; noFootprints?: boolean; placement?: boolean; placementSource?: typeof PLACEMENT_SOURCES[number]; placementName?: string;
+}
+/** A reference picture: `bytes` its PNG's own size, `png` (base64) while that is at most 64 KiB; `locked` in the board frame only. */
+export interface ImageItemRecord { kind: 'image'; uuid: string; x: number; y: number; scale: number; layer: string; bytes: number; png?: string; locked?: boolean }
+export interface PointItemRecord { kind: 'point'; uuid: string; x: number; y: number; layer: string; size: number; locked: boolean }
+export type ItemRecord = PadRecord | TextItemRecord | TextboxItemRecord | TableItemRecord | BarcodeItemRecord | ShapeItemRecord
+  | DimensionItemRecord | ZoneItemRecord | ImageItemRecord | PointItemRecord;
 
-/** The kinds this file reads; the others read as null until their keys are mirrored here. */
-export const READABLE_KINDS: readonly ItemRecordKind[] = Object.freeze(['pad', 'field', 'text', 'textbox', 'shape', 'table', 'barcode', 'image']);
+/** The kinds this file reads: every kind of the engine's item table. */
+export const READABLE_KINDS: readonly ItemRecordKind[] = Object.freeze([...ITEM_RECORD_KINDS]);
 
 // ── checks ─────────────────────────────────────────────────────────────────────────────
 
@@ -267,7 +307,7 @@ const cells: Check = (v) => Array.isArray(v) && v.length >= 1 && v.length <= TAB
 const TABLE_KEYS: Readonly<Record<string, Check>> = Object.freeze({
   x: isPos, y: isPos, layer: isLayerName, locked: isBool, cells,
   borderExternal: isBool, borderHeader: isBool, borderWidth: orNull(isSize), borderStyle: oneOf(LINE_STYLES),
-  rowSeparators: isBool, colSeparators: isBool, separatorsWidth: isSize, separatorsStyle: oneOf(LINE_STYLES),
+  rowSeparators: isBool, colSeparators: isBool, separatorsWidth: orNull(isSize), separatorsStyle: oneOf(LINE_STYLES),
   rows: isInt(1, TABLE_LINES_MAX), cols: isInt(1, TABLE_LINES_MAX),
   colWidths: listOf(inRange(0, SIZE_MAX_MM), 1, TABLE_LINES_MAX), rowHeights: listOf(inRange(0, SIZE_MAX_MM), 1, TABLE_LINES_MAX),
 });
@@ -279,8 +319,9 @@ function tableAgrees(v: Record<string, unknown>): boolean {
     && (v.colWidths as unknown[]).length === cols && (v.rowHeights as unknown[]).length === rows;
 }
 const BARCODE_KEYS: Readonly<Record<string, Check>> = Object.freeze({
-  text: line, layer: isLayerName, locked: isBool, x: isPos, y: isPos, width: isSize, height: isSize, textSize: isSize,
-  angle: isAngle, knockout: isBool, margin: isSize, showText: isBool, errorCorrection: oneOf(ERROR_CORRECTIONS),
+  text: (v) => isText(v, 0, BARCODE_TEXT_MAX), layer: isLayerName, locked: isBool, x: isPos, y: isPos, width: isSize, height: isSize,
+  textSize: isSize, angle: isAngle, knockout: isBool, margin: pair(isSize), showText: isBool, symbology: oneOf(SYMBOLOGIES),
+  errorCorrection: oneOf(ERROR_CORRECTIONS),
 });
 
 // ── the shapes and the picture ─────────────────────────────────────────────────────────
@@ -292,9 +333,54 @@ export function shapePointsFit(shape: typeof SHAPE_NAMES[number], n: number): bo
   if (shape === 'bezier') return n === 4;
   return n >= 3 && n <= POINTS_MAX;
 }
+/** A shape's keys; a rectangle's add its corner radius. */
 const SHAPE_KEYS: Readonly<Record<string, Check>> = Object.freeze({
   layer: isLayerName, shape: oneOf(SHAPE_NAMES), points: listOf(isPoint, 2, POINTS_MAX), width: isSize,
-  style: oneOf(LINE_STYLES), filled: isBool, locked: isBool,
+  style: oneOf(LINE_STYLES), filled: isBool, fill: oneOf(FILLS), locked: isBool, hasSolderMask: isBool, solderMaskMargin: orNull(isSigned),
+});
+const RECT_KEYS: Readonly<Record<string, Check>> = Object.freeze({ ...SHAPE_KEYS, cornerRadius: isSize });
+/** `filled` given beside `fill` agrees with it. */
+const fillAgrees = (o: Record<string, unknown>): boolean => !has(o, 'filled') || !has(o, 'fill') || o.filled === (o.fill !== 'none');
+
+// ── the dimension, the zone and the point ──────────────────────────────────────────────
+
+const DIM_BASE: Readonly<Record<string, Check>> = Object.freeze({
+  dimType: oneOf(DIM_TYPES), layer: isLayerName, start: isPoint, end: isPoint, override: isBool, value: line, prefix: line, suffix: line,
+  arrowDirection: oneOf(DIM_ARROWS), units: oneOf(DIM_UNITS), unitsFormat: oneOf(DIM_UNITS_FORMATS), precision: isInt(0, DIM_PRECISION_MAX),
+  suppressZeroes: isBool, textPosition: oneOf(DIM_TEXT_POSITIONS), textPos: isPoint, keepAligned: isBool, angle: isAngle, size: textSize,
+  thickness: inRange(0, TEXT_SIZE_MAX_MM), bold: isBool, italic: isBool, hJustify: oneOf(H_JUSTIFY), mirrored: isBool, font: line,
+  lineThickness: isSize, arrowLength: isSize, extensionOffset: isSize, locked: isBool,
+});
+/** The keys only some dimension types have. */
+const DIM_OWN: Readonly<Record<typeof DIM_TYPES[number], Readonly<Record<string, Check>>>> = Object.freeze({
+  aligned: { height: isPos, extensionHeight: isSize },
+  orthogonal: { height: isPos, extensionHeight: isSize, orientation: oneOf(DIM_ORIENTATIONS) },
+  center: {},
+  radial: { leaderLength: isSize },
+  leader: { textBorder: oneOf(DIM_TEXT_BORDERS) },
+});
+const dimKeys = (type: unknown): Readonly<Record<string, Check>> | null =>
+  (oneOf(DIM_TYPES)(type) ? { ...DIM_BASE, ...DIM_OWN[type as typeof DIM_TYPES[number]] } : null);
+/** Every dimension key: a set names those of its item's type. */
+const DIM_ALL: Readonly<Record<string, Check>> = Object.freeze(Object.assign({}, DIM_BASE, ...Object.values(DIM_OWN), { font: (v: unknown) => isText(v, 1, 256) }));
+
+const ZONE_KEYS: Readonly<Record<string, Check>> = Object.freeze({
+  ruleArea: isBool, name: line, layers: layerList, locked: isBool,
+  points: (v) => listOf(isPoint, 0, POINTS_MAX)(v) && ((v as unknown[]).length === 0 || (v as unknown[]).length >= 3),
+  borderStyle: oneOf(ZONE_BORDER_STYLES), hatchPitch: isSize,
+});
+const RULE_AREA_KEYS: Readonly<Record<string, Check>> = Object.freeze({
+  ...ZONE_KEYS, noTracks: isBool, noVias: isBool, noPads: isBool, noCopperPour: isBool, noFootprints: isBool, placement: isBool,
+  placementSource: oneOf(PLACEMENT_SOURCES), placementName: line,
+});
+/** A zone set or add: at least one layer, a whole outline of 3 points or more, the hatch pitch in KiCad's bounds. */
+const ZONE_SET: Readonly<Record<string, Check>> = Object.freeze({
+  ...RULE_AREA_KEYS, layers: listOf(isLayerName, 1, LAYERS_MAX, true), points: listOf(isPoint, 3, POINTS_MAX),
+  hatchPitch: inRange(HATCH_PITCH_MIN_MM, HATCH_PITCH_MAX_MM),
+});
+
+const POINT_KEYS: Readonly<Record<string, Check>> = Object.freeze({
+  x: isPos, y: isPos, layer: isLayerName, size: (v) => isSize(v) && (v as number) > 0, locked: isBool,
 });
 const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 /** The PNG signature as base64 begins. */
@@ -304,9 +390,13 @@ export const base64Bytes = (s: string): number => (s.length / 4) * 3 - (s.endsWi
 /** A PNG as base64 of at most `max` bytes decoded. */
 export const isPngBase64 = (max: number): Check => (v) =>
   typeof v === 'string' && v.length > 0 && v.length <= Math.ceil(max / 3) * 4 && BASE64_RE.test(v) && v.startsWith(PNG_BASE64_HEAD) && base64Bytes(v) <= max;
+/** A picture set (`png` on an add only, `grayscale` true the editor's one shot Convert to grayscale, `locked` in the board frame). */
 const IMAGE_SET: Readonly<Record<string, Check>> = Object.freeze({
   x: isPos, y: isPos, scale: inRange(Number.MIN_VALUE, 1000), layer: isLayerName, png: isPngBase64(IMAGE_ADD_MAX_BYTES),
+  grayscale: (v) => v === true, locked: isBool,
 });
+/** Keys a set may carry that no record holds back (a one shot action). */
+const ACTION_KEYS: Readonly<Partial<Record<ItemRecordKind, readonly string[]>>> = Object.freeze({ image: ['grayscale'] });
 const IMAGE_READ: Readonly<Record<string, Check>> = Object.freeze({
   x: isPos, y: isPos, scale: inRange(Number.MIN_VALUE, 1000), layer: isLayerName,
 });
@@ -327,9 +417,11 @@ const record = <T>(kind: ItemRecordKind, uuid: unknown, rest: Record<string, unk
  * and its lower case `uuid` and exactly the keys the kind takes. A field
  * carries `visible` and `keepUpright`; a text `keepUpright` inside a footprint
  * or `locked` outside one (lines only there); a custom pad shape alone carries
- * primitives; a table's cells are rows by cols; a picture carries `png`
- * (base64, at most 64 KiB decoded) or `bytes` past that. Null for a kind with
- * no reader (dimension, zone, point) and for any other shape.
+ * primitives; a table's cells are rows by cols; a shape's `filled` agrees
+ * with its `fill` and a rectangle alone carries `cornerRadius`; a dimension
+ * the keys of its type; a rule area its rule keys; a picture its PNG's size in
+ * `bytes` and `png` (base64) while that is at most 64 KiB. Null for any other
+ * shape.
  */
 export function readItemRecord(kind: ItemRecordKind | string, value: unknown): ItemRecord | null {
   if (!(ITEM_RECORD_KINDS as readonly string[]).includes(kind)) return null;
@@ -355,14 +447,24 @@ export function readItemRecord(kind: ItemRecordKind | string, value: unknown): I
     case 'barcode':
       return fits(rest, BARCODE_KEYS, true) ? record<BarcodeItemRecord>(k, uuid, rest) : null;
     case 'shape':
-      if (!fits(rest, SHAPE_KEYS, true) || !shapePointsFit(rest.shape as typeof SHAPE_NAMES[number], (rest.points as unknown[]).length)) return null;
+      if (!fits(rest, rest.shape === 'rect' ? RECT_KEYS : SHAPE_KEYS, true) || !fillAgrees(rest)) return null;
+      if (!shapePointsFit(rest.shape as typeof SHAPE_NAMES[number], (rest.points as unknown[]).length)) return null;
       return record<ShapeItemRecord>(k, uuid, rest);
+    case 'dimension': {
+      const keys = dimKeys(rest.dimType);
+      return keys != null && fits(rest, keys, true) ? record<DimensionItemRecord>(k, uuid, rest) : null;
+    }
+    case 'zone':
+      return fits(rest, rest.ruleArea === true ? RULE_AREA_KEYS : ZONE_KEYS, true) ? record<ZoneItemRecord>(k, uuid, rest) : null;
+    case 'point':
+      return fits(rest, POINT_KEYS, true) ? record<PointItemRecord>(k, uuid, rest) : null;
     case 'image': {
-      const { png, bytes, ...place } = rest;
-      if (!fits(place, IMAGE_READ, true)) return null;
+      const { png, bytes, locked, ...place } = rest;
+      if (!fits(place, IMAGE_READ, true) || (locked !== undefined && !isBool(locked))) return null;
+      if (!Number.isSafeInteger(bytes) || (bytes as number) < 0) return null;
       if (png !== undefined) {
-        if (!isPngBase64(IMAGE_GET_MAX_BYTES)(png) || (bytes !== undefined && bytes !== base64Bytes(png as string))) return null;
-      } else if (!(Number.isSafeInteger(bytes) && (bytes as number) > IMAGE_GET_MAX_BYTES)) {
+        if (!isPngBase64(IMAGE_GET_MAX_BYTES)(png) || bytes !== base64Bytes(png as string)) return null;
+      } else if (!((bytes as number) > IMAGE_GET_MAX_BYTES || bytes === 0)) {
         return null;
       }
       return record<ImageItemRecord>(k, uuid, rest);
@@ -380,8 +482,11 @@ const SET_CHECKS: Readonly<Partial<Record<ItemRecordKind, Readonly<Record<string
   textbox: TEXTBOX_KEYS,
   table: TABLE_KEYS,
   barcode: BARCODE_KEYS,
-  shape: SHAPE_KEYS,
+  shape: RECT_KEYS,
+  dimension: DIM_ALL,
+  zone: ZONE_SET,
   image: IMAGE_SET,
+  point: POINT_KEYS,
 });
 
 /** The keys a set of `kind` may name (never kind or uuid), empty for a kind with no reader. */
@@ -401,6 +506,7 @@ export function readItemSet(kind: ItemRecordKind, set: unknown): Record<string, 
   if (!fits(set, checks, false)) return null;
   if (has(set, 'text') && set.text === '') return null;
   if (kind === 'shape' && has(set, 'points') && has(set, 'shape') && !shapePointsFit(set.shape as typeof SHAPE_NAMES[number], (set.points as unknown[]).length)) return null;
+  if (kind === 'shape' && !fillAgrees(set)) return null;
   if (kind === 'image' && has(set, 'png')) return null;
   return structuredClone(set);
 }
@@ -414,7 +520,10 @@ export const NEW_ITEM_NEEDS: Readonly<Partial<Record<ItemRecordKind, readonly st
   table: ['layer', 'colWidths', 'rowHeights'],
   barcode: ['layer'],
   shape: ['layer', 'shape', 'points'],
+  dimension: ['dimType', 'layer', 'start', 'end'],
+  zone: ['layers', 'points'],
   image: ['layer', 'png'],
+  point: ['layer'],
 });
 
 /**
@@ -422,7 +531,9 @@ export const NEW_ITEM_NEEDS: Readonly<Partial<Record<ItemRecordKind, readonly st
  * case `uuid`, the keys its kind needs (NEW_ITEM_NEEDS) and any other key a
  * set of the kind takes. A new field may start with an empty text and its
  * name never empty; a new table's cells, when given, rows by cols of its
- * widths and heights; a picture's png at most 4 MiB decoded. Null for anything else.
+ * widths and heights; a picture's png at most 4 MiB decoded; a dimension the
+ * keys of its type, its start not its end; a zone a rule area. Null for
+ * anything else.
  */
 export function readNewItem(value: unknown): (Record<string, unknown> & { kind: ItemRecordKind; uuid: string }) | null {
   if (!isObj(value) || typeof value.kind !== 'string' || !(ITEM_RECORD_KINDS as readonly string[]).includes(value.kind) || !isUuid(value.uuid)) return null;
@@ -435,7 +546,15 @@ export function readNewItem(value: unknown): (Record<string, unknown> & { kind: 
   if (!needs.every((k) => has(rest, k)) || !fits(rest, checks, false)) return null;
   if (has(rest, 'text') && rest.text === '' && kind !== 'field') return null;
   if (kind === 'field' && !isText(rest.name, 1, RECORD_TEXT_MAX)) return null;
-  if (kind === 'shape' && !shapePointsFit(rest.shape as typeof SHAPE_NAMES[number], (rest.points as unknown[]).length)) return null;
+  if (kind === 'shape') {
+    if (!shapePointsFit(rest.shape as typeof SHAPE_NAMES[number], (rest.points as unknown[]).length) || !fillAgrees(rest)) return null;
+    if (has(rest, 'cornerRadius') && rest.shape !== 'rect') return null;
+  }
+  if (kind === 'dimension') {
+    const keys = dimKeys(rest.dimType);
+    if (keys == null || !fits(rest, { ...keys, font: DIM_ALL.font }, false) || sameValue(rest.start, rest.end)) return null;
+  }
+  if (kind === 'zone' && has(rest, 'ruleArea') && rest.ruleArea !== true) return null;
   if (kind === 'table' && has(rest, 'cells')) {
     const c = rest.cells as unknown[][];
     if (c.length !== (rest.rowHeights as unknown[]).length || c[0].length !== (rest.colWidths as unknown[]).length) return null;
@@ -443,12 +562,25 @@ export function readNewItem(value: unknown): (Record<string, unknown> & { kind: 
   return { ...structuredClone(rest), kind, uuid: value.uuid as string };
 }
 
-/** Why `set` does not fit `items` (a key one of them lacks: a set over several items carries only keys every one has), or null. */
+/**
+ * Why `set` does not fit `items`, or null: a key one of them lacks (a set over
+ * several items carries only keys every one has; a one shot action key such as
+ * a picture's grayscale excepted), a shape's or a dimension's type or a zone's
+ * rule area changed (each fixed, as KiCad's dialog keeps it), a shape's new
+ * points of another count, a dimension's text position given while its text
+ * is not placed by hand (a leader's always is).
+ */
 export function itemSetMisfit(set: Record<string, unknown>, items: readonly ItemRecord[]): string | null {
   for (const item of items) {
-    for (const k of Object.keys(set)) if (!has(item as unknown as Record<string, unknown>, k)) return `${k} does not fit a ${item.kind}`;
+    const own = item as unknown as Record<string, unknown>;
+    const actions = ACTION_KEYS[item.kind] ?? [];
+    for (const k of Object.keys(set)) if (!has(own, k) && !actions.includes(k)) return `${k} does not fit a ${item.kind}`;
+    for (const k of ['shape', 'dimType', 'ruleArea']) if (has(set, k) && set[k] !== own[k]) return `a ${item.kind} keeps its ${k}`;
     if (item.kind === 'shape' && has(set, 'points') && !has(set, 'shape') && !shapePointsFit(item.shape, (set.points as unknown[]).length)) {
       return `a ${item.shape} takes another count of points`;
+    }
+    if (item.kind === 'dimension' && has(set, 'textPos') && item.dimType !== 'leader' && (set.textPosition ?? item.textPosition) !== 'manual') {
+      return 'textPos takes a manual text position';
     }
   }
   return null;
@@ -490,5 +622,6 @@ function sameValue(want: unknown, got: unknown, key = ''): boolean {
  */
 export function showsItemSet(set: Record<string, unknown>, item: ItemRecord): boolean {
   const got = item as unknown as Record<string, unknown>;
-  return Object.entries(set).every(([k, want]) => sameValue(want, got[k], k));
+  const actions = ACTION_KEYS[item.kind] ?? [];
+  return Object.entries(set).every(([k, want]) => actions.includes(k) || sameValue(want, got[k], k));
 }
