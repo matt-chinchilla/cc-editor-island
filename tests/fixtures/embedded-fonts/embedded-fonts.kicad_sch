@@ -1,0 +1,25 @@
+(kicad_sch
+	(version 20231120)
+	(generator "eeschema")
+	(generator_version "8.0")
+	(uuid "0d13e000-0000-4000-8000-000000000001")
+	(paper "A4")
+	(lib_symbols)
+	(text "Embedded files, Noto Sans"
+		(exclude_from_sim no)
+		(at 101.6 76.2 0)
+		(effects
+			(font
+				(face "Noto Sans")
+				(size 2.54 2.54)
+			)
+			(justify left bottom)
+		)
+		(uuid "0d13e000-0000-4000-8000-000000000002")
+	)
+	(sheet_instances
+		(path "/"
+			(page "1")
+		)
+	)
+)

@@ -1,0 +1,18 @@
+SPDX-License-Identifier: CC0-1.0
+Copyright (C) 2026 Circuit Center Inc
+
+Written by hand for this repository on 2026-11-19 (CC0 1.0: no rights
+reserved) for the design's embedded files (wave 2 plan, the properties and
+setup addendum, section 10; island unit m13-i). A one sheet schematic with one
+text and a two layer board, 40 by 20 mm (an Edge.Cuts rectangle), with one
+silkscreen text, each text drawn in the outline font Noto Sans. Nothing is
+embedded in the files committed here: tests/e2e/embedded-files.spec.ts, on an
+engine with the cap designEmbedded (engine run 15), embeds the font through
+embedded.set from KiCad's own copy, kicad-source-mirror/qa/resources/fonts/
+NotoSans-Regular.ttf (SIL Open Font License 1.1, read by path from the engine
+tree and never copied here), turns the fonts on, adds a one page PDF the spec
+draws itself (CC0) to the board as a datasheet, and saves through KiCad; with
+CC_M13_FIXTURE_OUT naming a folder the spec writes the two files KiCad saved
+there, so the embedded versions can be committed as the files KiCad wrote.
+The KiCad files carry no comment (their formats have none), so this file
+holds their license.
