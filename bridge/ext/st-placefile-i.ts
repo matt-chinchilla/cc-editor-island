@@ -10,6 +10,10 @@
 // /tmp/cc-stage/<n>/ (never the project folder), calls the export with that
 // path, and removes the folder after the answer.
 //
+// A sheet is always placed as its contents: nothing here turns KiCad's place
+// as sheet option on (RULINGS 34); a page wanting a sheet uses block.place
+// with asSheet (i-block-place), which keeps its stage until the press.
+//
 // The answer comes once the items hang off the pointer (the selection holds a
 // uuid it did not hold before the call); the placement is then joined to
 // place's watch, so every gate answers busy until a click lands it as ONE

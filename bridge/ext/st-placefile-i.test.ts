@@ -132,7 +132,7 @@ function fakeCtx(opts: {
     placeStart: (uuid: string) => { started.push(uuid); },
     log: () => {},
   } as unknown as ResponderCtx;
-  return { ctx, files, made, dropped, calls, staged, started, sel };
+  return { ctx, files, made, dropped, calls, staged, started, sel, mod };
 }
 
 describe('st-placefile-i in the registry', () => {
@@ -209,6 +209,20 @@ describe('place.file over the engine', () => {
     expect(t.started).toEqual([UUID_B]);
     expect(t.dropped).toEqual([`${STAGE_ROOT}/1`]);
     expect([...t.files.keys()]).toEqual([`/project/${SHEET}`]);
+  });
+
+  it('places the CONTENTS of a sheet: no as sheet key or option travels, and the island touches no setting of KiCad (RULINGS 34)', async () => {
+    const t = fakeCtx({ project: { [SHEET]: enc('(kicad_sch)') } });
+    const settings = { kicadSettingsSet: vi.fn(() => true), kicadSettingsGet: vi.fn(() => '{}'), kicadRunAction: vi.fn(() => 0), kicadDesignBlockPlace: vi.fn(() => true) };
+    Object.assign(t.mod, settings);
+    expect(await placeFile({ kind: 'sheet', name: SHEET }, t.ctx)).toEqual({ ok: true, result: {} });
+    expect(t.calls).toEqual([{ kind: 'sheet', path: `${STAGE_ROOT}/1/sub.kicad_sch` }]);
+    for (const spy of Object.values(settings)) expect(spy).not.toHaveBeenCalled();
+    // A page asking for a sheet is refused here: a file placed as a sheet goes through block.place asSheet.
+    for (const extra of [{ asSheet: true }, { asSheet: false }, { placeAsSheet: true }]) {
+      expect(await placeFile({ kind: 'sheet', name: SHEET, ...extra }, t.ctx)).toEqual({ ok: false, code: 'bad_args', message: 'place.file' });
+    }
+    expect(t.calls).toHaveLength(1);
   });
 
   it('a board in a pcb frame, the same road', async () => {
