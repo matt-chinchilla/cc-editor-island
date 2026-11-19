@@ -17,7 +17,8 @@
 // schematic frame lists no kicadFpEditOpen, or whose fpedit frame lists no
 // fpedit. The pad tool's key is the one the pencil table
 // seeds for the frame (theme/pencil-tools.json); Firefox's pad placement
-// rides the engine's pointer fix (sy2-e) as the symbol editor's pin does.
+// waits on Playwright's Firefox delivering a press into the isolated frame,
+// as the symbol editor's pin does (docs/sy2-diagnosis.md: not the engine's).
 import { expect, test, type Frame, type Page } from '@playwright/test';
 import TOOLS from '../../theme/pencil-tools.json' with { type: 'json' };
 import palette from '../../theme/colors/circuitcenter.json' with { type: 'json' };

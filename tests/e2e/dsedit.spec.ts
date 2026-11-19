@@ -71,8 +71,8 @@ const take = async (page: Page): Promise<{ name: string; text: string }> => (awa
 /**
  * Presses a key and waits for the next ev.held; no KiCad window opens within a
  * second after. A string is the reader's own chord on the drawing (Playwright's
- * keyboard, the frame focused by a press in its corner): key.press takes only
- * the codes KiCad's default hotkeys use (src/keys.ts), which leave out Comma.
+ * keyboard, the frame focused by a press in its corner), as the reader presses
+ * it; key.press takes Comma too since the keys seam widened src/keys.ts.
  */
 async function heldBy(page: Page, key: Key | string): Promise<string | undefined> {
   const n = (await of(page, 'ev.held')).length;

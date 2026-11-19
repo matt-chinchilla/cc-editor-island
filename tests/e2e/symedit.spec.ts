@@ -220,8 +220,9 @@ test('KiCad\'s dialogs and windows are held: P places a pin with ev.symedit, E o
   // The pin tool asks the host and KiCad places the pin with its defaults on that press
   // (Chromium, measured: the pin and its twins in the other units, one undo step). In
   // Firefox the request comes and the pin is never placed, whatever presses follow
-  // (measured 2026-11-17 on engine run 14: no undo step, no new pin, no window): an
-  // open defect of the engine's pin tool in Firefox, pinned here so its repair shows.
+  // (measured 2026-11-17 on engine run 14: no undo step, no new pin, no window). Not
+  // the engine's: Playwright's Firefox delivers no press into a cross site frame under
+  // an isolated page (docs/sy2-diagnosis.md); pinned here so a driver that does shows.
   if (browserName === 'firefox') {
     await page.waitForTimeout(1_500);
     test.info().annotations.push({ type: 'defect', description: 'Firefox: P and a press send ev.symedit pin, but KiCad never places the pin' });
