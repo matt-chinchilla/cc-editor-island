@@ -61,17 +61,25 @@ const BUILTIN_VARS = new Set(['KIPRJMOD', 'KICAD_USER_TEMPLATE_DIR', 'KICAD_PTEM
 const BUILTIN_VERSIONED_RE = /^KICAD(?:[6-9]|10)_(?:SYMBOL_DIR|FOOTPRINT_DIR|3DMODEL_DIR|TEMPLATE_DIR|3RD_PARTY|DESIGN_BLOCK_DIR)$/;
 export const isBuiltinPathVar = (name: string): boolean => BUILTIN_VARS.has(name) || BUILTIN_VERSIONED_RE.test(name);
 /**
- * The path variables of a request, checked closed: an object of 1 to 64
- * entries, each name in KiCad's form and none of KiCad's own, each value a
- * folder of the project in project.open's normal form. Null for anything else.
+ * KiCad 10's folder of installed add-ons (the engine's KiCad is 10): the one
+ * name of KiCad's own a host may set, through paths.set alone and only where
+ * the engine takes it (cap addonPaths), so the rows a design names under it
+ * resolve to the add-on files the host wrote into the project.
  */
-export function readPathVars(v: unknown): Record<string, string> | null {
+export const THIRD_PARTY_VAR = 'KICAD10_3RD_PARTY';
+/**
+ * The path variables of a request, checked closed: an object of 1 to 64
+ * entries, each name in KiCad's form and none of KiCad's own (but
+ * THIRD_PARTY_VAR with `thirdParty`), each value a folder of the project in
+ * project.open's normal form. Null for anything else.
+ */
+export function readPathVars(v: unknown, opts: { thirdParty?: boolean } = {}): Record<string, string> | null {
   if (typeof v !== 'object' || v == null || Array.isArray(v)) return null;
   const entries = Object.entries(v as Record<string, unknown>);
   if (entries.length === 0 || entries.length > MAX_PATH_VARS) return null;
   const out: Record<string, string> = {};
   for (const [name, folder] of entries) {
-    if (!PATH_VAR_RE.test(name) || isBuiltinPathVar(name)) return null;
+    if (!PATH_VAR_RE.test(name) || (isBuiltinPathVar(name) && !(opts.thirdParty === true && name === THIRD_PARTY_VAR))) return null;
     if (typeof folder !== 'string' || folder === '' || normalizePath(folder) !== folder) return null;
     out[name] = folder;
   }

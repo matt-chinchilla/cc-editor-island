@@ -7,13 +7,19 @@ footprints sit under a path variable of its own, MYLIB, for libs.remove,
 paths.set and project.libs's vars (tests/e2e/lib-rows.spec.ts). An empty
 one sheet schematic and an empty two layer board with a 40 by 30 mm outline
 (the board is tests/fixtures/blank's); sym-lib-table and fp-lib-table each
-hold ONE row, MyLib, of uri ${MYLIB}/x.kicad_sym and ${MYLIB}/x.pretty, so
+hold a row MyLib, of uri ${MYLIB}/x.kicad_sym and ${MYLIB}/x.pretty, so
 nothing of them loads until MYLIB names the folder mylib. mylib/x.kicad_sym
 holds one symbol, R_MyLib (two pins), whose footprint is MyLib:R_MyLib;
 mylib/x.pretty/R_MyLib.kicad_mod is a two pad footprint whose model line
 names ${MYLIB}/x.step. design-block-lib-table holds ONE row, pv_blocks, of
 uri ${KIPRJMOD}/pv_blocks.kicad_blocks, a design block library with one
 block, RC (an empty schematic and its RC.json), in KiCad's block folder form.
+sym-lib-table and fp-lib-table also hold a second row each, PCM_ccaddon, of
+uri ${KICAD10_3RD_PARTY}/symbols/com_example_ccaddon/ccaddon.kicad_sym and
+${KICAD10_3RD_PARTY}/footprints/com_example_ccaddon/ccaddon.pretty, as KiCad
+10's add-on manager writes an installed add-on's rows; the e2e writes the
+add-on's files under .cc-addons/ with project.write and points the variable
+there (paths.set under the cap addonPaths). Added 2026-11-19.
 
 mylib/x.step is R_0402_1005Metric.step copied unchanged from
 kicad-packages3D at KiCad's tag 10.0.4 (Resistor_SMD.3dshapes, one resistor

@@ -10,7 +10,10 @@
 // `.kicad_blocks` folder KiCad's own reader reads, added through the widened
 // kicadLibsAddEntry), answered under `block`. Every export is engine run 15's
 // and feature detected: on run 14 neither cap is listed and each op answers
-// unsupported naming the export.
+// unsupported naming the export. paths.set also takes KiCad 10's 3rd party
+// variable (KICAD10_3RD_PARTY, the folder of installed add-ons), the one name
+// of KiCad's own it admits, where the engine says it takes that name (its
+// marker kicadPathVarsThirdParty): cap addonPaths.
 // src/project-libs.ts is read at request time (a dynamic import), never at
 // load: the registry loads this file while the loader's constants are still
 // being read (src/frames.ts), and src/project-libs.ts reads src/stage.ts,
@@ -26,8 +29,12 @@ export const LIBS_EXPORTS = ['kicadLibsAddEntry', 'kicadLibsReload', 'kicadColla
 /** The run time row exports of engine run 15: removal, and the add widened to design block rows (the same engine unit). */
 export const ROW_EXPORTS = ['kicadLibsRemoveEntry', 'kicadLibsAddEntry', 'kicadCollabBusy'] as const;
 export const PATH_EXPORTS = ['kicadPathVarsSet', 'kicadCollabBusy'] as const;
+/** The engine's marker that kicadPathVarsSet takes KiCad's 3rd party variable (KiCad's own Configure Paths sets its value). */
+export const THIRD_PARTY_MARKER = 'kicadPathVarsThirdParty';
+export const THIRD_PARTY_EXPORTS = [...PATH_EXPORTS, THIRD_PARTY_MARKER] as const;
 export const LIB_ROWS_CAP = 'libRows';
 export const PATH_VARS_CAP = 'pathVars';
+export const ADDON_PATHS_CAP = 'addonPaths';
 /** The engine's word for each kind (pcbjam_libs_reload.h tableTypeOf). */
 export const ENGINE_KIND: Readonly<Record<RowKind, string>> = { symbol: 'symbol', footprint: 'footprint', block: 'design_block' };
 const KINDS: readonly RowKind[] = ['symbol', 'footprint', 'block'];
@@ -150,9 +157,11 @@ export async function libsRemove(args: unknown, ctx: ResponderCtx): Promise<Answ
 }
 
 /**
- * paths.set (PROTOCOL.md): sets path variables to folders of the project.
+ * paths.set (PROTOCOL.md): sets path variables to folders of the project,
+ * KiCad's 3rd party variable among them where the engine takes it.
  * The checks, in order, before any effect: the args (bad_args), the engine
- * (not_ready, unsupported naming the first missing export), busy. Then the
+ * (not_ready, unsupported naming the first missing export, and the marker
+ * when the 3rd party variable is sent), busy. Then the
  * engine's kicadPathVarsSet with each folder made absolute (false answers
  * not_applied), the island's project rows resolve them from now on, and the
  * answer `{ set }` waits for the engine's apply queue to empty.
@@ -160,11 +169,12 @@ export async function libsRemove(args: unknown, ctx: ResponderCtx): Promise<Answ
 export async function pathsSet(args: unknown, ctx: ResponderCtx): Promise<Answer> {
   const op = 'paths.set';
   if (!isObj(args) || !onlyKeys(args, ['vars'])) return fail('bad_args', op);
-  const vars = (await libsModule()).readPathVars(args.vars);
+  const lib = await libsModule();
+  const vars = lib.readPathVars(args.vars, { thirdParty: true });
   if (vars == null) return fail('bad_args', op);
   const mod = ctx.mod();
   if (ctx.win() == null || mod == null) return fail('not_ready', op);
-  const lacking = missing(mod, PATH_EXPORTS);
+  const lacking = missing(mod, lib.THIRD_PARTY_VAR in vars ? THIRD_PARTY_EXPORTS : PATH_EXPORTS);
   if (lacking != null) return fail('unsupported', lacking);
   if (busyNow(ctx)) return fail('busy', op);
   const abs = Object.fromEntries(Object.entries(vars).map(([name, folder]) => [name, `${ctx.root}/${folder}`]));
@@ -184,12 +194,13 @@ export default {
   unit: 'i-librows',
   frames: ['sch', 'pcb'],
   frameRefusal: 'library rows and path variables change in a sch or a pcb frame',
-  capNames: [LIB_ROWS_CAP, PATH_VARS_CAP],
+  capNames: [LIB_ROWS_CAP, PATH_VARS_CAP, ADDON_PATHS_CAP],
   caps: (mod, frame) => {
     if (frame !== 'sch' && frame !== 'pcb') return [];
     const caps: string[] = [];
     if (hasAll(mod, ROW_EXPORTS) && hasAll(mod, LIBS_EXPORTS)) caps.push(LIB_ROWS_CAP);
     if (hasAll(mod, PATH_EXPORTS)) caps.push(PATH_VARS_CAP);
+    if (hasAll(mod, THIRD_PARTY_EXPORTS)) caps.push(ADDON_PATHS_CAP);
     return caps;
   },
   ops: {

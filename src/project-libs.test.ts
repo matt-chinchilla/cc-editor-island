@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
 import { describe, expect, it, vi } from 'vitest';
-import { createProjectLibs, isBuiltinPathVar, isProjectNick, parseLibTable, projectId, projectLibsAt, projectPath, readPathVars, rowPath, withProjectLibs, type ProjectFs } from './project-libs';
+import { createProjectLibs, isBuiltinPathVar, THIRD_PARTY_VAR, isProjectNick, parseLibTable, projectId, projectLibsAt, projectPath, readPathVars, rowPath, withProjectLibs, type ProjectFs } from './project-libs';
 import { readSexpr, valueOf } from './sexpr';
 import type { LibsSource } from '../loader/src/wasm/libs/source';
 
@@ -229,6 +229,27 @@ describe('path variables and design block rows (i-librows)', () => {
     }
     expect(isBuiltinPathVar('KICAD_SYMBOL_DIR')).toBe(false);
     expect(isBuiltinPathVar('MYLIB')).toBe(false);
+  });
+
+  it('admits KiCad 10\'s 3rd party variable alone, and only when asked (paths.set under addonPaths)', () => {
+    expect(THIRD_PARTY_VAR).toBe('KICAD10_3RD_PARTY');
+    expect(readPathVars({ KICAD10_3RD_PARTY: '.cc-addons' }, { thirdParty: true })).toEqual({ KICAD10_3RD_PARTY: '.cc-addons' });
+    expect(readPathVars({ KICAD10_3RD_PARTY: 'p/.cc-addons', MYLIB: 'mylib' }, { thirdParty: true })).toEqual({ KICAD10_3RD_PARTY: 'p/.cc-addons', MYLIB: 'mylib' });
+    expect(readPathVars({ KICAD10_3RD_PARTY: '.cc-addons' })).toBeNull();
+    expect(readPathVars({ KICAD10_3RD_PARTY: '.cc-addons' }, { thirdParty: false })).toBeNull();
+    // Every other name of KiCad's own stays refused, the other versions' 3rd party ones too, and the folder rules hold.
+    for (const name of ['KIPRJMOD', 'KICAD9_3RD_PARTY', 'KICAD8_3RD_PARTY', 'KICAD10_SYMBOL_DIR', 'KICAD10_DESIGN_BLOCK_DIR', 'KICAD_PTEMPLATES']) {
+      expect(readPathVars({ [name]: 'a' }, { thirdParty: true })).toBeNull();
+    }
+    for (const folder of ['', '/abs', '../up', 'a//b']) expect(readPathVars({ KICAD10_3RD_PARTY: folder }, { thirdParty: true })).toBeNull();
+    expect(isBuiltinPathVar(THIRD_PARTY_VAR)).toBe(true);
+  });
+
+  it('resolves a 3rd party row of the design\'s tables into the folder the variable names', () => {
+    const vars = { KICAD10_3RD_PARTY: '.cc-addons' };
+    expect(rowPath(row('${KICAD10_3RD_PARTY}/symbols/com_github_x_kikit/kikit.kicad_sym'), 'symbol', '', vars)).toBe('.cc-addons/symbols/com_github_x_kikit/kikit.kicad_sym');
+    expect(rowPath(row('${KICAD10_3RD_PARTY}/footprints/com_github_x_kikit/kikit.pretty'), 'footprint', '', vars)).toBe('.cc-addons/footprints/com_github_x_kikit/kikit.pretty');
+    expect(rowPath(row('${KICAD10_3RD_PARTY}/symbols/com_github_x_kikit/kikit.kicad_sym'), 'symbol', '', {})).toBeNull();
   });
 
   it('resolves a ${KIPRJMOD} row from the project file\'s folder and a variable\'s row from the folder set, nothing else', () => {

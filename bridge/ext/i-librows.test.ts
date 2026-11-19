@@ -66,7 +66,7 @@ const RUN15 = () => ({ kicadLibsRemoveEntry: true, kicadPathVarsSet: true });
  * stand in, booted in `frame` on an engine with run 14's library exports and,
  * with `run15`, the run 15 ones; `answers` sets what a run 15 export answers.
  */
-async function boot(frame: 'sch' | 'pcb' | 'symedit', opts: { run15?: boolean; ready?: boolean; busyMs?: number } = {}) {
+async function boot(frame: 'sch' | 'pcb' | 'symedit', opts: { run15?: boolean; thirdParty?: boolean; ready?: boolean; busyMs?: number } = {}) {
   const reg = buildRegistry(mods(unit));
   expect(reg.problems).toEqual([]);
   const { page, parent } = fakePage(`?frame=${frame}&theme=day`);
@@ -91,6 +91,8 @@ async function boot(frame: 'sch' | 'pcb' | 'symedit', opts: { run15?: boolean; r
     mod.kicadLibsRemoveEntry = vi.fn(async (k: string, n: string) => { calls.push(`remove ${k} ${n}`); busy(); return answers.remove; });
     mod.kicadPathVarsSet = vi.fn(async (json: string) => { calls.push(`paths ${json}`); busy(); return answers.paths; });
   }
+  // The engine's word that kicadPathVarsSet takes KiCad's 3rd party variable (its marker).
+  if (opts.thirdParty === true) mod.kicadPathVarsThirdParty = () => true;
   const dialogs: Array<Record<string, unknown>> = [];
   const win = {
     FS: fs.FS,
@@ -133,6 +135,7 @@ describe('the unit in the registry', () => {
     expect(REGISTRY.units.map((u) => u.unit)).toContain('i-librows');
     expect(REGISTRY.capNames.get('libRows')).toBe('i-librows');
     expect(REGISTRY.capNames.get('pathVars')).toBe('i-librows');
+    expect(REGISTRY.capNames.get('addonPaths')).toBe('i-librows');
     expect(REGISTRY.ops.get('libs.remove')).toBeDefined();
     expect(REGISTRY.ops.get('paths.set')).toBeDefined();
     expect(REGISTRY.widen.get('project.libs')?.map((w) => w.unit)).toEqual(['i-librows']);
@@ -150,6 +153,19 @@ describe('caps', () => {
     }
     expect(unit.caps!({ kicadLibsRemoveEntry: () => true, kicadLibsAddEntry: () => 0, kicadLibsReload: () => 0, kicadCollabBusy: () => false, kicadPathVarsSet: () => true }, 'symedit')).toEqual([]);
     expect(unit.caps!({ kicadPathVarsSet: () => true, kicadCollabBusy: () => false }, 'pcb')).toEqual(['pathVars']);
+  });
+
+  it('lists addonPaths in sch and pcb frames only where the engine takes KiCad\'s 3rd party variable (its marker beside kicadPathVarsSet)', async () => {
+    for (const frame of ['sch', 'pcb'] as const) {
+      const s = await frameOf(frame, { run15: true, thirdParty: true });
+      expect(s.ready?.caps).toEqual(expect.arrayContaining(['libRows', 'pathVars', 'addonPaths']));
+      const plain = await frameOf(frame, { run15: true });
+      expect(plain.ready?.caps).not.toContain('addonPaths');
+    }
+    const engine = { kicadPathVarsSet: () => true, kicadPathVarsThirdParty: () => true, kicadCollabBusy: () => false };
+    expect(unit.caps!(engine, 'pcb')).toEqual(['pathVars', 'addonPaths']);
+    expect(unit.caps!(engine, 'symedit')).toEqual([]);
+    expect(unit.caps!({ kicadPathVarsThirdParty: () => true, kicadCollabBusy: () => false }, 'sch')).toEqual([]);
   });
 });
 
@@ -218,7 +234,7 @@ describe('paths.set', () => {
   it('bad_args for a built in name, a name out of KiCad\'s form, a folder out of the normal form, none or more than 64', async () => {
     const s = await frameOf('pcb', { run15: true });
     const many = Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`V${i}`, 'a']));
-    for (const vars of [undefined, {}, [], many, { KIPRJMOD: 'a' }, { KICAD10_SYMBOL_DIR: 'a' }, { KICAD9_3DMODEL_DIR: 'a' }, { KICAD10_3RD_PARTY: 'a' }, { KICAD_USER_TEMPLATE_DIR: 'a' }, { mylib: 'a' }, { '1A': 'a' }, { A: '' }, { A: '/abs' }, { A: '../up' }, { A: 'a//b' }, { A: 3 }]) {
+    for (const vars of [undefined, {}, [], many, { KIPRJMOD: 'a' }, { KICAD10_SYMBOL_DIR: 'a' }, { KICAD9_3DMODEL_DIR: 'a' }, { KICAD9_3RD_PARTY: 'a' }, { KICAD_USER_TEMPLATE_DIR: 'a' }, { mylib: 'a' }, { '1A': 'a' }, { A: '' }, { A: '/abs' }, { A: '../up' }, { A: 'a//b' }, { A: 3 }]) {
       expect(await s.request('paths.set', vars === undefined ? {} : { vars })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'paths.set' } });
     }
     expect(await s.request('paths.set', { vars: { A: 'a' }, extra: true })).toMatchObject({ ok: false, error: { code: 'bad_args' } });
@@ -309,5 +325,63 @@ describe('helpers', () => {
     expect(prjmodOf('a.kicad_sch', ROOT)).toBe('');
     expect(prjmodOf('Hardware/Main/a.kicad_pcb', ROOT)).toBe('Hardware/Main');
     expect(prjmodOf(`${ROOT}/Hardware/a.kicad_pcb`, ROOT)).toBe('Hardware');
+  });
+});
+
+describe('paths.set and KiCad\'s 3rd party variable (addonPaths)', () => {
+  const PKG_SYMS = SYMS.replace('"X1"', '"KiKit_Tab"');
+  const ADDON_SYM_TABLE = '(sym_lib_table (version 7) (lib (name "PCM_kikit")(type "KiCad")(uri "${KICAD10_3RD_PARTY}/symbols/com_github_x_kikit/kikit.kicad_sym")(options "")(descr "")))';
+  const ADDON_FP_TABLE = '(fp_lib_table (version 7) (lib (name "PCM_kikit")(type "KiCad")(uri "${KICAD10_3RD_PARTY}/footprints/com_github_x_kikit/kikit.pretty")(options "")(descr "")))';
+  /** The add-on's files where the site writes them, under the design's .cc-addons, as KiCad lays out its 3rd party folder. */
+  function addonDesign(fs: ReturnType<typeof fakeFs>) {
+    fs.put('sym-lib-table', ADDON_SYM_TABLE);
+    fs.put('fp-lib-table', ADDON_FP_TABLE);
+    fs.put('.cc-addons/symbols/com_github_x_kikit/kikit.kicad_sym', PKG_SYMS);
+    fs.put('.cc-addons/footprints/com_github_x_kikit/kikit.pretty/Tab.kicad_mod', FP);
+  }
+
+  it('points the variable at a folder of the project, made absolute for the engine, and the add-on\'s rows resolve there', async () => {
+    const s = await frameOf('sch', { run15: true, thirdParty: true });
+    addonDesign(s.fs);
+    expect(await s.request('project.libs', { libs: ['PCM_kikit'] })).toMatchObject({ ok: false, error: { code: 'not_found', message: 'PCM_kikit' } });
+    expect(await s.request('paths.set', { vars: { KICAD10_3RD_PARTY: '.cc-addons' } })).toMatchObject({ ok: true, result: { set: ['KICAD10_3RD_PARTY'] } });
+    expect(s.calls).toEqual([`paths ${JSON.stringify({ vars: { KICAD10_3RD_PARTY: `${ROOT}/.cc-addons` } })}`]);
+    expect(s.project.vars()).toEqual({ KICAD10_3RD_PARTY: '.cc-addons' });
+    expect(await s.request('project.libs', { libs: ['PCM_kikit'] })).toMatchObject({ ok: true, result: { symbol: ['PCM_kikit'], footprint: ['PCM_kikit'], block: [] } });
+    expect(s.project.registered('symbol', 'PCM_kikit')?.path).toBe('.cc-addons/symbols/com_github_x_kikit/kikit.kicad_sym');
+    expect(s.project.registered('footprint', 'PCM_kikit')?.path).toBe('.cc-addons/footprints/com_github_x_kikit/kikit.pretty');
+  });
+
+  it('beside the host\'s own variables in one request, in a pcb frame too', async () => {
+    const s = await frameOf('pcb', { run15: true, thirdParty: true });
+    expect(await s.request('paths.set', { vars: { MYLIB: 'mylib', KICAD10_3RD_PARTY: 'sub/.cc-addons' } })).toMatchObject({ ok: true, result: { set: ['MYLIB', 'KICAD10_3RD_PARTY'] } });
+    expect(s.project.vars()).toEqual({ MYLIB: 'mylib', KICAD10_3RD_PARTY: 'sub/.cc-addons' });
+  });
+
+  it('an engine without the marker answers unsupported naming it, after the args and the other exports; nothing is sent', async () => {
+    const s = await frameOf('sch', { run15: true });
+    expect(await s.request('paths.set', { vars: { KICAD10_3RD_PARTY: '.cc-addons' } })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadPathVarsThirdParty' } });
+    expect(await s.request('paths.set', { vars: { MYLIB: 'mylib', KICAD10_3RD_PARTY: '.cc-addons' } })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadPathVarsThirdParty' } });
+    const old = await frameOf('pcb');
+    expect(await old.request('paths.set', { vars: { KICAD10_3RD_PARTY: '.cc-addons' } })).toMatchObject({ ok: false, error: { code: 'unsupported', message: 'kicadPathVarsSet' } });
+    expect(await s.request('paths.set', { vars: { KICAD10_3RD_PARTY: '../up' } })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'paths.set' } });
+    expect(s.calls).toEqual([]);
+    expect(old.calls).toEqual([]);
+    expect(s.project.vars()).toEqual({});
+  });
+
+  it('every other name of KiCad\'s stays refused, and project.libs vars never take the 3rd party one', async () => {
+    const s = await frameOf('sch', { run15: true, thirdParty: true });
+    for (const vars of [{ KIPRJMOD: 'a' }, { KICAD9_3RD_PARTY: 'a' }, { KICAD10_SYMBOL_DIR: 'a' }, { KICAD10_DESIGN_BLOCK_DIR: 'a' }, { KICAD_PTEMPLATES: 'a' }]) {
+      expect(await s.request('paths.set', { vars })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'paths.set' } });
+    }
+    addonDesign(s.fs);
+    expect(await s.request('project.libs', { libs: ['PCM_kikit'], vars: { KICAD10_3RD_PARTY: '.cc-addons' } })).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'project.libs' } });
+    expect(s.calls).toEqual([]);
+  });
+
+  it('refuses in a symedit frame', async () => {
+    const s = await frameOf('symedit', { run15: true, thirdParty: true });
+    expect(await s.request('paths.set', { vars: { KICAD10_3RD_PARTY: '.cc-addons' } })).toMatchObject({ ok: false, error: { code: 'unsupported' } });
   });
 });
