@@ -12,7 +12,7 @@
 | `dsedit.append` | `{ text: string }` | `{ added: string[] }` |
 | `dsedit.image.arm` | `{ bytes: Uint8Array, name: string }` | `{}` |
 <!-- part: events -->
-- `ev.dsedit { ask: "image", uuid: "", isNew: true }`: in a `ds` frame (island `v0.2.3-cc25`, cap `dseditHeld`), KiCad's Place Bitmaps was pressed with no picture armed: it places nothing and opens no window, and the host offers a picture (then `dsedit.image.arm`, and the next press places it). Sent once per request, after `ev.ready`, while a drawing sheet is open.
+- `ev.dsedit { ask: "image", uuid: "", isNew: true }`: in a `ds` frame (island `v0.2.3-cc25`, cap `dseditHeld`), KiCad's Place Bitmaps was pressed with no picture armed: it places nothing and opens no window, and the host offers a picture (then `dsedit.image.arm`, and the next press places it). Sent once per request, after `ev.ready`, while a drawing sheet is open. KiCad asks once per press on the drawing, and once more at the tool's start when the tool was started by its key (as `key.press` starts it): a host treats an ask that comes while its own picker is already open as already answered.
 <!-- part: section -->
 ### The drawing sheet editor: items, defaults, preview, append and pictures
 
@@ -26,4 +26,4 @@ Island `v0.2.3-cc25`, on an engine with the dsedit exports (engine run 15); a ho
 - **`dsedit.defaults.set`**: `lineWidth` 0 to 10, `textSize` 0.01 to 100 each, `textThickness` 0 to 5, `margins` whole, each 0 to 1,000.
 - **`dsedit.preview.set`**: `paper` one of the names above; `width` and `height` together (25.4 to 3,048) and only for a `User` paper; `portrait` only for the other papers (the paper the set names, else the one shown: `bad_args` otherwise); the four texts; `comments` exactly nine. The drawing redraws on that page.
 - **`dsedit.append { text }`** adds every item of another `kicad_wks` (or legacy `page_layout`) document to the open sheet, its setup taken too, as KiCad's Append Existing Drawing Sheet: KiCad's own parser reads it first (`unreadable` with KiCad's line, nothing changed); past 8 MiB `too_large`. The answer `{ added }` lists the new items' uuids (an id the sheet already holds is replaced by a fresh one) once the sheet holds every one.
-- **`dsedit.image.arm { bytes, name }`** holds a PNG (at most 4 MiB: `too_large`; KiCad's picture reader must take it, else `not_applied`) for KiCad's next Place Bitmaps press, which places it with no file dialog and disarms; empty `bytes` disarm. With nothing armed the press sends `ev.dsedit` and places nothing.
+- **`dsedit.image.arm { bytes, name }`** holds a PNG (at most 4 MiB: `too_large`; KiCad's picture reader must take it, else `not_applied`) for KiCad's next Place Bitmaps press, which puts it on the pointer with no file dialog and disarms (the press after that places it, ONE undo step; a tool started by its key takes the start as its first press); empty `bytes` disarm. With nothing armed the press sends `ev.dsedit` and places nothing.

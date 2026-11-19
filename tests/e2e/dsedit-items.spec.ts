@@ -161,10 +161,13 @@ test('Place Bitmaps with nothing armed sends ev.dsedit and opens no window; an a
   const bitmaps = async () => (await items(page, { kinds: ['bitmap'] })).length;
   const n = await bitmaps();
   const menus = (await of(page, 'ev.menu')).length;
+  // KiCad's own Place Bitmaps (RULINGS 29d): started by its key it asks once at the tool's start, then once per press.
   expect(await request(page, 'key.press', PLACE_BITMAPS)).toEqual({});
+  await expect.poll(async () => (await of(page, 'ev.dsedit')).length, { timeout: 5_000, message: 'the start by key asks' }).toBe(1);
   await clickCanvas(page);
-  await expect.poll(async () => (await of(page, 'ev.dsedit')).length, { timeout: 5_000 }).toBe(1);
-  expect((await of(page, 'ev.dsedit'))[0]).toEqual({ type: 'ev.dsedit', ask: 'image', uuid: '', isNew: true });
+  await expect.poll(async () => (await of(page, 'ev.dsedit')).length, { timeout: 5_000, message: 'the press asks again' }).toBe(2);
+  // The harness stamps each event with its arrival time (at); the event itself is exactly these keys.
+  for (const { at: _at, ...ask } of await of(page, 'ev.dsedit')) expect(ask).toEqual({ type: 'ev.dsedit', ask: 'image', uuid: '', isNew: true });
   await page.waitForTimeout(1_000);
   expect((await of(page, 'ev.menu')).length, 'no window').toBe(menus);
   expect(await bitmaps()).toBe(n);
@@ -178,7 +181,7 @@ test('Place Bitmaps with nothing armed sends ev.dsedit and opens no window; an a
   await clickCanvas(page);
   await expect.poll(bitmaps, { timeout: 5_000 }).toBe(n + 1);
   expect((await items(page, { kinds: ['bitmap'] })).some((b) => b.width === 64 && b.height === 64)).toBe(true);
-  expect((await of(page, 'ev.dsedit')).length, 'the armed picture asks nothing').toBe(1);
+  expect((await of(page, 'ev.dsedit')).length, 'the armed picture asks nothing').toBe(2);
   await request(page, 'key.press', { key: 'Escape', code: 'Escape' });
   await page.screenshot({ path: test.info().outputPath('placed-logo.png') });
 });
