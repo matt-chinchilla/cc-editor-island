@@ -1,0 +1,21 @@
+Glasgow Interface Explorer, hardware revC3, https://github.com/GlasgowEmbedded/glasgow @ 49e29452a3372fcc5aea790c080c0be554d15800 (2026-09-11), 0BSD (LICENSE beside this file). Derived for this repository on 2026-11-19 (unit st-rescue-i) from tests/fixtures/glasgow:
+
+- glasgow.kicad_pro, io_banks.kicad_sch and io_buffer.kicad_sch are that
+  folder's copies, byte for byte (glasgow.kicad_pro sha256
+  71b492197836293287ef21694be698939b4469dc4f841f2ace86ef808a9bfc35).
+- glasgow.kicad_sch is that folder's root sheet (sha256
+  c1012888c6128e1c48ce0aca270c4774bc4f3f64a04e92e7aa976f4ec624f73e) with
+  twelve placed resistors re-pointed from Device:R to MyParts:R: R4 (uuid
+  00000000-0000-0000-0000-00005f06d941), R5, R9, R12, R13, R14, R15, R16,
+  R17, R18, R19 and R31, and its lib_symbols holding the design's own copy of
+  the symbol under MyParts:R (Device:R's entry, its name alone changed) beside
+  Device:R. Nothing else differs (sha256
+  418ce4a3a5889a9c4a888a0058c51e8a83d0a8a5d899e5a19a36e1b1bf85549a).
+- sym-lib-table is new: one row MyParts of type KiCad at
+  ${KIPRJMOD}/MyParts.kicad_sym, a file the design does not carry.
+
+So KiCad's rescue finds one candidate, MyParts:R, used by twelve placed
+symbols, kept as glasgow-rescue:R-MyParts in glasgow-rescue.kicad_sym.
+files.json lists the files the e2e harness opens. Read by
+tests/e2e/st/st-rescue-i.spec.ts. The files carry no comment, so this file
+and LICENSE hold their license.
