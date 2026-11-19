@@ -24,5 +24,6 @@
   "sch_export_plot_ps": "sch",
   "sch_export_netlist": "sch",
   "sch_export_bom": "sch",
-  "cc_symbols": "sch"
+  "cc_symbols": "sch",
+  "pcb_render": "pcb"
 }
