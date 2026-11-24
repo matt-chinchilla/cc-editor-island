@@ -6,7 +6,8 @@
 import { describe, expect, it } from 'vitest';
 import { KEPT_KEY, KEPT_THEME, keepTheme, readKept, readTheme, type KeptStore } from './kept';
 import { seedsFor } from './seeds';
-import { SHEET_THEME } from './sheet-theme';
+import { SHEET_THEME, sheetThemeOf } from './sheet-theme';
+import palette from './colors/circuitcenter.json?raw';
 
 function memory(init: Record<string, string> = {}): KeptStore & { map: Map<string, string> } {
   const map = new Map(Object.entries(init));
@@ -54,5 +55,13 @@ describe('the kept colors', () => {
     expect(sheet.schematic.page_limits).toBe('rgb(8, 8, 8)');
     expect(seedsFor('night').colorTheme).toBe('circuitcenter');
     expect(seedsFor('night').colors.map((c) => c.name)).not.toContain(`${KEPT_THEME}.json`);
+  });
+
+  it('with nothing kept, seeds byte for byte as before: the palette selected, the sheet theme laid over the palette', () => {
+    for (const theme of ['day', 'night'] as const) {
+      expect(seedsFor(theme, null)).toEqual(seedsFor(theme));
+      expect(seedsFor(theme).colors.find((c) => c.name === `${SHEET_THEME}.json`)!.json).toBe(sheetThemeOf(palette));
+      expect(seedsFor(theme).colors[0].json).toBe(palette);
+    }
   });
 });

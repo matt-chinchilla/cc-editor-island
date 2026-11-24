@@ -234,8 +234,9 @@ test('the kept colors: the symbol, footprint and drawing sheet editors boot in t
 
     // null in a schematic frame forgets the kept colors: the next editor boots in the palette.
     const again = await boot(page, 'sch');
-    // This schematic frame booted in the kept colors too.
-    await showing(again.island, WHITE);
+    // A reload of the schematic frame comes up in the kept colors with no theme.set sent.
+    const reloaded = await showing(again.island, WHITE);
+    measure('sch reloaded kept', `background ${reloaded.top.join(', ')} on ${(reloaded.topShare * 100).toFixed(1)} %, no theme.set sent`);
     expect(await request(page, 'theme.set', { colors: null })).toEqual({});
     await showing(again.island, PALETTE_SCH_BG);
     for (const frame of ['symedit', 'ds']) {
