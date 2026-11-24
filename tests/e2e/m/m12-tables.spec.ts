@@ -161,6 +161,7 @@ test.describe('engine run 15: tables', () => {
       expect(await request(page, 'key.press', { key: 'Home', code: 'Home' })).toEqual({ error: { code: 'busy', message: 'key.press' } });
       const edited = (await of(page, 'ev.edited')).length;
       expect(await request(page, 'prompt.answer', { token: first.token, text: 'X' })).toEqual({ accepted: true });
+      // Read after ev.edited (engine build T17 commits after the answer resumes the wait).
       await expect.poll(async () => (await of(page, 'ev.edited')).length - edited, { timeout: 10_000 }).toBe(1);
       const second = await cellPrompt(page, [t.x]);
       expect(second.record!.text).toBe('X');
@@ -169,7 +170,12 @@ test.describe('engine run 15: tables', () => {
       const table = await nextPrompt(page, before);
       expect(table).toMatchObject({ ask: 'table', frame: kind });
       expect(table.record).toMatchObject({ uuid: t.table, rows: t.rows, cols: t.cols });
+      // Engine build T17 commits a table answer once the parked wait resumes, on the
+      // tool's coroutine (a commit inside the answer trapped while the item was
+      // selected): the table is read after ev.edited, never right after the answer.
+      const editedTable = (await of(page, 'ev.edited')).length;
       expect(await request(page, 'prompt.answer', { token: table.token, border: { header: false } })).toEqual({ accepted: true });
+      await expect.poll(async () => (await of(page, 'ev.edited')).length - editedTable, { timeout: 10_000 }).toBe(1);
       expect((await readTable(page, t.x)).border.header).toBe(false);
     });
 

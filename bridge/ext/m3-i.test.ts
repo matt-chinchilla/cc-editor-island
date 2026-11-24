@@ -41,8 +41,8 @@ function engine(over: Record<string, unknown> = {}) {
  * load parked, `keys` a popup menu or a dialog up, `hanging` a placed item on
  * the pointer, `up` the engine up.
  */
-function fakeCtx(mod: Record<string, unknown>, state: Partial<{ busy: boolean; doc: boolean; frame: string; keys: boolean; hanging: boolean; up: boolean }> = {}) {
-  const s = { busy: false, doc: true, frame: 'pcb', keys: false, hanging: false, up: true, ...state };
+function fakeCtx(mod: Record<string, unknown>, state: Partial<{ busy: boolean; doc: boolean; frame: string; keys: boolean; hanging: boolean; up: boolean; idle: boolean; onIdle: () => void }> = {}) {
+  const s = { busy: false, doc: true, frame: 'pcb', keys: false, hanging: false, up: true, idle: true, onIdle: () => {}, ...state };
   const boardGate = vi.fn((op: string, exports: readonly string[]) => {
     if (s.frame !== 'pcb') return fail('unsupported', 'a pcb frame');
     for (const n of exports) if (typeof mod[n] !== 'function') return fail('unsupported', n);
@@ -59,6 +59,8 @@ function fakeCtx(mod: Record<string, unknown>, state: Partial<{ busy: boolean; d
     keysBlocked: () => s.keys,
     placeHanging: () => s.hanging,
     boardGate,
+    // The engine's apply queue: the queued move runs as it empties.
+    applyIdle: vi.fn(async (_ms: number) => { s.onIdle(); return s.idle; }),
   } as unknown as ResponderCtx;
 }
 const run = (op: string, args: unknown, ctx: ResponderCtx): Promise<Answer> => Promise.resolve((unit as ExtUnit).ops![op].run(args, ctx));
@@ -242,6 +244,67 @@ describe('board.vertices.set', () => {
     expect(await set(SET, fakeCtx(engine({ kicadBoardVerticesSet: () => JSON.stringify(RECORD) })))).toEqual(fail('not_applied', 'board.vertices.set'));
     expect(await set(SET, fakeCtx(engine({ kicadBoardVerticesSet: () => '{}' })))).toEqual(fail('island_error', 'board.vertices.set: the engine answered another shape'));
     expect(await set(SET, fakeCtx(engine({ kicadBoardVerticesSet: () => { throw new Error('trap'); } })))).toEqual(fail('island_error', 'board.vertices.set'));
+  });
+});
+
+/**
+ * Build T17 (engine item 1): a moved corner is queued on the frame's tool
+ * coroutine and answered `{"queued":true}`; the island waits for the apply
+ * queue, then reads the item back. A corner already there is still answered
+ * at once with the record.
+ */
+describe('board.vertices.set on an engine that queues the move (build T17)', () => {
+  /** An engine that answers {"queued":true} and moves the corner only when the apply queue runs. */
+  function queuing(move = true) {
+    const mod = engine();
+    const real = mod.kicadBoardVerticesSet.getMockImplementation()!;
+    let pending: string | null = null;
+    mod.kicadBoardVerticesSet = vi.fn((json: string): unknown => { pending = json; return '{"queued":true}'; });
+    const onIdle = () => { if (pending != null && move) real(pending); pending = null; };
+    return { mod, onIdle };
+  }
+
+  it('waits for the apply queue (5 s at most), then answers the item read back holding the corner', async () => {
+    const { mod, onIdle } = queuing();
+    const ctx = fakeCtx(mod, { onIdle });
+    const r = await set(SET, ctx);
+    expect(ctx.applyIdle).toHaveBeenCalledWith(5000);
+    expect(mod.kicadBoardVerticesGet).toHaveBeenCalledTimes(2);
+    const want = structuredClone(RECORD);
+    want.outlines[0].points[2] = { x: 111.5, y: 112.25 };
+    expect(r).toEqual({ ok: true, result: want });
+  });
+
+  it('is not_applied when the queued body refused the move, or the queue never emptied', async () => {
+    const refused = queuing(false);
+    expect(await set(SET, fakeCtx(refused.mod, { onIdle: refused.onIdle }))).toEqual(fail('not_applied', 'board.vertices.set'));
+    const stuck = queuing();
+    expect(await set(SET, fakeCtx(stuck.mod, { idle: false }))).toEqual(fail('not_applied', 'board.vertices.set'));
+    expect(stuck.mod.kicadBoardVerticesGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('is not_found when the item is gone by the read back', async () => {
+    const { mod, onIdle } = queuing();
+    const read = mod.kicadBoardVerticesGet.getMockImplementation()!;
+    let n = 0;
+    mod.kicadBoardVerticesGet = vi.fn((json: string): unknown => (++n === 1 ? read(json) : ''));
+    expect(await set(SET, fakeCtx(mod, { onIdle }))).toEqual(fail('not_found', ZONE));
+  });
+
+  it('reads the queued answer closed: another key beside queued, or queued false, is another shape', async () => {
+    for (const odd of ['{"queued":false}', '{"queued":true,"x":1}', '{"queued":1}', 'queued']) {
+      const ctx = fakeCtx(engine({ kicadBoardVerticesSet: () => odd }));
+      expect(await set(SET, ctx)).toEqual(fail('island_error', 'board.vertices.set: the engine answered another shape'));
+      expect(ctx.applyIdle).not.toHaveBeenCalled();
+    }
+  });
+
+  it('a corner already there is answered at once from the record, with no wait (as on run 15 before T17)', async () => {
+    const mod = engine();
+    const ctx = fakeCtx(mod);
+    const r = await set({ ...SET, index: 0, x: 100, y: 100 }, ctx);
+    expect(r).toEqual({ ok: true, result: RECORD });
+    expect(ctx.applyIdle).not.toHaveBeenCalled();
   });
 });
 

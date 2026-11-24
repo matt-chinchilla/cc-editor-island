@@ -19,6 +19,13 @@
 // Corners (that pane, KiCad chrome) is held under the cap vertices in both
 // frames: the frame sends ev.held and the host opens its Corners block over
 // board.vertices.get.
+//
+// Build T17 (engine item 1): a move made at once trapped (SuspendError) while
+// the item was selected, as KiCad's commit then runs the selection's tools.
+// From T17 the engine checks the args and the corner at once, answers a
+// corner already there with the record as before, and otherwise queues the
+// move on the frame's tool coroutine and answers exactly {"queued":true}: the
+// island waits for the apply queue, then reads the item back.
 import { fail, hasAll, ok, refused, type Answer, type ExtUnit, type HeldRow, type ResponderCtx } from './contract';
 import { BOARD_ASK_READERS, BOARD_ASKS } from './m3-i/asks';
 import { cornerAt, lineOf, parseVerticesGet, parseVerticesSet, readVertices, type VertexRecord } from './m3-i/vertices';
@@ -51,6 +58,17 @@ function readNow(op: string, mod: Record<string, unknown>, uuid: string): Vertex
   return readVertices(raw, uuid) ?? fail('island_error', `${op}: the engine answered another shape`);
 }
 const isAnswer = (v: unknown): v is Answer => typeof v === 'object' && v !== null && 'ok' in v;
+
+/** How long the island waits for a queued move (build T17) to run. */
+export const QUEUED_MOVE_MS = 5000;
+
+/** The engine's answer for a move queued on the frame's tool coroutine (build T17): exactly `{"queued":true}`. */
+export function isQueuedAnswer(raw: unknown): boolean {
+  if (typeof raw !== 'string' || raw.length > 64) return false;
+  let v: unknown;
+  try { v = JSON.parse(raw); } catch { return false; }
+  return typeof v === 'object' && v !== null && !Array.isArray(v) && Object.keys(v).length === 1 && (v as { queued?: unknown }).queued === true;
+}
 
 /**
  * The checks both ops make after their args, each before any effect. In a pcb
@@ -100,7 +118,7 @@ export default {
       },
     },
     'board.vertices.set': {
-      run(args, ctx: ResponderCtx) {
+      async run(args, ctx: ResponderCtx) {
         const op = 'board.vertices.set';
         const s = parseVerticesSet(args);
         if (s == null) return fail('bad_args', op);
@@ -117,7 +135,15 @@ export default {
         let raw: unknown;
         try { raw = (g.mod.kicadBoardVerticesSet as Engine)(JSON.stringify(s)); } catch { return fail('island_error', op); }
         if (raw === '' || raw == null) return fail('not_applied', op);
-        const after = readVertices(raw, s.uuid);
+        let after: VertexRecord | null;
+        if (isQueuedAnswer(raw)) {
+          // Queued (build T17): the move runs as the apply queue empties; then the item read back.
+          if (!(await ctx.applyIdle(QUEUED_MOVE_MS))) return fail('not_applied', op);
+          const read = readNow(op, g.mod, s.uuid);
+          if (read == null) return fail('not_found', s.uuid);
+          if (isAnswer(read)) return read;
+          after = read;
+        } else after = readVertices(raw, s.uuid);
         if (after == null) return fail('island_error', `${op}: the engine answered another shape`);
         // The read back must hold the corner where it was sent.
         if (!cornerAt(after, s)) return fail('not_applied', op);

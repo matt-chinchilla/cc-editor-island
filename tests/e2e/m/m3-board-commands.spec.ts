@@ -449,6 +449,25 @@ test.describe('engine run 15: every board canvas command once, no window', () =>
     await noWindow(page, 'editVertices');
   });
 
+  test('engine build T17: a corner of a SELECTED zone moves through the queue with no trap, one undo step', async ({ page }) => {
+    // menuClarify is a name only build T17 has: the queued move came with it.
+    await open15(page, ['contextMenu', 'prompts', 'vertices', 'menuClarify']);
+    const errors: string[] = [];
+    page.on('console', (m) => { if (/SuspendError/.test(m.text())) errors.push(m.text()); });
+    const silk = await corners(page, ID.SILK_ZONE);
+    await select(page, [ID.SILK_ZONE]);
+    const edited0 = await countOf(page, 'ev.edited');
+    const moved = await request(page, 'board.vertices.set', { uuid: ID.SILK_ZONE, outline: 0, hole: -1, index: 1, x: 132, y: 115 });
+    expect(moved.error).toBeUndefined();
+    expect((moved.outlines as Array<{ points: unknown[] }>)[0].points[1]).toEqual({ x: 132, y: 115 });
+    await expect.poll(async () => (await countOf(page, 'ev.edited')) - edited0, { timeout: 10_000 }).toBe(1);
+    expect(await corners(page, ID.SILK_ZONE)).toEqual(moved);
+    await noWindow(page, 'board.vertices.set, selected');
+    await undoStep(page, edited0, 'board.vertices.set, selected');
+    expect(await corners(page, ID.SILK_ZONE)).toEqual(silk);
+    expect(errors, 'no SuspendError line').toEqual([]);
+  });
+
   test('Convert: polygon, lines, zone, rule area, tracks and arc from a selection, each window an ask', async ({ page }) => {
     await open15(page);
     await editRow(page, {
