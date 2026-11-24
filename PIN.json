@@ -19,7 +19,7 @@
     "toolTag": "v0.2.3",
     "build": {
       "recipe": "cc/main",
-      "pcbjam": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe",
+      "pcbjam": "51b07066fde786f3ca1ffef337c419fdbbb4c61c",
       "kicad": "81df2ba207b7281ef8e2a462b823026d4321768a",
       "wxwidgets": "76a61cc0d65944ec6e4eb6c40b78bd4d5388ced1",
       "shared": "7791275bdfbf54e1500e303121dacaa2c3fd7d00",
@@ -79,55 +79,55 @@
     },
     "files": {
       "kicad_editor.js": {
-        "sha256": "690cb807ea45bf9321f13f3b153fc26c7e95ac37f2b887a9bde88074be86a47a",
-        "bytes": 494010,
-        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
+        "sha256": "3c094f143005790393ddbc36d1641624670c3bdca07d3d40f38edbdc20cdf270",
+        "bytes": 494009,
+        "source": "51b07066fde786f3ca1ffef337c419fdbbb4c61c"
       },
       "kicad_editor.wasm": {
-        "sha256": "1fc408da2f762a9506bd2fed61a0fb75c8ad86e0339d23c3e2e3df951bf8eeaf",
-        "bytes": 65892859,
-        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
+        "sha256": "655e69579f262ef445d2fb8c95c0c8297917b677e64b893cf7a078b3412cb2ae",
+        "bytes": 65894511,
+        "source": "51b07066fde786f3ca1ffef337c419fdbbb4c61c"
       },
       "wx.js": {
         "sha256": "42d6b547f9a024f187f1b7812b64a3f76ca322d35393531340cb316ff88da351",
         "bytes": 79808,
-        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
+        "source": "51b07066fde786f3ca1ffef337c419fdbbb4c61c"
       },
       "wx-dom.js": {
         "sha256": "7edabd5571c9f2fd0ea1acf7005fb3628f2e3cf6b8f430f8e473c328fb042a10",
         "bytes": 68699,
-        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
+        "source": "51b07066fde786f3ca1ffef337c419fdbbb4c61c"
       },
       "images.tar.gz": {
-        "sha256": "a0edaf8d100439a14a48628c828d52750ace1cc0919c1dc3aa6bb8f2c1f77eb6",
-        "bytes": 5369240,
-        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
+        "sha256": "0fb47329b54d983627d2afcd40e398ffeb30bf3d2f4333216d9b0ad7dd25a4c1",
+        "bytes": 5369129,
+        "source": "51b07066fde786f3ca1ffef337c419fdbbb4c61c"
       },
       "ngspice_service.js": {
         "sha256": "bbc8828928d97cfe14a6a3f98020fecf02d874b326efcd1cd8c5a47bcfdbd739",
         "bytes": 117051,
-        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
+        "source": "51b07066fde786f3ca1ffef337c419fdbbb4c61c"
       },
       "ngspice_service.wasm": {
         "sha256": "11f878dcb08b399b592b21decd6903c479a8627d58140b969cb328781e9fc6e1",
         "bytes": 5666867,
-        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
+        "source": "51b07066fde786f3ca1ffef337c419fdbbb4c61c"
       },
       "occ_service.js": {
-        "sha256": "6846de11cd947cd22fe020bc257f5a8211e1c2cb62087dab10b63557a262e73d",
+        "sha256": "44304a984087e1de0a9180b34247113050f304cd33d5b751856f7fb3b5327171",
         "bytes": 267309,
-        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
+        "source": "51b07066fde786f3ca1ffef337c419fdbbb4c61c"
       },
       "occ_service.wasm": {
-        "sha256": "1f734d0eeb267605bf66b52527897432cab6322911c11c91f736f6147d68120e",
-        "bytes": 60934783,
-        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
+        "sha256": "70fcc59c4e81d7fd9905c8a597661fb1058afba1a2e3dfec68e3d75ca5e8a7b6",
+        "bytes": 60934637,
+        "source": "51b07066fde786f3ca1ffef337c419fdbbb4c61c"
       }
     }
   },
   "icons": {
-    "stockArchiveSha256": "a0edaf8d100439a14a48628c828d52750ace1cc0919c1dc3aa6bb8f2c1f77eb6",
-    "repackedSha256": "7c39fb2a3a02c94e862375b1c5ed0846466ce7016a27967126f23cdb692b7ce4",
+    "stockArchiveSha256": "0fb47329b54d983627d2afcd40e398ffeb30bf3d2f4333216d9b0ad7dd25a4c1",
+    "repackedSha256": "e5fc3ff167271191c98fca8e48da4b28ecccb47a9ef5ed301367160143d300c0",
     "inputs": {
       "theme/icons/src/add_component.svg": "d8d2dfa56f179658a3b2bd458090683161f188ad13d84d89fdb82f1a0f2a12e6",
       "theme/icons/src/add_line.svg": "64db6c023211cd897ea1f3613fcc4d338bf86fbca3086cf832bf3bf25dd516f0",
