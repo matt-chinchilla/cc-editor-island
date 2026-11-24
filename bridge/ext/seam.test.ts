@@ -443,7 +443,8 @@ describe('the seam join fixes', () => {
 // The default run's include, read from vite.config.ts as text (the config imports
 // node modules the type check does not know), and every test file of the checkout.
 const viteConfigText = Object.values(import.meta.glob('../../vite.config.ts', { query: '?raw', import: 'default', eager: true }))[0] as string;
-const testFiles = Object.keys(import.meta.glob(['/**/*.test.ts', '!/**/node_modules/**', '!/dist/**'])).map((f) => f.slice(1));
+// upstream/ is PCBJam's synced tree (npm run sync-upstream, ignored by git): its tests are PCBJam's, never this checkout's.
+const testFiles = Object.keys(import.meta.glob(['/**/*.test.ts', '!/**/node_modules/**', '!/dist/**', '!/upstream/**'])).map((f) => f.slice(1));
 const globRe = (g: string) => new RegExp('^' + g.split('**/').map((p) => p.split('*').map((q) => q.replace(/[.+?^$|()[\]{}\\]/g, '\\$&')).join('[^/]*')).join('(?:.*/)?') + '$');
 
 describe('the default test run', () => {
