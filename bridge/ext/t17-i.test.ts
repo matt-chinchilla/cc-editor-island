@@ -108,8 +108,10 @@ describe('the caps, feature detected', () => {
   });
 
   it('each is listed only with its own exports; T16b (none of them) lists none and answers both ops unsupported naming the export', async () => {
-    expect((await boot('pcb', fakeT17({ states: false }).exports)).pseudo).toEqual(['activeTool', 'libTableProblems']);
-    expect((await boot('pcb', fakeT17({ tables: false, tool: false }).exports)).pseudo).toEqual(['actionStates', 'menuClarify']);
+    expect((await boot('pcb', fakeT17({ states: false }).exports)).pseudo).toEqual(['activeTool', 'libTableProblems', 'menuClarify']);
+    expect((await boot('pcb', fakeT17({ tables: false, tool: false }).exports)).pseudo).toEqual(['actionStates']);
+    // menuClarify follows kicadHostToolChanges alone (the clarify fix came with it in build T17).
+    expect((await boot('pcb', { ...fakeT17({ states: false, tables: false, tool: false }).exports, kicadHostToolChanges: () => true })).pseudo).toEqual(['menuClarify']);
     const old = await boot('pcb', fakeT17({ states: false, tables: false, tool: false }).exports);
     expect(old.pseudo).toEqual([]);
     expect(await old.ask('libs.problems')).toEqual(err('unsupported', 'kicadLibraryTableProblems'));

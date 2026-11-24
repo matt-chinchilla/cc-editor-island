@@ -12,8 +12,9 @@
 // - ev.tool (cap activeTool, kicadHostToolChanges and kicadActiveTool): the
 //   tool KiCad holds, once right after ev.ready and on each change after
 //   (bridge/hostTool.ts, whose slot src/main.ts takes before boot).
-// - the cap menuClarify (kicadActionStates, a name only build T17 has): this
-//   engine marks ev.contextMenu clarify only for KiCad's clarify list (item 12).
+// - the cap menuClarify (kicadHostToolChanges, a name only build T17 and later
+//   have): this engine marks ev.contextMenu clarify only for KiCad's clarify
+//   list (item 12).
 import { ACTION_RE } from '../held';
 import { ACTIVE_TOOL_EXPORT, HOST_TOOL_EXPORT, hostToolSlot, readActiveTool, type HostToolWindow } from '../hostTool';
 import { fail, hasAll, isObj, noArgs, ok, type Answer, type ExtUnit, type ResponderCtx } from './contract';
@@ -24,7 +25,7 @@ export const LIB_PROBLEMS_CAP = 'libTableProblems';
 /** kicadActionStates: the checked state of named actions. */
 export const ACTION_STATES_EXPORT = 'kicadActionStates';
 export const ACTION_STATES_CAP = 'actionStates';
-/** The engine marks clarify on its clarify list only (build T17; kicadActionStates is the build's own name). */
+/** The engine marks clarify on its clarify list only (build T17; keyed on kicadHostToolChanges, a name the build brought with that fix). */
 export const MENU_CLARIFY_CAP = 'menuClarify';
 /** The tool KiCad holds. */
 export const ACTIVE_TOOL_CAP = 'activeTool';
@@ -176,7 +177,8 @@ export default {
   capNames: [LIB_PROBLEMS_CAP, ACTION_STATES_CAP, MENU_CLARIFY_CAP, ACTIVE_TOOL_CAP],
   caps: (mod) => [
     ...(hasAll(mod, [LIB_PROBLEMS_EXPORT]) ? [LIB_PROBLEMS_CAP] : []),
-    ...(hasAll(mod, [ACTION_STATES_EXPORT]) ? [ACTION_STATES_CAP, MENU_CLARIFY_CAP] : []),
+    ...(hasAll(mod, [ACTION_STATES_EXPORT]) ? [ACTION_STATES_CAP] : []),
+    ...(hasAll(mod, [HOST_TOOL_EXPORT]) ? [MENU_CLARIFY_CAP] : []),
     ...(hasAll(mod, TOOL_EXPORTS) ? [ACTIVE_TOOL_CAP] : []),
   ],
   events: { [TOOL_EVENT]: ['name'] },
