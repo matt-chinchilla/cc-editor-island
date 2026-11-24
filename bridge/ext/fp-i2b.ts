@@ -11,13 +11,23 @@
 // unsupported naming the first missing export). The cap fpeditHeld is listed
 // in an fpedit frame when the engine has every fpedit export and asks the
 // page.
+//
+// Build T17 (engine item 5): the end of KiCad's pad numbering loop is told
+// through the same slot's onNotice and sent as ev.fpeditNotice { notice,
+// kept }; the cap fpeditNotice is listed beside fpeditHeld when the engine
+// has the marker kicadHostFpEditEnumerateEnd.
 import { fail, hasAll, isObj, noArgs, ok, type Answer, type ExtUnit, type ResponderCtx } from './contract';
 import { readItemRecord, readItemSet, type PadRecord } from '../itemRecords';
 import { callFpBool, callFpText, FPEDIT_EXPORTS, FPEDIT_FRAME, FPEDIT_FRAME_ONLY, fpEditGate, fpGated } from '../fpedit/common';
-import { FPEDIT_ASK_EXPORT, FPEDIT_EVENT, FPEDIT_EVENT_KEYS, FPEDIT_HELD_CAP, installFpEditAsk, type FpEditAskWindow } from '../fpedit/ask';
+import {
+  FPEDIT_ASK_EXPORT, FPEDIT_EVENT, FPEDIT_EVENT_KEYS, FPEDIT_HELD_CAP, FPEDIT_NOTICE_CAP, FPEDIT_NOTICE_EVENT, FPEDIT_NOTICE_EXPORT, FPEDIT_NOTICE_KEYS,
+  installFpEditAsk, type FpEditAskWindow,
+} from '../fpedit/ask';
 
 /** What the asks need of the engine: every fpedit export and the marker. */
 export const FPEDIT_ASK_EXPORTS = [...FPEDIT_EXPORTS, FPEDIT_ASK_EXPORT] as const;
+/** What the numbering's end notice needs (build T17): the asks' exports and its own marker. */
+export const FPEDIT_NOTICE_EXPORTS = [...FPEDIT_ASK_EXPORTS, FPEDIT_NOTICE_EXPORT] as const;
 /** The master pad: a pad record with no kind and no uuid, positions from 0, 0. */
 export type PadDefaults = Omit<PadRecord, 'kind' | 'uuid'>;
 /** The numbers KiCad's numbering starts with (its Renumber Pads window's fields). */
@@ -123,9 +133,12 @@ export default {
     'fpedit.padDefaults.set': { run: fpPadDefaultsSet },
     'fpedit.enumerate': { run: fpEnumerate },
   },
-  capNames: [FPEDIT_HELD_CAP],
-  caps: (mod, frame) => ((frame as string) === FPEDIT_FRAME && hasAll(mod, FPEDIT_ASK_EXPORTS) ? [FPEDIT_HELD_CAP] : []),
-  events: { [FPEDIT_EVENT]: FPEDIT_EVENT_KEYS },
+  capNames: [FPEDIT_HELD_CAP, FPEDIT_NOTICE_CAP],
+  caps: (mod, frame) => {
+    if ((frame as string) !== FPEDIT_FRAME || !hasAll(mod, FPEDIT_ASK_EXPORTS)) return [];
+    return hasAll(mod, FPEDIT_NOTICE_EXPORTS) ? [FPEDIT_HELD_CAP, FPEDIT_NOTICE_CAP] : [FPEDIT_HELD_CAP];
+  },
+  events: { [FPEDIT_EVENT]: FPEDIT_EVENT_KEYS, [FPEDIT_NOTICE_EVENT]: FPEDIT_NOTICE_KEYS },
   // KiCad's footprint editor asks the page before each of its windows (ev.fpedit),
   // once per request, after ev.ready while a footprint is open; it opens no window.
   install(ctx) {
@@ -134,6 +147,8 @@ export default {
     return installFpEditAsk(w as unknown as FpEditAskWindow, {
       admit: () => ctx.admit(),
       send: (a) => ctx.emitExt(FPEDIT_EVENT, { ask: a.ask, uuid: a.uuid, isNew: a.isNew }),
+      // The numbering's end (build T17), only on an engine that tells it.
+      ...(ctx.has([FPEDIT_NOTICE_EXPORT]) ? { notice: (n) => ctx.emitExt(FPEDIT_NOTICE_EVENT, { notice: n.notice, kept: n.kept }) } : {}),
     });
   },
 } satisfies ExtUnit;

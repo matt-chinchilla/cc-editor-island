@@ -367,7 +367,7 @@ describe('startResponder', () => {
     await settle();
     expect(got).toEqual([
       { type: 'ev.state', phase: 'booting', detail: '2 popup attempts blocked' },
-      { type: 'ev.ready', caps: ['hostKeys', 'kicadLayersGetState', 'kicadLayersSetActive', 'kicadLayersSetVisible', 'kicadOpenFile', 'kicadOpenFileBusy', 'kicadSaveBoard', 'kicadSaveSchematic', 'kicadSetChrome', 'kicadSetReadOnly', 'kicadSheetsEnter', 'kicadSheetsGetTree', 'write'], engine: { tag: 'v0.2.3-cc1', kicad: '10.0' } },
+      { type: 'ev.ready', caps: ['hostKeys', 'kicadLayersGetState', 'kicadLayersSetActive', 'kicadLayersSetVisible', 'kicadOpenFile', 'kicadOpenFileBusy', 'kicadSaveBoard', 'kicadSaveSchematic', 'kicadSetChrome', 'kicadSetReadOnly', 'kicadSheetsEnter', 'kicadSheetsGetTree', 'observeKeys', 'write'], engine: { tag: 'v0.2.3-cc1', kicad: '10.0' } },
     ]);
     got.length = 0;
 
@@ -1557,6 +1557,27 @@ describe('keys.claim and ev.key (island v0.2.3-cc17)', () => {
     expect(engine).toEqual(['keydown:KeyM', 'keyup:KeyM']);
     await settle();
     expect(s.keys()).toEqual([]);
+  });
+
+  it('lists observeKeys beside hostKeys; a claim that observes Escape sends ev.key observed and still hands it to KiCad (build T17)', async () => {
+    const s = claiming();
+    await settle();
+    expect(s.got.find((m) => m.type === 'ev.ready')?.caps as string[]).toContain('observeKeys');
+    expect(await s.request('keys.claim', { chords: [{ code: 'KeyM' }], observe: ['Escape'] })).toEqual({ id: 1, ok: true, result: { claimed: 1, refused: [] } });
+    expect(s.fire('keydown', { code: 'Escape', key: 'Escape' })).toBe(true);
+    expect(s.fire('keydown', { code: 'Escape', key: 'Escape', repeat: true })).toBe(true);
+    expect(s.fire('keydown', { code: 'Escape', key: 'Escape', shiftKey: true })).toBe(true);
+    expect(s.fire('keydown', { code: 'KeyM', altKey: true })).toBe(false);
+    await settle();
+    expect(s.keys()).toEqual([{ type: 'ev.key', code: 'Escape', shift: false, observed: true }, { type: 'ev.key', code: 'KeyM', shift: false }]);
+    for (const bad of [{ chords: [], observe: ['KeyM'] }, { chords: [], observe: 'Escape' }]) {
+      expect(await s.request('keys.claim', bad)).toMatchObject({ ok: false, error: { code: 'bad_args', message: 'keys.claim' } });
+    }
+    // A claim without observe stops the reports.
+    expect(await s.request('keys.claim', { chords: [] })).toMatchObject({ ok: true });
+    expect(s.fire('keydown', { code: 'Escape', key: 'Escape' })).toBe(true);
+    await settle();
+    expect(s.keys()).toHaveLength(2);
   });
 
   it('with no claim (an older host) every key goes on to KiCad and no ev.key is ever sent; after the close none either', async () => {
@@ -4789,7 +4810,7 @@ describe('the symbol editor: the symedit frame, its ops and caps, and the schema
     const se = engine({ projectLibs: true });
     await settle();
     const pseudo = (caps: string[]) => caps.filter((c) => !/^kicad/.test(c));
-    expect(pseudo(se.caps())).toEqual(['heldKeys', 'hostKeys', 'projectLibs', 'symbolConvert', 'symedit', 'symeditHeld', 'write']);
+    expect(pseudo(se.caps())).toEqual(['heldKeys', 'hostKeys', 'observeKeys', 'projectLibs', 'symbolConvert', 'symedit', 'symeditHeld', 'write']);
     expect(se.caps()).toContain('kicadSymEditOpen');
     const sch = engine({ frame: 'sch' });
     await settle();

@@ -204,15 +204,15 @@ describe('ds-i2 in the registry', () => {
 describe('caps per frame', () => {
   it('a ds frame on an engine that asks the page lists dseditHeld beside dsedit', async () => {
     const t = await boot('ds', fakeDs().exports);
-    expect(t.caps).toEqual(['dsedit', 'dseditHeld', 'heldKeys', 'hostKeys']);
+    expect(t.caps).toEqual(['dsedit', 'dseditHeld', 'heldKeys', 'hostKeys', 'observeKeys']);
   });
 
   it('without the marker, no dseditHeld and no slot; on engine run 14 neither cap and every op names the first missing export', async () => {
     const t = await boot('ds', fakeDs({ marker: false }).exports);
-    expect(t.caps).toEqual(['dsedit', 'heldKeys', 'hostKeys']);
+    expect(t.caps).toEqual(['dsedit', 'heldKeys', 'hostKeys', 'observeKeys']);
     expect(t.win.kicadHostDsEdit).toBeUndefined();
     const old = await boot('ds', { kicadHostActions: () => true, kicadHostDsEdit: () => true });
-    expect(old.caps).toEqual(['heldKeys', 'hostKeys']);
+    expect(old.caps).toEqual(['heldKeys', 'hostKeys', 'observeKeys']);
     expect(old.win.kicadHostDsEdit).toBeUndefined();
     for (const op of ['dsedit.items.get', 'dsedit.defaults.get', 'dsedit.preview.get']) expect(await old.ask(op), op).toEqual(err('unsupported', 'kicadDsEditOpen'));
   });

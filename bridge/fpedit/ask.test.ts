@@ -5,7 +5,7 @@
 // request, only while the gate admits, and the slot cleared by its stop.
 import { describe, expect, it, vi } from 'vitest';
 import {
-  FPEDIT_ASKS, FPEDIT_FRAME_ASKS, FPEDIT_ITEM_ASKS, FPEDIT_NEW_ASKS, installFpEditAsk, readFpEditAsk, type FpEditAskWindow,
+  FPEDIT_ASKS, FPEDIT_FRAME_ASKS, FPEDIT_ITEM_ASKS, FPEDIT_NEW_ASKS, installFpEditAsk, readFpEditAsk, readFpEditNotice, type FpEditAskWindow,
 } from './ask';
 
 const U = '0f0e0d0c-0b0a-4000-8000-000000000001';
@@ -70,5 +70,45 @@ describe('installFpEditAsk', () => {
     w.kicadHostFpEdit = later;
     stop();
     expect(w.kicadHostFpEdit).toBe(later);
+  });
+});
+
+/** Build T17 (engine item 5): the footprint editor tells the page when its pad numbering loop ends. */
+describe('readFpEditNotice', () => {
+  it('reads exactly { notice: "enumerateEnd", kept }', () => {
+    expect(readFpEditNotice('{"notice":"enumerateEnd","kept":true}')).toEqual({ notice: 'enumerateEnd', kept: true });
+    expect(readFpEditNotice('{"notice":"enumerateEnd","kept":false}')).toEqual({ notice: 'enumerateEnd', kept: false });
+  });
+
+  it('refuses every other shape: another notice, kept not a boolean, a key more or less, not JSON, not a string, too long', () => {
+    for (const bad of [
+      '{"notice":"other","kept":true}', '{"notice":"enumerateEnd","kept":1}', '{"notice":"enumerateEnd"}',
+      '{"notice":"enumerateEnd","kept":true,"x":1}', '{"kept":true}', 'enumerateEnd', '[]', 'null', '',
+      `{"notice":"enumerateEnd","kept":true${' '.repeat(300)}}`,
+    ]) expect(readFpEditNotice(bad), bad).toBeNull();
+    expect(readFpEditNotice({ notice: 'enumerateEnd', kept: true })).toBeNull();
+  });
+});
+
+describe('the slot\'s onNotice', () => {
+  it('hands each closed notice to `notice` once, after the gate admits; any other shape, a closed gate or a throw is dropped', () => {
+    const w: FpEditAskWindow = {};
+    const gate = { open: false };
+    const notice = vi.fn();
+    installFpEditAsk(w, { admit: () => gate.open, send: vi.fn(), notice });
+    const say = (text: unknown) => w.kicadHostFpEdit?.onNotice?.(text);
+    say('{"notice":"enumerateEnd","kept":true}');
+    gate.open = true;
+    say('{"notice":"enumerateEnd","kept":false}');
+    say('{"notice":"enumerateEnd","kept":"no"}');
+    expect(notice.mock.calls).toEqual([[{ notice: 'enumerateEnd', kept: false }]]);
+    installFpEditAsk(w, { admit: () => true, send: vi.fn(), notice: () => { throw new Error('host gone'); } });
+    expect(() => say('{"notice":"enumerateEnd","kept":true}')).not.toThrow();
+  });
+
+  it('without `notice` the slot has no onNotice, so the engine finds no function and says nothing', () => {
+    const w: FpEditAskWindow = {};
+    installFpEditAsk(w, { admit: () => true, send: vi.fn() });
+    expect(w.kicadHostFpEdit?.onNotice).toBeUndefined();
   });
 });

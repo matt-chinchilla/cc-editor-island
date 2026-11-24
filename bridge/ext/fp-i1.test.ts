@@ -181,12 +181,12 @@ describe('the fpedit frame in the registry', () => {
 describe('caps per frame', () => {
   it('an fpedit frame on an engine with every export lists fpedit and only the built in caps its descriptor allows', async () => {
     const t = await boot('fpedit', { ...fakeFp().exports, kicadHostActions: () => true });
-    expect(t.caps).toEqual(['fpedit', 'heldKeys', 'hostKeys', 'write']);
+    expect(t.caps).toEqual(['fpedit', 'heldKeys', 'hostKeys', 'observeKeys', 'write']);
   });
 
   it('an fpedit frame on an engine without the exports (engine run 14) lists no fpedit, and every op names the first missing export', async () => {
     const t = await boot('fpedit', {});
-    expect(t.caps).toEqual(['hostKeys', 'write']);
+    expect(t.caps).toEqual(['hostKeys', 'observeKeys', 'write']);
     for (const op of ['fpedit.state', 'fpedit.take']) expect(await t.ask(op)).toEqual(err('unsupported', 'kicadFpEditOpen'));
     expect(await t.ask('fpedit.open', { text: SOIC, name: 'SOIC-8', lib: '', mode: 'library', discard: false })).toEqual(err('unsupported', 'kicadFpEditOpen'));
     expect(await t.ask('fpedit.new', { name: 'NEW1', lib: '', type: 'smd', discard: false })).toEqual(err('unsupported', 'kicadFpEditOpen'));

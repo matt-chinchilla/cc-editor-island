@@ -15,6 +15,14 @@
 // fpedit frame and sends each request out as ev.fpedit. Another frame's unit
 // may install it with its own `asks` and `send` (the board's Import a
 // drawing, fp-i5), so the reader here is frame neutral.
+//
+// Build T17 (engine item 5): the footprint editor also tells the page, once,
+// when its click in order pad numbering loop ends, by calling
+// window.kicadHostFpEdit.onNotice(json) with exactly
+// `{ notice: "enumerateEnd", kept }` (kept true when the numbers were
+// committed, false when Esc took them back); its answer is ignored. The
+// engine says it tells with the marker export kicadHostFpEditEnumerateEnd.
+// The slot has onNotice only when its installer passes `notice`.
 import { isObj } from '../ext/contract';
 import { UUID_RE } from '../symbol';
 
@@ -48,8 +56,29 @@ export type FpEditAskKind = typeof FPEDIT_ASKS[number];
 
 /** ev.fpedit's payload: what KiCad's frame would have opened a window for. */
 export interface FpEditAsk { ask: FpEditAskKind; uuid: string; isNew: boolean }
-/** The window slot the footprint editor calls (CcAskHostFpEdit). */
-export type FpEditAskWindow = { kicadHostFpEdit?: { onRequest?: (json: unknown) => boolean } };
+/** The window slot the footprint editor calls (CcAskHostFpEdit; onNotice from build T17). */
+export type FpEditAskWindow = { kicadHostFpEdit?: { onRequest?: (json: unknown) => boolean; onNotice?: (json: unknown) => void } };
+
+/** The marker export (build T17): the footprint editor tells the page when its pad numbering ends. */
+export const FPEDIT_NOTICE_EXPORT = 'kicadHostFpEditEnumerateEnd';
+/** The pseudo-cap an fpedit frame lists when the engine tells the page (ev.fpeditNotice). */
+export const FPEDIT_NOTICE_CAP = 'fpeditNotice';
+/** The event a notice goes out as, and its keys. */
+export const FPEDIT_NOTICE_EVENT = 'ev.fpeditNotice';
+export const FPEDIT_NOTICE_KEYS = ['notice', 'kept'] as const;
+/** ev.fpeditNotice's payload: the numbering loop ended, its numbers kept or taken back. */
+export interface FpEditNotice { notice: 'enumerateEnd'; kept: boolean }
+/** The frame's notice is at most this long. */
+const MAX_FPEDIT_NOTICE = 256;
+
+/** The frame's notice read closed: a JSON string of exactly `{ notice: "enumerateEnd", kept: boolean }`; null for any other shape. */
+export function readFpEditNotice(json: unknown): FpEditNotice | null {
+  if (typeof json !== 'string' || json.length > MAX_FPEDIT_NOTICE) return null;
+  let v: unknown;
+  try { v = JSON.parse(json); } catch { return null; }
+  if (!isObj(v) || Object.keys(v).length !== 2) return null;
+  return v.notice === 'enumerateEnd' && typeof v.kept === 'boolean' ? { notice: 'enumerateEnd', kept: v.kept } : null;
+}
 
 /** The frame's request is at most this long. */
 const MAX_FPEDIT_REQUEST = 1024;
@@ -83,14 +112,16 @@ export function readFpEditAsk(json: unknown): FpEditAsk | null {
  * ev.ready, a footprint open) that reads closed and is one of `asks` (every
  * ask by default) is handed to `send` once and answered true, so KiCad opens
  * no window; anything else, or a throwing `send`, answers false and KiCad's
- * window opens as before. The stop clears the slot when it is still this one.
+ * window opens as before. With `notice`, each admitted notice that reads
+ * closed is handed to it once. The stop clears the slot when it is still this one.
  */
 export function installFpEditAsk(
   w: FpEditAskWindow,
-  opts: { admit: () => boolean; send: (a: FpEditAsk) => void; asks?: readonly FpEditAskKind[] },
+  opts: { admit: () => boolean; send: (a: FpEditAsk) => void; asks?: readonly FpEditAskKind[]; notice?: (n: FpEditNotice) => void },
 ): () => void {
   const taken: readonly string[] = opts.asks ?? FPEDIT_ASKS;
-  const slot = {
+  const tell = opts.notice;
+  const slot: NonNullable<FpEditAskWindow['kicadHostFpEdit']> = {
     onRequest: (json: unknown): boolean => {
       try {
         if (!opts.admit()) return false;
@@ -103,6 +134,16 @@ export function installFpEditAsk(
       }
     },
   };
+  // Each admitted notice that reads closed, once; anything else is dropped (the engine ignores the answer).
+  if (tell != null) {
+    slot.onNotice = (json: unknown): void => {
+      try {
+        if (!opts.admit()) return;
+        const n = readFpEditNotice(json);
+        if (n != null) tell(n);
+      } catch { /* the host side's: the engine is never told */ }
+    };
+  }
   w.kicadHostFpEdit = slot;
   return () => { if (w.kicadHostFpEdit === slot) delete w.kicadHostFpEdit; };
 }

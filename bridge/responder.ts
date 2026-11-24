@@ -9,7 +9,7 @@ import { buildInteractiveImport } from '../loader/src/wasm/import-item';
 import { registerSaveHook, SAVE_COMMITTED, type SaveHookHandle } from '../loader/src/wasm/save-flow';
 import { parseBoot } from '../src/cc-config';
 import { focusCanvas, focusCanvasQuietly, parseKeyPress, pressKey, type KeyPress } from '../src/keys';
-import { installHostKeys, parseKeysClaim } from '../src/host-keys';
+import { installHostKeys, parseKeysClaimArgs } from '../src/host-keys';
 import { installPickKeys, kindOf, libIds, parseIndexArgs, parseItemArgs, parsePlaceArgs, parsePrefetchArgs, pickFor, takesText, warmLibrary, type KeyPick, type PickerLibs, type PickKind } from '../src/picker';
 import { fileConflict, normalizePath, openStaged, PROJECT_ROOT, stageLocalSettings, stageProject, writeProjectFiles, type StagedProject } from '../src/stage';
 import type { Frame } from '../src/types';
@@ -89,7 +89,7 @@ export type IslandEvent =
   | { type: 'ev.boardProperties'; uuid: string; kind: BoardPropertiesKind }
   | { type: 'ev.held'; action: string }
   | ({ type: 'ev.symedit' } & SymEditAsk)
-  | { type: 'ev.key'; code: string; shift: boolean }
+  | { type: 'ev.key'; code: string; shift: boolean; observed?: true }
   | { type: 'ev.sim'; run: number; phase: SimPhase; percent?: number; code?: string }
   | { type: 'ev.closing' };
 
@@ -374,6 +374,12 @@ const KEYS_CLAIM_OP = 'keys.claim';
  * knows it lists it. A host gates its claim on this word.
  */
 export const HOST_KEYS_CAP = 'hostKeys';
+/**
+ * The pseudo-cap ev.ready lists when keys.claim takes `observe` (build T17's
+ * island): a plain Escape is reported as ev.key with `observed` true and
+ * still reaches KiCad. It needs nothing of the engine either.
+ */
+export const OBSERVE_KEYS_CAP = 'observeKeys';
 /** The pseudo-cap ev.ready lists when the picker is available: the place op, ev.pick and a library mirror. */
 export const PICKER_CAP = 'picker';
 /**
@@ -805,7 +811,8 @@ export function startResponder(opts: {
         port.postMessage({ type: ev.type, ask: ev.ask, uuid: ev.uuid, isNew: ev.isNew });
         return;
       case 'ev.key':
-        port.postMessage({ type: ev.type, code: ev.code, shift: ev.shift });
+        // An observed key (keys.claim observe) says so; a claimed chord is as before.
+        port.postMessage(ev.observed === true ? { type: ev.type, code: ev.code, shift: ev.shift, observed: true } : { type: ev.type, code: ev.code, shift: ev.shift });
         return;
       case 'ev.sim': {
         const out: Record<string, unknown> = { type: ev.type, run: ev.run, phase: ev.phase };
@@ -883,7 +890,7 @@ export function startResponder(opts: {
   // The host's Alt chords become ev.key (PROTOCOL.md keys.claim): installed now,
   // before the engine's scripts load and before the place keys, so these
   // capture listeners on the window run before any of KiCad's own (src/host-keys.ts).
-  const hostKeys = installHostKeys(page, { onKey: (c) => { if (!closed) emit({ type: 'ev.key', code: c.code, shift: c.shift }); } });
+  const hostKeys = installHostKeys(page, { onKey: (c) => { if (!closed) emit(c.observed === true ? { type: 'ev.key', code: c.code, shift: c.shift, observed: true } : { type: 'ev.key', code: c.code, shift: c.shift }); } });
   // KiCad's place keys become ev.pick (PICKER.md): installed now, before the
   // engine's scripts load, so these capture listeners run before KiCad's own.
   installPickKeys(page, {
@@ -928,9 +935,9 @@ export function startResponder(opts: {
     if (!onlyKeys(data as unknown as Record<string, unknown>, ['id', 'op', 'args'])) return reply(id, fail('bad_args', op));
     const refusal = frameRefusalOf(op);
     if (refusal != null) return reply(id, refusal);
-    const chords = parseKeysClaim(data.args);
-    if (chords == null) return reply(id, fail('bad_args', op));
-    const { claimed, refused } = hostKeys.claim(chords);
+    const a = parseKeysClaimArgs(data.args);
+    if (a == null) return reply(id, fail('bad_args', op));
+    const { claimed, refused } = hostKeys.claim(a.chords, a.observe);
     reply(id, ok({ claimed: claimed.length, refused: refused.map((c) => ({ code: c.code, shift: c.shift })) }));
   }
 
@@ -4355,7 +4362,7 @@ export function startResponder(opts: {
       // project.write needs only the file system, which is up by now.
       caps.push(WRITE_CAP);
       // keys.claim and ev.key need nothing of the engine.
-      caps.push(HOST_KEYS_CAP);
+      caps.push(HOST_KEYS_CAP, OBSERVE_KEYS_CAP);
       // project.libs: the run time library rows; footprint.models: our engine's export.
       if (projectLibs != null && LIBS_EXPORTS.every((name) => typeof mod[name] === 'function')) caps.push(PROJECT_LIBS_CAP);
       // The symbol editor's caps (island v0.2.3-cc23), each frame its own kind's only: a

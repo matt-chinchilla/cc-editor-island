@@ -21,10 +21,18 @@
 // window's own capture listeners the earlier registration runs first; the
 // responder installs this one before the engine's scripts load (main.ts calls
 // startResponder before bootKicadTool).
+//
+// A claim may also OBSERVE keys (build T17's island): a plain press of an
+// observed key (no modifier, no repeat) is reported once with observed true
+// and NOT canceled, so KiCad still gets it (Escape: KiCad's own cancel runs,
+// and the host clears what it holds). The list is closed: Escape only.
 import { isIslandKey } from './keys';
 
-/** One claimed chord: Alt held with this key, with or without Shift; Ctrl and Meta never. */
-export interface Chord { code: string; shift: boolean }
+/** One claimed chord: Alt held with this key, with or without Shift; Ctrl and Meta never. An observed key is reported with `observed`. */
+export interface Chord { code: string; shift: boolean; observed?: true }
+
+/** The keys a claim may observe: reported, never canceled. */
+export const OBSERVE_CODES: readonly string[] = Object.freeze(['Escape']);
 
 /** The codes a chord may name: letters, digits and the punctuation keys of a US layout. */
 export const HOST_KEY_CODE_RE = /^(Key[A-Z]|Digit[0-9]|Slash|Period|Comma|Semicolon|Quote|BracketLeft|BracketRight|Backslash|Minus|Equal|Backquote)$/;
@@ -58,10 +66,30 @@ const chordId = (code: string, shift: boolean): string => `${shift ? 'S+' : ''}$
 const KICAD_IDS: ReadonlySet<string> = new Set(KICAD_ALT_CHORDS.map((c) => chordId(c.code, c.shift)));
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-/** keys.claim's args, read closed: `{ chords: [{ code, shift? }] }`; null refuses the whole claim. */
+/** keys.claim's chords, read closed from `{ chords: [{ code, shift? }], observe? }`; null refuses the whole claim. */
 export function parseKeysClaim(args: unknown): Chord[] | null {
-  if (!isObj(args) || !Object.keys(args).every((k) => k === 'chords')) return null;
-  const list = args.chords;
+  return parseKeysClaimArgs(args)?.chords ?? null;
+}
+
+/**
+ * keys.claim's args, read closed: `{ chords: [{ code, shift? }], observe?: ["Escape"] }`,
+ * the observed codes each once; null refuses the whole claim.
+ */
+export function parseKeysClaimArgs(args: unknown): { chords: Chord[]; observe: string[] } | null {
+  if (!isObj(args) || !('chords' in args) || !Object.keys(args).every((k) => k === 'chords' || k === 'observe')) return null;
+  const observe: string[] = [];
+  if (args.observe !== undefined) {
+    if (!Array.isArray(args.observe)) return null;
+    for (const c of args.observe as unknown[]) {
+      if (typeof c !== 'string' || !OBSERVE_CODES.includes(c)) return null;
+      if (!observe.includes(c)) observe.push(c);
+    }
+  }
+  const chords = readChords(args.chords);
+  return chords == null ? null : { chords, observe };
+}
+
+function readChords(list: unknown): Chord[] | null {
   if (!Array.isArray(list) || list.length > MAX_CHORDS) return null;
   const out: Chord[] = [];
   for (const c of list) {
@@ -91,8 +119,8 @@ export function claimChords(chords: readonly Chord[]): { claimed: Chord[]; refus
 type KeyLike = Event & { code?: unknown; altKey?: unknown; shiftKey?: unknown; ctrlKey?: unknown; metaKey?: unknown; repeat?: unknown };
 
 export interface HostKeys {
-  /** Replaces the whole claimed set (KiCad's own chords are dropped from it); answers the split. */
-  claim(chords: readonly Chord[]): { claimed: Chord[]; refused: Chord[] };
+  /** Replaces the whole claimed set (KiCad's own chords are dropped from it) and the observed keys (none when absent); answers the split. */
+  claim(chords: readonly Chord[], observe?: readonly string[]): { claimed: Chord[]; refused: Chord[] };
   /** Removes the listeners: every key is KiCad's again. */
   stop(): void;
 }
@@ -105,6 +133,7 @@ export interface HostKeys {
  */
 export function installHostKeys(win: Pick<Window, 'addEventListener' | 'removeEventListener'>, opts: { onKey(chord: Chord): void }): HostKeys {
   let claimed = new Set<string>();
+  let observed = new Set<string>();
   /** The codes whose keydown was taken and whose keyup has not come yet. */
   const held = new Set<string>();
   const swallow = (e: Event): void => {
@@ -119,6 +148,13 @@ export function installHostKeys(win: Pick<Window, 'addEventListener' | 'removeEv
     // A repeat of a press already taken stays taken, whatever the modifiers say now.
     if (k.repeat === true && held.has(code)) { swallow(e); return; }
     held.delete(code);
+    // An observed key: reported, never canceled (KiCad still gets it).
+    if (observed.has(code)) {
+      if (k.repeat !== true && k.altKey !== true && k.shiftKey !== true && k.ctrlKey !== true && k.metaKey !== true) {
+        try { opts.onKey({ code, shift: false, observed: true }); } catch { /* the key stays KiCad's */ }
+      }
+      return;
+    }
     if (k.altKey !== true || k.ctrlKey === true || k.metaKey === true) return;
     if (!claimed.has(chordId(code, k.shiftKey === true))) return;
     swallow(e);
@@ -140,13 +176,15 @@ export function installHostKeys(win: Pick<Window, 'addEventListener' | 'removeEv
   win.addEventListener('keypress', onPress, capture);
   win.addEventListener('keyup', onUp, capture);
   return {
-    claim(chords) {
+    claim(chords, observe = []) {
       const split = claimChords(chords);
       claimed = new Set(split.claimed.map((c) => chordId(c.code, c.shift)));
+      observed = new Set(observe.filter((c) => OBSERVE_CODES.includes(c)));
       return split;
     },
     stop() {
       claimed = new Set();
+      observed = new Set();
       held.clear();
       win.removeEventListener('keydown', onDown, capture);
       win.removeEventListener('keypress', onPress, capture);

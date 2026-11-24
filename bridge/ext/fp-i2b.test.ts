@@ -59,7 +59,7 @@ afterEach(() => {
  * `marker` is false: one footprint of `pads` pads once opened, the master
  * pad, and the numbering loop's start.
  */
-function fakeFp(o: { marker?: boolean; pads?: number; padEditMode?: boolean; refuseSet?: boolean; refuseEnum?: boolean } = {}) {
+function fakeFp(o: { marker?: boolean; notices?: boolean; pads?: number; padEditMode?: boolean; refuseSet?: boolean; refuseEnum?: boolean } = {}) {
   const st = { token: '', open: false, name: '', lib: '', mode: 'library', modified: false, depth: 0, padCount: 0, type: 'unspecified', padEditMode: false };
   let master: Rec = structuredClone(MASTER);
   const calls: Array<[string, unknown]> = [];
@@ -90,6 +90,7 @@ function fakeFp(o: { marker?: boolean; pads?: number; padEditMode?: boolean; ref
     kicadCollabPresenceStart: () => true,
     kicadHostActions: () => true,
     ...(o.marker === false ? {} : { kicadHostFpEdit: () => true }),
+    ...(o.notices === true ? { kicadHostFpEditEnumerateEnd: () => true } : {}),
   };
   return { st, exports, calls };
 }
@@ -186,13 +187,13 @@ describe('the args and the engine\'s answers, read closed', () => {
 describe('caps per frame', () => {
   it('an fpedit frame on an engine that asks the page lists fpeditHeld beside fpedit and takes the slot', async () => {
     const t = await boot('fpedit', fakeFp().exports);
-    expect(t.caps).toEqual(['fpedit', 'fpeditHeld', 'heldKeys', 'hostKeys', 'write']);
+    expect(t.caps).toEqual(['fpedit', 'fpeditHeld', 'heldKeys', 'hostKeys', 'observeKeys', 'write']);
     expect(typeof t.win.kicadHostFpEdit?.onRequest).toBe('function');
   });
 
   it('without the marker no fpeditHeld and no slot; on engine run 14 neither cap and every op names the first missing export', async () => {
     const t = await boot('fpedit', fakeFp({ marker: false }).exports);
-    expect(t.caps).toEqual(['fpedit', 'heldKeys', 'hostKeys', 'write']);
+    expect(t.caps).toEqual(['fpedit', 'heldKeys', 'hostKeys', 'observeKeys', 'write']);
     expect(t.win.kicadHostFpEdit).toBeUndefined();
     const old = await boot('fpedit', { kicadHostActions: () => true, kicadHostFpEdit: () => true });
     expect(old.caps).not.toContain('fpeditHeld');
@@ -301,5 +302,40 @@ describe('ev.fpedit', () => {
     expect(press('group', P1, true)).toBe(false);
     await settle();
     expect(t.got.filter((m) => m.type === 'ev.fpedit')).toEqual([{ type: 'ev.fpedit', ask: 'group', uuid: P1, isNew: false }]);
+  });
+});
+
+/** Build T17 (engine item 5): the end of KiCad's pad numbering loop, sent as ev.fpeditNotice. */
+describe('ev.fpeditNotice', () => {
+  it('is declared by fp-i2b with exactly { notice, kept }, under the cap fpeditNotice', () => {
+    expect(REGISTRY.events.get('ev.fpeditNotice')?.keys).toEqual(['notice', 'kept']);
+    expect(REGISTRY.capNames.get('fpeditNotice')).toBe('fp-i2b');
+  });
+
+  it('an engine with the marker kicadHostFpEditEnumerateEnd lists fpeditNotice and sends each end once a footprint is open', async () => {
+    const t = await boot('fpedit', fakeFp({ notices: true }).exports);
+    expect(t.caps).toEqual(['fpedit', 'fpeditHeld', 'fpeditNotice', 'heldKeys', 'hostKeys', 'observeKeys', 'write']);
+    const say = (text: string) => t.win.kicadHostFpEdit?.onNotice?.(text);
+    say('{"notice":"enumerateEnd","kept":true}');
+    await t.open();
+    say('{"notice":"enumerateEnd","kept":false}');
+    say('{"notice":"enumerateEnd","kept":true}');
+    say('{"notice":"enumerateEnd"}');
+    await settle();
+    expect(t.got.filter((m) => m.type === 'ev.fpeditNotice')).toEqual([
+      { type: 'ev.fpeditNotice', notice: 'enumerateEnd', kept: false },
+      { type: 'ev.fpeditNotice', notice: 'enumerateEnd', kept: true },
+    ]);
+  });
+
+  it('on an engine without the marker (T16b and before) no fpeditNotice and no onNotice: everything else as before', async () => {
+    const t = await boot('fpedit', fakeFp().exports);
+    expect(t.caps).not.toContain('fpeditNotice');
+    expect(typeof t.win.kicadHostFpEdit?.onRequest).toBe('function');
+    expect(t.win.kicadHostFpEdit?.onNotice).toBeUndefined();
+  });
+
+  it('a sch or pcb frame lists no fpeditNotice', async () => {
+    for (const frame of ['sch', 'pcb']) expect((await boot(frame, fakeFp({ notices: true }).exports)).caps, frame).not.toContain('fpeditNotice');
   });
 });

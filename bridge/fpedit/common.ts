@@ -53,7 +53,7 @@ export const FPEDIT_WORKS: readonly string[] = Object.freeze([
   'key.press', 'keys.claim', 'chrome.show', 'view.fit', 'select', 'shutdown',
 ]);
 /** The built in pseudo-caps an fpedit frame may list (FP spec 6.1); every unit's own caps are its own. */
-export const FPEDIT_PSEUDO_CAPS: readonly string[] = Object.freeze(['heldKeys', 'hostKeys', 'write', 'projectLibs']);
+export const FPEDIT_PSEUDO_CAPS: readonly string[] = Object.freeze(['heldKeys', 'hostKeys', 'observeKeys', 'write', 'projectLibs']);
 
 /** One footprint's text is at most this many bytes of UTF-8 (the engine's bound, 8 MiB). */
 export const FP_TEXT_MAX_BYTES = 8 * 1024 * 1024;

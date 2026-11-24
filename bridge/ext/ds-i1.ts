@@ -56,7 +56,7 @@ export default {
       refuses: BUILTIN_OPS.filter((op) => !DS_WORKS.includes(op)),
       refusal: DS_REFUSAL,
       // Of the built in pseudo-caps only the held keys and the host's keys; dsedit is this unit's own.
-      caps: ['heldKeys', 'hostKeys'],
+      caps: ['heldKeys', 'hostKeys', 'observeKeys'],
       selection: { read: (mod) => dsSelectionRead(mod), live: (ctx) => dsSheetOpen(ctx.mod()) },
       documentOpen: (mod) => dsSheetOpen(mod),
       undoDepth: (mod) => dsUndoDepth(mod),

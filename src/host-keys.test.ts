@@ -4,7 +4,7 @@
 // window is node's own EventTarget, and KeyboardEvent a stand-in Event that
 // keeps every init field, as in keys.test.ts.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { claimChords, HOST_KEY_CODE_RE, installHostKeys, KICAD_ALT_CHORDS, MAX_CHORDS, parseKeysClaim, type Chord } from './host-keys';
+import { claimChords, HOST_KEY_CODE_RE, installHostKeys, KICAD_ALT_CHORDS, MAX_CHORDS, OBSERVE_CODES, parseKeysClaim, parseKeysClaimArgs, type Chord } from './host-keys';
 import { pressKey } from './keys';
 
 beforeAll(() => {
@@ -198,5 +198,53 @@ describe('installHostKeys', () => {
     installHostKeys(win, { onKey: () => {} });
     expect(calls.map(([t]) => t).sort()).toEqual(['keydown', 'keypress', 'keyup']);
     for (const [, o] of calls) expect(o === true || (typeof o === 'object' && o !== null && (o as { capture?: boolean }).capture === true)).toBe(true);
+  });
+});
+
+/**
+ * Build T17's island (site item S15): the host may also OBSERVE a plain
+ * Escape, which still reaches KiCad (KiCad's own cancel), while the host
+ * learns of it to clear a verb it holds.
+ */
+describe('keys.claim observe', () => {
+  it('reads an optional observe list, closed: Escape only, each once', () => {
+    expect(OBSERVE_CODES).toEqual(['Escape']);
+    expect(parseKeysClaimArgs({ chords: [] })).toEqual({ chords: [], observe: [] });
+    expect(parseKeysClaimArgs({ chords: [{ code: 'KeyM' }], observe: ['Escape'] })).toEqual({ chords: [{ code: 'KeyM', shift: false }], observe: ['Escape'] });
+    expect(parseKeysClaimArgs({ chords: [], observe: ['Escape', 'Escape'] })).toEqual({ chords: [], observe: ['Escape'] });
+    expect(parseKeysClaimArgs({ chords: [], observe: [] })).toEqual({ chords: [], observe: [] });
+    for (const bad of [{ chords: [], observe: 'Escape' }, { chords: [], observe: ['KeyM'] }, { chords: [], observe: ['escape'] }, { chords: [], observe: [1] }, { observe: ['Escape'] }])
+      expect(parseKeysClaimArgs(bad), JSON.stringify(bad)).toBeNull();
+    expect(parseKeysClaim({ chords: [{ code: 'KeyM' }], observe: ['Escape'] })).toEqual([{ code: 'KeyM', shift: false }]);
+  });
+
+  it('a plain Escape is sent once as observed and still reaches the engine, uncanceled', () => {
+    const f = frame();
+    f.keys.claim([], ['Escape']);
+    const down = f.fire('keydown', { code: 'Escape', key: 'Escape', altKey: false });
+    const up = f.fire('keyup', { code: 'Escape', key: 'Escape', altKey: false });
+    expect(f.sent).toEqual([{ code: 'Escape', shift: false, observed: true }]);
+    expect([down.defaultPrevented, up.defaultPrevented]).toEqual([false, false]);
+    expect(f.engine).toEqual(['cap:keydown:Escape', 'bub:keydown:Escape', 'cap:keyup:Escape', 'bub:keyup:Escape']);
+  });
+
+  it('a repeat or a modifier held is not sent; unobserved, nothing is sent; a new claim without observe stops it', () => {
+    const f = frame();
+    f.fire('keydown', { code: 'Escape', altKey: false });
+    f.keys.claim([], ['Escape']);
+    f.fire('keydown', { code: 'Escape', altKey: false, repeat: true });
+    for (const m of [{ altKey: true }, { altKey: false, shiftKey: true }, { altKey: false, ctrlKey: true }, { altKey: false, metaKey: true }]) f.fire('keydown', { code: 'Escape', ...m });
+    expect(f.sent).toEqual([]);
+    f.keys.claim([{ code: 'KeyM', shift: false }]);
+    f.fire('keydown', { code: 'Escape', altKey: false });
+    expect(f.sent).toEqual([]);
+    expect(f.engine.filter((x) => x.includes('Escape'))).toHaveLength(14);
+  });
+
+  it("the island's own Escape (key.press) is never sent", () => {
+    const f = frame();
+    f.keys.claim([], ['Escape']);
+    pressKey(f.win, { key: 'Escape', code: 'Escape', ctrl: false, shift: false, alt: false });
+    expect(f.sent).toEqual([]);
   });
 });

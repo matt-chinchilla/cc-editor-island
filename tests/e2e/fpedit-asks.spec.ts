@@ -20,7 +20,7 @@ import { expect, test, type Frame, type Page } from '@playwright/test';
 
 import { ISLAND } from './ports';
 
-interface Ev { type: string; phase?: string; caps?: string[]; uuids?: string[]; ask?: string; uuid?: string; isNew?: boolean; at: number }
+interface Ev { type: string; phase?: string; caps?: string[]; uuids?: string[]; ask?: string; uuid?: string; isNew?: boolean; notice?: string; kept?: boolean; at: number }
 interface Harness { __events: Ev[]; __bridge: { request(op: string, args?: unknown): Promise<Record<string, unknown>> } }
 interface Engine { Module: { kicadRunAction(name: string): unknown; kicadCollabGetViewport?: () => string } }
 type Item = Record<string, unknown> & { kind: string; uuid: string; x?: number; y?: number; number?: string };
@@ -253,6 +253,36 @@ test('run 15: the master pad read and set with no undo step; fpedit.enumerate th
   expect((await of(page, 'ev.fpedit')).length, 'fpedit.enumerate asks nothing').toBe(asks);
   expect(await request(page, 'key.press', UNDO)).toEqual({});
   await expect.poll(async () => (await items(page, { uuids: pads.map((p) => p.uuid) })).map((p) => p.number), { timeout: 5_000 }).toEqual(pads.map((p) => p.number));
+});
+
+test('engine build T17: the numbering\'s end is one ev.fpeditNotice, kept on a double click and taken back on Esc, with no status popup', async ({ page }) => {
+  const frame = await bootAsking(page);
+  test.skip(!(await of(page, 'ev.ready'))[0]?.caps?.includes('fpeditNotice'), 'this engine tells no numbering end (build T17 and later)');
+  await openSoic(page);
+  const pads = (await items(page, { kinds: ['pad'] })).slice(0, 3);
+  expect(await request(page, 'view.fit', {})).toEqual({});
+  await page.waitForTimeout(500);
+  const at = await screenOf(page, frame);
+  test.skip(at == null, 'this engine names no viewport for the footprint editor');
+  const points = pads.map((p) => (at as (x: number, y: number) => [number, number])(p.x as number, p.y as number));
+  const popup = () => frame.evaluate(() => [...document.querySelectorAll('div.window.popup')].some((e) => (e as HTMLElement).offsetParent != null));
+  const notices = async () => (await of(page, 'ev.fpeditNotice')).map((e) => ({ notice: e.notice, kept: e.kept }));
+  // Esc takes the numbers back: kept false.
+  expect(await request(page, 'fpedit.enumerate', { start: 10, step: 2, prefix: '' })).toEqual({});
+  await page.waitForTimeout(300);
+  for (const p of points) await page.mouse.click(...p);
+  expect(await popup(), 'no status popup while numbering').toBe(false);
+  await page.keyboard.press('Escape');
+  await expect.poll(notices, { timeout: 5_000 }).toEqual([{ notice: 'enumerateEnd', kept: false }]);
+  expect((await items(page, { uuids: pads.map((p) => p.uuid) })).map((p) => p.number), 'the old numbers back').toEqual(pads.map((p) => p.number));
+  // A double click keeps them: kept true, one undo step.
+  const d0 = await depth(page);
+  expect(await request(page, 'fpedit.enumerate', { start: 10, step: 2, prefix: '' })).toEqual({});
+  await page.waitForTimeout(300);
+  for (const p of points) await page.mouse.click(...p);
+  await page.mouse.dblclick(...(await emptyPoint(page, frame)));
+  await expect.poll(notices, { timeout: 5_000 }).toEqual([{ notice: 'enumerateEnd', kept: false }, { notice: 'enumerateEnd', kept: true }]);
+  expect(await depth(page), 'one undo step for the run').toBe(d0 + 1);
 });
 
 test('run 15: a group asks with its uuid from E and from Edit Group Properties run by name (engine fix e3-1), opening no window', async ({ page }) => {

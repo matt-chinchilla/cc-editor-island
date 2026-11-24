@@ -184,12 +184,12 @@ describe('the ds frame in the registry', () => {
 describe('caps per frame', () => {
   it('a ds frame on an engine with every export lists dsedit, the held keys and the host\'s keys only', async () => {
     const t = await boot('ds', fakeDs().exports);
-    expect(t.caps).toEqual(['dsedit', 'hostKeys', 'heldKeys'].sort());
+    expect(t.caps).toEqual(['dsedit', 'hostKeys', 'heldKeys', 'observeKeys'].sort());
   });
 
   it('a ds frame on an engine without the exports (engine run 14) lists no dsedit, and every op names the first missing export', async () => {
     const t = await boot('ds', { kicadHostActions: () => true });
-    expect(t.caps).toEqual(['heldKeys', 'hostKeys']);
+    expect(t.caps).toEqual(['heldKeys', 'hostKeys', 'observeKeys']);
     for (const op of ['dsedit.state', 'dsedit.take']) expect(await t.ask(op)).toEqual(err('unsupported', 'kicadDsEditOpen'));
     expect(await t.ask('dsedit.open', { source: 'default', name: 'a.kicad_wks', discard: false })).toEqual(err('unsupported', 'kicadDsEditOpen'));
     expect(await t.ask('select', { uuids: [] })).toEqual(err('unsupported', 'kicadDsEditOpen'));
