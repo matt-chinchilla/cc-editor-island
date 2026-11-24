@@ -251,15 +251,15 @@ test('the kept colors: the symbol, footprint and drawing sheet editors boot in t
   }
 });
 
-/** The drawing's pixels as one digest, row 0 and column 0 left out (KiCad repaints that edge after any full repaint). */
+/** The drawing's pixels as one digest, the whole canvas. */
 const digest = (f: Frame): Promise<string> => f.evaluate(async () => {
   const gls = [...document.querySelectorAll('canvas.gl-canvas')] as HTMLCanvasElement[];
   const src = gls.filter((c) => c.style.display !== 'none' && c.width > 0).sort((a, b) => b.width * b.height - a.width * a.height)[0] ?? (document.getElementById('canvas') as HTMLCanvasElement);
   const c = document.createElement('canvas');
-  c.width = src.width - 1;
-  c.height = src.height - 1;
+  c.width = src.width;
+  c.height = src.height;
   const ctx = c.getContext('2d', { willReadFrequently: true })!;
-  ctx.drawImage(src, -1, -1);
+  ctx.drawImage(src, 0, 0);
   const px = ctx.getImageData(0, 0, c.width, c.height).data;
   const h = new Uint8Array(await crypto.subtle.digest('SHA-256', px));
   return [...h].map((x) => x.toString(16).padStart(2, '0')).join('');
@@ -312,6 +312,56 @@ test('a drawing sheet editor that booted in the kept colors takes null live: its
     expect(await request(page, 'theme.set', { colors: null })).toEqual({ ok: true });
     const r = await showing(ds, PALETTE_SCH_BG);
     measure('ds kept then null', `background ${r.top.join(', ')} on ${(r.topShare * 100).toFixed(1)} %`);
+  } finally {
+    await page.close();
+  }
+});
+
+/** The mean luminance (0 to 255) of a part of the page as the reader sees it: KiCad's chrome is wx's own, painted into the page. */
+async function lightness(page: Page, clip: { x: number; y: number; width: number; height: number }): Promise<number> {
+  const png = (await page.screenshot({ clip })).toString('base64');
+  return page.evaluate(async (b64) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = img.width;
+    c.height = img.height;
+    const ctx = c.getContext('2d', { willReadFrequently: true })!;
+    ctx.drawImage(img, 0, 0);
+    const px = ctx.getImageData(0, 0, c.width, c.height).data;
+    let sum = 0;
+    for (let i = 0; i < px.length; i += 4) sum += 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2];
+    return sum / (px.length / 4);
+  }, png);
+}
+
+test('by day a theme.set keeps KiCad\'s chrome light: the shown panes read as light after the switch as before it', async ({ page }) => {
+  test.setTimeout(300_000);
+  try {
+    const { island } = await boot(page, 'sch');
+    await showing(island, PALETTE_SCH_BG);
+    // The Properties pane's list, left of the drawing, once KiCad's chrome is shown (1320 by 900 window).
+    const pane = { x: 10, y: 110, width: 280, height: 200 };
+    const shown = async (): Promise<number> => {
+      expect(await request(page, 'chrome.show', { on: true })).toEqual({});
+      await expect.poll(() => chromeShown(island)).toBe(true);
+      // Two reads in a row agree: the panes are painted.
+      let last = -1;
+      let now = -2;
+      await expect.poll(async () => { last = now; now = await lightness(page, pane); return Math.abs(now - last) < 0.5; }, { timeout: 10_000, intervals: [300, 300, 500] }).toBe(true);
+      return now;
+    };
+    const before = await shown();
+    expect(await request(page, 'chrome.show', { on: false })).toEqual({});
+    expect(await request(page, 'theme.set', { colors: await paletteWith(island, { schematic: { background: 'rgb(255, 255, 255)' } }) })).toEqual({ ok: true });
+    const after = await shown();
+    await page.screenshot({ path: test.info().outputPath('chrome-after-switch-day.png') });
+    measure('pane lightness', `before the switch ${before.toFixed(1)}, after it ${after.toFixed(1)} (0 black, 255 white)`);
+    expect(before).toBeGreaterThan(150);
+    expect(Math.abs(after - before)).toBeLessThan(10);
+    expect(await request(page, 'chrome.show', { on: false })).toEqual({});
+    await expect.poll(() => chromeShown(island)).toBe(false);
   } finally {
     await page.close();
   }

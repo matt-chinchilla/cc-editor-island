@@ -17,7 +17,7 @@ import paletteText from '../../theme/colors/circuitcenter.json?raw';
 import pin from '../../PIN.json';
 
 const T18B = '01c552e7a89beca3ebd9907707c0fb760b7c8ebe';
-const T18C = '3e9e31697fd53a54992158bce242b3f94bce4a8e';
+const T18C = '51b07066fde786f3ca1ffef337c419fdbbb4c61c';
 import { KEPT_KEY, KEPT_THEME } from '../../theme/kept';
 import { seedsFor } from '../../theme/seeds';
 import { KICAD_CONFIG_DIR } from '../../loader/src/wasm/constants';

@@ -18,7 +18,7 @@
 // schematic and board editors only (kicad_editor_embind.cpp setColorTheme:
 // pcbFrame() and schFrame() are the top window as PCB_EDIT_FRAME or
 // SCH_EDIT_FRAME); from build T18c it reaches the symbol, footprint and
-// drawing sheet editors too. The switch has the same export name on both, so
+// drawing sheet editors too, and no longer flips the chrome's light or dark look. The switch has the same export name on both, so
 // the engine says which it is only through its build: PIN.json's
 // engine.build.pcbjam, compiled in (vite.config.ts __ENGINE_PCBJAM__), read
 // against the two lists below (a unit test fails while the pinned build is in
@@ -57,8 +57,8 @@ export const THEME_OP = 'theme.set';
 export const SWITCH_FRAMES: readonly string[] = ['sch', 'pcb'];
 /** The frames whose editor the switch reaches on an engine of EVERY_FRAME_BUILDS. */
 export const EVERY_FRAME: readonly string[] = ['sch', 'pcb', 'symedit', 'fpedit', 'ds'];
-/** The engine builds (pcbjam commit) whose switch reaches every frame: T18c, then T18d. */
-export const EVERY_FRAME_BUILDS: readonly string[] = ['3e9e31697fd53a54992158bce242b3f94bce4a8e'];
+/** The engine builds (pcbjam commit) whose switch reaches every frame: the theme build (T18c, pcbjam 51b0706), whose switch also keeps the chrome's light or dark look. */
+export const EVERY_FRAME_BUILDS: readonly string[] = ['51b07066fde786f3ca1ffef337c419fdbbb4c61c'];
 /** The engine builds known to switch the schematic and board editors only: T18b. Any build in neither list is taken as this. */
 export const SCH_PCB_BUILDS: readonly string[] = ['01c552e7a89beca3ebd9907707c0fb760b7c8ebe'];
 /** The drawing sheet editor's frame. */
