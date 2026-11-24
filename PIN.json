@@ -1,5 +1,5 @@
 {
-  "islandId": "v0.2.3-cc25",
+  "islandId": "v0.2.3-cc26",
   "pcbjam": {
     "tag": "v0.2.3",
     "root": "7ec51c1c55aab45b21cd2956af413b4420520838",
@@ -19,9 +19,9 @@
     "toolTag": "v0.2.3",
     "build": {
       "recipe": "cc/main",
-      "pcbjam": "b8f251fabfd5d7da37736468c2dcd7014ea92a10",
-      "kicad": "3e13bf1210fe7ba7033b54cfe659f5c38575450f",
-      "wxwidgets": "d235efd78f89a26b44b7785bf14f1b6c6c465939",
+      "pcbjam": "4c18077d2432d4f4e9f3c50bda4c960e39adc915",
+      "kicad": "9cfdc023ba750623979cae1ac9bfad43c2df8c6a",
+      "wxwidgets": "76a61cc0d65944ec6e4eb6c40b78bd4d5388ced1",
       "shared": "7791275bdfbf54e1500e303121dacaa2c3fd7d00",
       "patches": [
         "importer gates removed (kicad cc/main 90898109)",
@@ -79,55 +79,55 @@
     },
     "files": {
       "kicad_editor.js": {
-        "sha256": "1242d01d531e427542269c56f234fefe8ace42df806a7a8258d86ff3b3f78c0a",
-        "bytes": 492435,
-        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
+        "sha256": "b1ddd84998f23bac4f07aad34c2dca2d0ae5a2883ad54a85f32cc101acb62c92",
+        "bytes": 494010,
+        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
       },
       "kicad_editor.wasm": {
-        "sha256": "8c494e41a4b95f5f21b32cf923434ebdd6863c5a03d0b6685ee8e9d10fbe5307",
-        "bytes": 65867175,
-        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
+        "sha256": "1ea8f5341427799f7980d593caa3e237f2e1bb5ccf782faffc8f9df20fbc4002",
+        "bytes": 65885530,
+        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
       },
       "wx.js": {
         "sha256": "42d6b547f9a024f187f1b7812b64a3f76ca322d35393531340cb316ff88da351",
         "bytes": 79808,
-        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
+        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
       },
       "wx-dom.js": {
         "sha256": "7edabd5571c9f2fd0ea1acf7005fb3628f2e3cf6b8f430f8e473c328fb042a10",
         "bytes": 68699,
-        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
+        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
       },
       "images.tar.gz": {
-        "sha256": "8fe4ec15b594473c81418743a05fbbb3fb016455b420ed234f748b6f24a56f13",
-        "bytes": 5369636,
-        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
+        "sha256": "f82550dca11f6f7139afe3165e59a03486585114a086b984bafb2161e9becba7",
+        "bytes": 5369945,
+        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
       },
       "ngspice_service.js": {
         "sha256": "bbc8828928d97cfe14a6a3f98020fecf02d874b326efcd1cd8c5a47bcfdbd739",
         "bytes": 117051,
-        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
+        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
       },
       "ngspice_service.wasm": {
         "sha256": "11f878dcb08b399b592b21decd6903c479a8627d58140b969cb328781e9fc6e1",
         "bytes": 5666867,
-        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
+        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
       },
       "occ_service.js": {
-        "sha256": "5083844d456e0ddf39b84c5424a60290d340bec41198e3e1919c284d25534141",
-        "bytes": 266702,
-        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
+        "sha256": "05f61e02ee71eb35c21d383cf18816e9c978b96f9c4eb91b8c5cc307d84b39c4",
+        "bytes": 267309,
+        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
       },
       "occ_service.wasm": {
-        "sha256": "4bf9e9a249ffb05bbf6228539677a261a09fbd424af4e4420389ea3fbc4c069c",
-        "bytes": 60924886,
-        "source": "b8f251fabfd5d7da37736468c2dcd7014ea92a10"
+        "sha256": "97450d4b8c6b6ff5c54079445c9231fc6a52c2386e242959f9815ab6c46d3063",
+        "bytes": 60933609,
+        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
       }
     }
   },
   "icons": {
-    "stockArchiveSha256": "8fe4ec15b594473c81418743a05fbbb3fb016455b420ed234f748b6f24a56f13",
-    "repackedSha256": "2890b84017e6bae0eb75f36eae053447ba2e2441f239aa10fa1a1ea00634356c",
+    "stockArchiveSha256": "f82550dca11f6f7139afe3165e59a03486585114a086b984bafb2161e9becba7",
+    "repackedSha256": "e75bce99bbbf127d877b5db2346bb20eb9578dcf2968bca5ed9384eb254287f0",
     "inputs": {
       "theme/icons/src/add_component.svg": "d8d2dfa56f179658a3b2bd458090683161f188ad13d84d89fdb82f1a0f2a12e6",
       "theme/icons/src/add_line.svg": "64db6c023211cd897ea1f3613fcc4d338bf86fbca3086cf832bf3bf25dd516f0",
