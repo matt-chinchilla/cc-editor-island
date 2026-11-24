@@ -14,11 +14,16 @@ describe('parentOriginFor', () => {
   });
 });
 describe('parseBoot', () => {
-  it('defaults to the schematic by day and accepts only the known values', () => {
-    expect(parseBoot('')).toEqual({ frame: 'sch', theme: 'day' });
-    expect(parseBoot('?frame=pcb&theme=night')).toEqual({ frame: 'pcb', theme: 'night' });
-    expect(parseBoot('?frame=x&theme=y')).toEqual({ frame: 'sch', theme: 'day' });
-    expect(parseBoot('?frame=symedit')).toEqual({ frame: 'symedit', theme: 'day' });
-    expect(parseBoot('?frame=SYMEDIT')).toEqual({ frame: 'sch', theme: 'day' });
+  it('defaults to the schematic by day in dots and accepts only the known values', () => {
+    expect(parseBoot('')).toEqual({ frame: 'sch', theme: 'day', grid: 'dots' });
+    expect(parseBoot('?frame=pcb&theme=night')).toEqual({ frame: 'pcb', theme: 'night', grid: 'dots' });
+    expect(parseBoot('?frame=x&theme=y')).toEqual({ frame: 'sch', theme: 'day', grid: 'dots' });
+    expect(parseBoot('?frame=symedit')).toEqual({ frame: 'symedit', theme: 'day', grid: 'dots' });
+    expect(parseBoot('?frame=SYMEDIT')).toEqual({ frame: 'sch', theme: 'day', grid: 'dots' });
+  });
+
+  it('boots in lines only for exactly grid=lines', () => {
+    expect(parseBoot('?frame=pcb&theme=day&grid=lines').grid).toBe('lines');
+    for (const q of ['?grid=dots', '?grid=LINES', '?grid=crosses', '?grid=', '?grid=lines2']) expect(parseBoot(q).grid, q).toBe('dots');
   });
 });

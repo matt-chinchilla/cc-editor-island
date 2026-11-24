@@ -33,6 +33,8 @@ const fixture = q.get('fixture');
 // Any frame name passes through (a wave unit's frame too: fpedit, ds); the island falls back to sch for one it does not know.
 const frame = /^[a-z][a-z0-9]{0,15}$/.test(q.get('frame') ?? '') ? q.get('frame') : 'sch';
 const theme = q.get('theme') === 'night' ? 'night' : 'day';
+// The grid's look, as the site sends it: only lines rides in the address.
+const grid = q.get('grid') === 'lines' ? '&grid=lines' : '';
 const stateEl = document.getElementById('state');
 const note = (line) => { stateEl.textContent += `${line}\n`; };   // island strings only ever reach textContent
 
@@ -48,7 +50,7 @@ iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-modals all
 iframe.setAttribute('allow', 'cross-origin-isolated; clipboard-write');
 iframe.setAttribute('referrerpolicy', 'no-referrer');
 iframe.setAttribute('title', 'Editor');
-iframe.src = `${ISLAND}/?frame=${frame}&theme=${theme}`;
+iframe.src = `${ISLAND}/?frame=${frame}&theme=${theme}${grid}`;
 
 window.__bridge = {
   /** Resolves with the answer's result; rejects with "code: message". */

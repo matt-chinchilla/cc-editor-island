@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Chirichella Inc.
 import { bootFrame } from './frames';
 import type { Registry } from '../bridge/ext/registry';
-import type { Frame, Theme } from './types';
+import type { Frame, GridStyle, Theme } from './types';
 
 export const PRODUCT_NAME = 'Circuit Center Editor';
 
@@ -21,9 +21,14 @@ export function parentOriginFor(hostname: string, port: string): string | null {
   return PARENTS[hostname] ?? null;
 }
 
-export function parseBoot(search: string, reg?: Registry): { frame: Frame; theme: Theme } {
+/**
+ * The boot query: the frame's kind, day or night, and the grid's look. The
+ * grid is `lines` only for exactly `grid=lines`; anything else (absent
+ * included) is KiCad's dots, as every frame booted before the word existed.
+ */
+export function parseBoot(search: string, reg?: Registry): { frame: Frame; theme: Theme; grid: GridStyle } {
   const q = new URLSearchParams(search);
   const f = q.get('frame');
   // A frame a wave unit defines is a known name too (src/frames.ts bootFrame).
-  return { frame: bootFrame(f, reg), theme: q.get('theme') === 'night' ? 'night' : 'day' };
+  return { frame: bootFrame(f, reg), theme: q.get('theme') === 'night' ? 'night' : 'day', grid: q.get('grid') === 'lines' ? 'lines' : 'dots' };
 }

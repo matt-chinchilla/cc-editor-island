@@ -11,7 +11,7 @@ import hotkeys from './user.hotkeys?raw';
 import symeditHotkeys from './symedit.hotkeys?raw';
 import type { Seeds } from '../loader/src/wasm/boot';
 import { SHEET_THEME, sheetThemeOf } from './sheet-theme';
-import type { Theme } from '../src/types';
+import type { GridStyle, Theme } from '../src/types';
 import { KEPT_THEME, themeFileText, type ThemeJson } from './kept';
 
 /**
@@ -33,7 +33,32 @@ const UNIT_HOTKEYS: string = Object.entries(import.meta.glob('./hotkeys/*.hotkey
 /** The origin axes on, in a settings file's window section. */
 const AXES_ON = { window: { grid: { axes_enabled: true } } } as const;
 
-export function seedsFor(theme: Theme, kept: ThemeJson | null = null): Seeds {
+/**
+ * Every editor's settings file that holds a grid: the schematic and board
+ * editors, the footprint and symbol editors, the drawing sheet editor. Each
+ * frame's editor reads its own (APP_SETTINGS_BASE window settings).
+ */
+export const GRID_FILES = ['eeschema.json', 'pcbnew.json', 'fpedit.json', 'symbol_editor.json', 'pl_editor.json'] as const;
+/**
+ * KiCad's grid style in a settings file's window section: 0 dots, 1 lines,
+ * 2 small crosses (common/gal_display_options_common.cpp gridStyleConfigVals).
+ * The editor reads it at its start (EDA_DRAW_FRAME::LoadSettings) and again
+ * from its settings in memory on a settings change, never from the file.
+ */
+export const GRID_STYLE_LINES = 1;
+
+/** The settings files' extra keys: the axes as before, and the grid's look when it is lines (dots seeds nothing, KiCad's own). */
+export function settingsFor(grid: GridStyle): Record<string, Record<string, unknown>> {
+  const out: Record<string, Record<string, unknown>> = { 'fpedit.json': AXES_ON, 'symbol_editor.json': AXES_ON };
+  if (grid !== 'lines') return out;
+  for (const file of GRID_FILES) {
+    const axes = file in out;
+    out[file] = { window: { grid: { ...(axes ? { axes_enabled: true } : {}), style: GRID_STYLE_LINES } } };
+  }
+  return out;
+}
+
+export function seedsFor(theme: Theme, kept: ThemeJson | null = null, grid: GridStyle = 'dots'): Seeds {
   const keptText = kept == null ? null : themeFileText(kept);
   return {
     // The one palette the viewer draws with, by day and by night (spec D16); the
@@ -50,7 +75,8 @@ export function seedsFor(theme: Theme, kept: ThemeJson | null = null): Seeds {
     // The footprint and symbol editors' origin axes stay on through any settings change: KiCad's desktop turns
     // grid.axes_enabled on only when it saves (footprint_edit_frame.cpp, symbol_edit_frame.cpp SaveSettings), and
     // CommonSettingsChanged reads it back, so a theme switch with it false hid the axes (engine build T18c report).
-    settings: { 'fpedit.json': AXES_ON, 'symbol_editor.json': AXES_ON },
+    // The grid's look (the host's `grid` boot word, src/cc-config.ts): lines are KiCad's own grid style 1 in every editor's file.
+    settings: settingsFor(grid),
     toolbars: [{ name: 'pcbnew-toolbars.json', json: pcb }, { name: 'eeschema-toolbars.json', json: sch }],
     // The symbol editor's own chords follow the pencil-tools ledger: Ctrl+Alt+Shift
     // and a digit, which neither the ledger's pool nor KiCad's defaults use.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Chirichella Inc.
 import { describe, expect, it } from 'vitest';
-import { seedsFor } from './seeds';
+import { GRID_FILES, GRID_STYLE_LINES, seedsFor, settingsFor } from './seeds';
 import { SHEET_THEME, sheetThemeOf } from './sheet-theme';
 import ledger from './user.hotkeys?raw';
 import symedit from './symedit.hotkeys?raw';
@@ -75,5 +75,27 @@ describe('the seeds', () => {
       expect(secondary).toBe(action === 'eeschema.InteractiveEdit.rotateCW' ? 'Shift+R' : '');
     }
     expect(new Set(own.map(([, k]) => k)).size).toBe(own.length);
+  });
+
+  it('seed the grid as KiCad\'s dots by default, exactly the settings every frame booted with before', () => {
+    const axes = { window: { grid: { axes_enabled: true } } };
+    expect(seedsFor('day').settings).toEqual({ 'fpedit.json': axes, 'symbol_editor.json': axes });
+    expect(seedsFor('night', null, 'dots').settings).toEqual(seedsFor('night').settings);
+    expect(settingsFor('dots')).toEqual({ 'fpedit.json': axes, 'symbol_editor.json': axes });
+  });
+
+  it('seed lines as KiCad\'s grid style 1 in every editor\'s settings file, the axes kept where they were on', () => {
+    const s = seedsFor('day', null, 'lines').settings!;
+    expect(GRID_STYLE_LINES).toBe(1);
+    expect(Object.keys(s).sort()).toEqual([...GRID_FILES].sort());
+    for (const file of GRID_FILES) expect((s[file] as { window: { grid: { style: number } } }).window.grid.style, file).toBe(1);
+    expect(s['fpedit.json']).toEqual({ window: { grid: { axes_enabled: true, style: 1 } } });
+    expect(s['symbol_editor.json']).toEqual({ window: { grid: { axes_enabled: true, style: 1 } } });
+    expect(s['eeschema.json']).toEqual({ window: { grid: { style: 1 } } });
+    // The grid word changes nothing else of the seeds.
+    const { settings: a, ...restLines } = seedsFor('night', null, 'lines');
+    const { settings: b, ...restDots } = seedsFor('night', null, 'dots');
+    expect(a).not.toEqual(b);
+    expect(restLines).toEqual(restDots);
   });
 });

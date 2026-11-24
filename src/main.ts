@@ -93,7 +93,7 @@ async function main(): Promise<void> {
   if (window.top === window) { showScreen('toplevel'); return; }
   const parent = parentOriginFor(location.hostname, location.port);
   if (parent == null) { showScreen('toplevel'); return; }
-  const { frame, theme } = parseBoot(location.search);
+  const { frame, theme, grid } = parseBoot(location.search);
   document.documentElement.classList.toggle('dark', theme === 'night');
 
   // Before the engine's scripts load: every park of its scheduler also waits on
@@ -226,7 +226,7 @@ async function main(): Promise<void> {
       frame: frameToken(frame),
       dark: theme === 'night',
       // The host's canvas colors, when the island keeps them (theme.set), in place of the palette.
-      seeds: seedsFor(theme, readKept()),
+      seeds: seedsFor(theme, readKept(), grid),
       libsSource,
       // Lazy (LIBRARY.md "The client"): a chooser's first enumerate of a kind
       // starts that kind's warm-up; no bundle is fetched before KiCad asks.

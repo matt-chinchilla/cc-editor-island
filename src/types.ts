@@ -20,6 +20,8 @@ export interface ExtFrames {}
 /** The frame's kind: a built in one, or one a unit's file added. */
 export type Frame = BuiltinFrame | Extract<keyof ExtFrames, string>;
 export type Theme = 'day' | 'night';
+/** The grid's look a frame boots in (the host's `grid` boot word): KiCad's dots, or its lines. */
+export type GridStyle = 'dots' | 'lines';
 export const BUILTIN_FRAMES: readonly BuiltinFrame[] = Object.freeze(['sch', 'pcb', 'symedit']);
 export const isBuiltinFrame = (frame: string): frame is BuiltinFrame => (BUILTIN_FRAMES as readonly string[]).includes(frame);
 /** A built in frame's tool; src/frames.ts frameTool answers for every frame. */
