@@ -79,7 +79,7 @@ async function clear(page: Page): Promise<void> {
   await expect.poll(async () => (await of(page, 'ev.selected')).at(-1)?.uuids ?? [], { timeout: 5_000 }).toEqual([]);
 }
 
-test('a symbol double-clicked or E over it goes to the host as ev.properties, selected and with no KiCad dialog; a label keeps its dialog', async ({ page }) => {
+test('a symbol double-clicked or E over it goes to the host as ev.properties, selected and with no KiCad dialog; a label is ev.schItem', async ({ page }) => {
   const frame = await bootWithLabel(page);
   expect((await of(page, 'ev.ready'))[0]?.caps).toEqual(expect.arrayContaining(['properties', 'kicadHostProperties']));
   // Zoomed onto the left resistor, so the body is many pixels across.
@@ -137,6 +137,15 @@ test('a symbol double-clicked or E over it goes to the host as ev.properties, se
   const label = await pageAt(page, frame, { x: LABEL_AT.x + 1.2, y: LABEL_AT.y - 0.6 });
   const before = (await of(page, 'ev.properties')).length;
   await page.mouse.dblclick(label.x, label.y);
+  // Since island v0.2.3-cc25 (cap schItem) a label's window is the host's too: one ev.schItem, no window of KiCad's, no ev.properties.
+  if (((await of(page, 'ev.ready'))[0]?.caps ?? []).includes('schItem')) {
+    await expect.poll(async () => (await of(page, 'ev.schItem')).length, { timeout: 10_000 }).toBe(1);
+    expect((await of(page, 'ev.schItem'))[0]).toMatchObject({ uuid: LABEL });
+    await page.waitForTimeout(1_000);
+    expect(await of(page, 'ev.menu')).toEqual([]);
+    expect((await of(page, 'ev.properties')).length).toBe(before);
+    return;
+  }
   await expect.poll(async () => (await of(page, 'ev.menu')).map((e) => e.open), { timeout: 10_000 }).toEqual([true]);
   expect((await of(page, 'ev.properties')).length).toBe(before);
   // It is KiCad's label dialog; its Cancel closes it.

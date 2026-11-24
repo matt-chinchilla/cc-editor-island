@@ -179,7 +179,7 @@ test('run 15: two project files are bad_args; a truncated board is unreadable wi
   const two = await page.evaluate(async (base) => {
     const bytes = new Uint8Array(await (await fetch(`${base}/settings-from.kicad_pro`)).arrayBuffer());
     try {
-      await (window as unknown as Harness).__bridge.request('settings.read', { files: [{ name: 'a.kicad_pro', bytes }, { name: 'b.kicad_pro', bytes }], sections: ['netClasses'] });
+      await (window as unknown as Harness).__bridge.request('settings.read', { files: [{ name: 'a.kicad_pro', bytes }, { name: 'b.kicad_pro', bytes: bytes.slice() }], sections: ['netClasses'] });
       return 'ok';
     } catch (err) { return (err as Error).message.split('\n')[0]; }
   }, FROM);

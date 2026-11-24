@@ -104,10 +104,17 @@ test('a pcb frame takes the board\'s three doors only under footprintEdit', asyn
   const frame = islandFrame(page);
   test.skip(frame == null, `${browserName}: the island frame is out of Playwright's reach, so its slot cannot be asked`);
   const before = await windows(frame!);
-  // A footprint editor action is never taken in a board.
-  for (const a of FPEDIT_HELD.filter((x) => !BOARD_DOORS.includes(x) && !['common.Control.show3DViewer', 'common.Control.showProperties'].includes(x))) {
-    expect(await ask(page, frame!, a), a).toEqual({ taken: false, sent: null });
+  // A footprint editor action is never taken in a board, but the ones a board frame holds on its own
+  // account: the two panes, and since island v0.2.3-cc25 Save As and Revert, Find, the two cleanup and
+  // edit windows and Import Graphics (each held by its own unit in a pcb frame).
+  const boardsOwn = ['common.Control.show3DViewer', 'common.Control.showProperties', 'common.Control.saveAs', 'common.Control.revert', 'common.Interactive.find',
+    'pcbnew.GlobalEdit.cleanupGraphics', 'pcbnew.GlobalEdit.editTextAndGraphics', 'pcbnew.InteractiveDrawing.placeImportedGraphics'];
+  const taken: string[] = [];
+  for (const a of FPEDIT_HELD.filter((x) => !BOARD_DOORS.includes(x))) {
+    const got = await ask(page, frame!, a);
+    if (got.taken) { expect(got.sent, a).toBe(a); taken.push(a); } else expect(got, a).toEqual({ taken: false, sent: null });
   }
+  expect(taken.sort()).toEqual([...boardsOwn].sort());
   if (!caps.includes('footprintEdit')) {
     // Engine run 14: KiCad keeps its doors (asked through the slot only: nothing of KiCad's is run).
     for (const a of BOARD_DOORS) expect(await ask(page, frame!, a), a).toEqual({ taken: false, sent: null });
