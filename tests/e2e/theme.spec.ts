@@ -16,7 +16,7 @@ test.skip(({ browserName }) => browserName === 'firefox', 'Playwright Firefox re
 interface Ev { type: string; phase?: string; caps?: string[]; shown?: boolean }
 interface Harness { __events: Ev[]; __bridge: { request(op: string, args?: unknown): Promise<Record<string, unknown>> } }
 interface View { cx: number; cy: number; w: number; h: number; scale: number }
-interface Read { top: number[]; topShare: number; red: number; white: number; total: number }
+interface Read { top: number[]; topShare: number; red: number; white: number; axes: number; total: number }
 type Rgb = [number, number, number];
 
 const PALETTE_SCH_BG: Rgb = [19, 18, 24];
@@ -69,7 +69,10 @@ const readCanvas = (f: Frame): Promise<Read> => f.evaluate(() => {
   const counts = new Map<number, number>();
   let red = 0;
   let white = 0;
+  let axes = 0;
   for (let i = 0; i < px.length; i += 4) {
+    // The palette's grid_axes, the editors' origin axes: (255, 129, 173).
+    if (Math.abs(px[i] - 255) <= 2 && Math.abs(px[i + 1] - 129) <= 2 && Math.abs(px[i + 2] - 173) <= 2) axes++;
     if (px[i] >= 253 && px[i + 1] >= 253 && px[i + 2] >= 253) white++;
     const k = (px[i] << 16) | (px[i + 1] << 8) | px[i + 2];
     counts.set(k, (counts.get(k) ?? 0) + 1);
@@ -79,7 +82,7 @@ const readCanvas = (f: Frame): Promise<Read> => f.evaluate(() => {
   let n = 0;
   for (const [k, v] of counts) if (v > n) { best = k; n = v; }
   const total = px.length / 4;
-  return { top: [(best >> 16) & 255, (best >> 8) & 255, best & 255], topShare: n / total, red, white, total };
+  return { top: [(best >> 16) & 255, (best >> 8) & 255, best & 255], topShare: n / total, red, white, axes, total };
 });
 
 const near = (a: number[], b: Rgb): boolean => a.every((x, i) => Math.abs(x - b[i]) <= 2);
@@ -226,8 +229,8 @@ test('the kept colors: the symbol, footprint and drawing sheet editors boot in t
     for (const frame of ['symedit', 'fpedit', 'ds']) {
       const f = await bootBare(page, frame);
       const caps = (await events(page)).find((e) => e.type === 'ev.ready')?.caps ?? [];
-      expect(caps).not.toContain('theme');
-      expect(await refusal(page, 'theme.set', { colors: null })).toBe(`theme_frame: the canvas colors of a ${frame} frame change at its next boot`);
+      // On an engine whose switch does not reach the editors (build T18b) they refuse the op; on any engine they boot in the kept colors.
+      if (!caps.includes('theme')) expect(await refusal(page, 'theme.set', { colors: null })).toBe(`theme_frame: the canvas colors of a ${frame} frame change at its next boot`);
       const r = await showing(f, WHITE);
       measure(`${frame} booted kept`, `background ${r.top.join(', ')} on ${(r.topShare * 100).toFixed(1)} %`);
     }
@@ -243,6 +246,72 @@ test('the kept colors: the symbol, footprint and drawing sheet editors boot in t
       const r = await showing(await bootBare(page, frame), PALETTE_SCH_BG);
       measure(`${frame} after null`, `background ${r.top.join(', ')}`);
     }
+  } finally {
+    await page.close();
+  }
+});
+
+/** The drawing's pixels as one digest, row 0 and column 0 left out (KiCad repaints that edge after any full repaint). */
+const digest = (f: Frame): Promise<string> => f.evaluate(async () => {
+  const gls = [...document.querySelectorAll('canvas.gl-canvas')] as HTMLCanvasElement[];
+  const src = gls.filter((c) => c.style.display !== 'none' && c.width > 0).sort((a, b) => b.width * b.height - a.width * a.height)[0] ?? (document.getElementById('canvas') as HTMLCanvasElement);
+  const c = document.createElement('canvas');
+  c.width = src.width - 1;
+  c.height = src.height - 1;
+  const ctx = c.getContext('2d', { willReadFrequently: true })!;
+  ctx.drawImage(src, -1, -1);
+  const px = ctx.getImageData(0, 0, c.width, c.height).data;
+  const h = new Uint8Array(await crypto.subtle.digest('SHA-256', px));
+  return [...h].map((x) => x.toString(16).padStart(2, '0')).join('');
+});
+
+for (const frame of ['symedit', 'fpedit', 'ds'] as const) {
+  test(`theme.set live in a ${frame} frame: a white background, the chrome hidden, null the drawing as before`, async ({ page }) => {
+    test.setTimeout(300_000);
+    try {
+      const f = await bootBare(page, frame);
+      const caps = (await events(page)).find((e) => e.type === 'ev.ready')?.caps ?? [];
+      test.skip(!caps.includes('theme'), 'an engine whose switch does not reach this frame (build T18b)');
+      const bg: Rgb = frame === 'fpedit' ? PALETTE_PCB_BG : PALETTE_SCH_BG;
+      const first = await showing(f, bg);
+      const control = await digest(f);
+      expect(await digest(f)).toBe(control);
+      measure('palette', `background ${first.top.join(', ')} on ${(first.topShare * 100).toFixed(1)} %, ${first.axes} origin axes pixels`);
+      if (frame !== 'ds') expect(first.axes).toBeGreaterThan(0);
+      const white = await paletteWith(f, { schematic: { background: 'rgb(255, 255, 255)' }, board: { background: 'rgb(255, 255, 255)' } });
+      let t0 = Date.now();
+      expect(await request(page, 'theme.set', { colors: white })).toEqual({ ok: true });
+      measure('theme.set', `${Date.now() - t0} ms to the answer`);
+      const after = await showing(f, WHITE);
+      measure('host theme', `background ${after.top.join(', ')} on ${(after.topShare * 100).toFixed(1)} %, ${after.axes} origin axes pixels`);
+      expect(await chromeShown(f)).toBe(false);
+      t0 = Date.now();
+      expect(await request(page, 'theme.set', { colors: null })).toEqual({ ok: true });
+      measure('theme.set null', `${Date.now() - t0} ms to the answer`);
+      const back = await showing(f, bg);
+      // The view kept and the axes still drawn: the drawing is the control's, pixel for pixel.
+      await expect.poll(() => digest(f), { timeout: 10_000 }).toBe(control);
+      expect(back.axes).toBe(first.axes);
+      expect(await chromeShown(f)).toBe(false);
+    } finally {
+      await page.close();
+    }
+  });
+}
+
+test('a drawing sheet editor that booted in the kept colors takes null live: its own palette with the sheet color', async ({ page }) => {
+  test.setTimeout(300_000);
+  try {
+    const { island } = await boot(page, 'sch');
+    await showing(island, PALETTE_SCH_BG);
+    expect(await request(page, 'theme.set', { colors: await paletteWith(island, { schematic: { background: 'rgb(255, 255, 255)' } }) })).toEqual({ ok: true });
+    await showing(island, WHITE);
+    const ds = await bootBare(page, 'ds');
+    test.skip(!((await events(page)).find((e) => e.type === 'ev.ready')?.caps ?? []).includes('theme'), 'an engine whose switch does not reach this frame (build T18b)');
+    await showing(ds, WHITE);
+    expect(await request(page, 'theme.set', { colors: null })).toEqual({ ok: true });
+    const r = await showing(ds, PALETTE_SCH_BG);
+    measure('ds kept then null', `background ${r.top.join(', ')} on ${(r.topShare * 100).toFixed(1)} %`);
   } finally {
     await page.close();
   }

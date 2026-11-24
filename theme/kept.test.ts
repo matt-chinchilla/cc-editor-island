@@ -64,4 +64,8 @@ describe('the kept colors', () => {
       expect(seedsFor(theme).colors[0].json).toBe(palette);
     }
   });
+
+  it('keeps the footprint and symbol editors\' origin axes on, in their settings files only', () => {
+    expect(seedsFor('day').settings).toEqual({ 'fpedit.json': { window: { grid: { axes_enabled: true } } }, 'symbol_editor.json': { window: { grid: { axes_enabled: true } } } });
+  });
 });

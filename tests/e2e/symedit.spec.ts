@@ -73,7 +73,7 @@ test('boots canvas only: no KiCad window at boot, its own caps only, the heap me
   // K1: the library tree is never filled, so KiCad's "Loading Symbol Libraries" box never shows.
   expect(await of(page, 'ev.menu')).toEqual([]);
   const caps = (await of(page, 'ev.ready'))[0]?.caps ?? [];
-  expect(caps.filter((c) => !/^kicad/.test(c))).toEqual(['actionStates', 'activeTool', 'contextMenu', 'heldKeys', 'heldMenus', 'hostKeys', 'importGraphics', 'libTableProblems', 'menuClarify', 'observeKeys', 'projectLibs', 'prompts', 'symbolConvert', 'symedit', 'symeditHeld', 'write']);
+  expect(caps.filter((c) => !/^kicad/.test(c))).toEqual(['actionStates', 'activeTool', 'contextMenu', 'heldKeys', 'heldMenus', 'hostKeys', 'importGraphics', 'libTableProblems', 'menuClarify', 'observeKeys', 'projectLibs', 'prompts', 'symbolConvert', 'symedit', 'symeditHeld', 'theme', 'write']);
   expect((await of(page, 'ev.chrome')).at(-1)?.shown ?? false).toBe(false);
   expect(await state(page)).toMatchObject({ open: false, token: '' });
   measure('symedit boot', `ev.ready ${readyMs} ms after navigation; engine heap 5 s after ready ${mb(await heap(frame))}`);

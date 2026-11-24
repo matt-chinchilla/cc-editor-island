@@ -33,6 +33,9 @@
 // sheet editor's pl_editor.json), so its frame draws in the viewer's palette.
 // Modified by Circuit Center on 2026-11-19: a wave unit's tool that names a
 // canvas color theme of its own (toolColorTheme) selects it in those files.
+// Modified by Circuit Center on 2026-11-24: Seeds.settings merges extra keys
+// into a settings file the boot writes, and writes a named file it would not
+// (the footprint and symbol editors' origin axes kept on).
 import type { Tool } from "../../../src/types";
 import {
   KICAD_CONFIG_DIR,
@@ -179,6 +182,23 @@ export interface Seeds {
   hotkeys: string;
   /** Extra keys merged into kicad_common.json (icon theme, toolbar icon size). */
   common: Record<string, unknown>;
+  /**
+   * Extra keys per settings file under KICAD_CONFIG_DIR (fpedit.json,
+   * symbol_editor.json): merged, object by object, into what the boot writes
+   * there, or written alone when the boot writes nothing there.
+   */
+  settings?: Readonly<Record<string, Record<string, unknown>>>;
+}
+
+/** `extra` laid over `base`, plain objects merged key by key, anything else replaced. */
+function mergeSettings(base: Record<string, unknown>, extra: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base };
+  for (const [k, v] of Object.entries(extra)) {
+    const b = out[k];
+    const plain = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x);
+    out[k] = plain(b) && plain(v) ? mergeSettings(b, v) : v;
+  }
+  return out;
 }
 
 let booted: { tool: Tool; promise: Promise<void> } | null = null;
@@ -628,8 +648,8 @@ async function doBoot(opts: BootOptions): Promise<void> {
     for (const { name, json } of opts.seeds.colors) {
       writeIfAbsent(`${KICAD_CONFIG_DIR}/colors/${name}`, json);
     }
-    const appearanceOf = (colorTheme: string): string => JSON.stringify(
-      {
+    const appearanceOf = (colorTheme: string, file: string): string => JSON.stringify(
+      mergeSettings({
         appearance: {
           color_theme: colorTheme,
           custom_toolbars: true,
@@ -640,19 +660,26 @@ async function doBoot(opts: BootOptions): Promise<void> {
         // inside a drawing tool and the system pointer leads the rest of the
         // time (the viewer's feel). It is not what makes the canvas keep up.
         window: { cursor: { cross_hair_mode: 0, always_show_cursor: false } },
-      },
+      }, opts.seeds.settings?.[file] ?? {}),
       null,
       2,
     );
-    const appearance = appearanceOf(opts.seeds.colorTheme);
     // writeIfAbsent by design: a same-session relaunch after the user
     // switched themes in-app (F4 persists into these files) must win.
-    writeIfAbsent(`${KICAD_CONFIG_DIR}/eeschema.json`, appearance);
-    writeIfAbsent(`${KICAD_CONFIG_DIR}/pcbnew.json`, appearance);
+    const written = new Set<string>(["eeschema.json", "pcbnew.json"]);
+    writeIfAbsent(`${KICAD_CONFIG_DIR}/eeschema.json`, appearanceOf(opts.seeds.colorTheme, "eeschema.json"));
+    writeIfAbsent(`${KICAD_CONFIG_DIR}/pcbnew.json`, appearanceOf(opts.seeds.colorTheme, "pcbnew.json"));
     // A wave unit's tool selects its own seeded theme there when it names one
     // (the drawing sheet editor's: the palette with the sheet in a color that shows).
-    const own = appearanceOf(toolColorTheme(tool) ?? opts.seeds.colorTheme);
-    for (const file of toolAppearanceFiles(tool)) writeIfAbsent(`${KICAD_CONFIG_DIR}/${file}`, own);
+    const own = toolColorTheme(tool) ?? opts.seeds.colorTheme;
+    for (const file of toolAppearanceFiles(tool)) {
+      writeIfAbsent(`${KICAD_CONFIG_DIR}/${file}`, appearanceOf(own, file));
+      written.add(file);
+    }
+    // A settings file the seeds name that the boot writes nothing to: its keys alone.
+    for (const [file, extra] of Object.entries(opts.seeds.settings ?? {})) {
+      if (!written.has(file) && /^[a-z_]+\.json$/.test(file)) writeIfAbsent(`${KICAD_CONFIG_DIR}/${file}`, JSON.stringify(extra, null, 2));
+    }
     FS.mkdirTree(`${KICAD_CONFIG_DIR}/toolbars`);
     for (const { name, json } of opts.seeds.toolbars) {
       writeIfAbsent(`${KICAD_CONFIG_DIR}/toolbars/${name}`, json);

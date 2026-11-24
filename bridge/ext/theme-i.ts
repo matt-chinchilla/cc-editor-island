@@ -13,14 +13,24 @@
 // a name of its own; the file before it is removed once the new one shows.
 // null brings the palette back (the seeded circuitcenter theme).
 //
-// Whether a frame takes the switch is one rule, switchesIn: the engine's
-// switch (engine build T18b) reaches the schematic and board editors only
-// (kicad_editor_embind.cpp setColorTheme: pcbFrame() and schFrame() are the
-// top window as PCB_EDIT_FRAME or SCH_EDIT_FRAME), so the cap is listed in a
-// sch and a pcb frame and every other frame answers theme_frame. Every set
+// Whether a frame takes the switch is one rule, switchesIn, read from the
+// engine the island is built with. Engine build T18b's switch reaches the
+// schematic and board editors only (kicad_editor_embind.cpp setColorTheme:
+// pcbFrame() and schFrame() are the top window as PCB_EDIT_FRAME or
+// SCH_EDIT_FRAME); from build T18c it reaches the symbol, footprint and
+// drawing sheet editors too. The switch has the same export name on both, so
+// the engine says which it is only through its build: PIN.json's
+// engine.build.pcbjam, compiled in (vite.config.ts __ENGINE_PCBJAM__), read
+// against the two lists below (a unit test fails while the pinned build is in
+// neither). A frame the switch does not reach answers theme_frame. Every set
 // that applied is kept on the island's origin (theme/kept.ts) and every frame
-// boots in the kept colors (theme/seeds.ts), so the symbol, footprint and
-// drawing sheet editors open in the host's colors.
+// boots in the kept colors (theme/seeds.ts).
+//
+// The drawing sheet editor wears its own palette, the sheet theme
+// (theme/sheet-theme.ts): a set there lays the sheet color over the colors
+// received, and null brings back the sheet theme over the palette, under a
+// fresh name like any set (the name circuitcenter-sheet may hold kept colors
+// from the boot, and the engine skips a switch to the name it holds).
 //
 // A burst (a color picker) is coalesced: the op is answered off the request
 // queue, every set joins one wait, and the island applies the newest set only,
@@ -29,14 +39,30 @@
 import { fail, hasAll, isObj, ok, onlyKeys, type Answer, type ExtUnit, type ResponderCtx } from './contract';
 import type { Frame } from '../../src/types';
 import { KEPT_THEME, keepTheme, readTheme, themeFileText, type ThemeJson } from '../../theme/kept';
+import { sheetThemeOf } from '../../theme/sheet-theme';
+import paletteText from '../../theme/colors/circuitcenter.json?raw';
+
+/** PIN.json engine.build.pcbjam of the engine the island is built with ('' for none), compiled in by vite.config.ts. */
+declare const __ENGINE_PCBJAM__: string;
+export const ENGINE_PCBJAM: string = typeof __ENGINE_PCBJAM__ === 'string' ? __ENGINE_PCBJAM__ : '';
+/** The engine build switchesIn reads when it is given none: the compiled in one (the unit tests set another). */
+export const THEME_ENGINE: { build: string } = { build: ENGINE_PCBJAM };
 
 export { MAX_THEME_BYTES, themeFileText, type ThemeJson } from '../../theme/kept';
 /** The engine exports theme.set calls: the switch, and the apply queue it waits on. */
 export const THEME_EXPORTS = ['kicadSetColorTheme', 'kicadCollabBusy'] as const;
 export const THEME_CAP = 'theme';
 export const THEME_OP = 'theme.set';
-/** The frames whose editor the engine's switch reaches (engine build T18b: the schematic and board editors). */
+/** The frames whose editor every engine's switch reaches: the schematic and board editors. */
 export const SWITCH_FRAMES: readonly string[] = ['sch', 'pcb'];
+/** The frames whose editor the switch reaches on an engine of EVERY_FRAME_BUILDS. */
+export const EVERY_FRAME: readonly string[] = ['sch', 'pcb', 'symedit', 'fpedit', 'ds'];
+/** The engine builds (pcbjam commit) whose switch reaches every frame: T18c, then T18d. */
+export const EVERY_FRAME_BUILDS: readonly string[] = ['3e9e31697fd53a54992158bce242b3f94bce4a8e'];
+/** The engine builds known to switch the schematic and board editors only: T18b. Any build in neither list is taken as this. */
+export const SCH_PCB_BUILDS: readonly string[] = ['01c552e7a89beca3ebd9907707c0fb760b7c8ebe'];
+/** The drawing sheet editor's frame. */
+const DS_FRAME = 'ds';
 /** The seeded palette's name (theme/seeds.ts colorTheme): what null brings back. */
 export const PALETTE_THEME = 'circuitcenter';
 /** The stem of every theme the host sent: `<stem><n>.json` under the colors folder (n 0 is the kept theme a boot selects). */
@@ -48,9 +74,10 @@ const THEME_OK = { ok: true };
 /** After the switch the answer waits this long at most for the engine's frame to paint. */
 const PAINT_MS = 250;
 
-/** The one rule: this engine switches the canvas colors of a running frame of this kind. */
-export function switchesIn(mod: Record<string, unknown> | null | undefined, frame: Frame | string): boolean {
-  return SWITCH_FRAMES.includes(frame) && hasAll(mod, THEME_EXPORTS);
+/** The one rule: this engine (its exports, and its build) switches the canvas colors of a running frame of this kind. */
+export function switchesIn(mod: Record<string, unknown> | null | undefined, frame: Frame | string, build: string = THEME_ENGINE.build): boolean {
+  const frames = EVERY_FRAME_BUILDS.includes(build) ? EVERY_FRAME : SWITCH_FRAMES;
+  return frames.includes(frame) && hasAll(mod, THEME_EXPORTS);
 }
 
 /**
@@ -71,8 +98,10 @@ interface ThemeState {
   pending: Pending | null;
   /** A switch runs now. */
   running: boolean;
-  /** The theme name the frame shows when it is the host's, null while it shows the palette. */
-  live: string | null;
+  /** The frame shows the host's colors (a set, or the kept colors it booted in). */
+  host: boolean;
+  /** The island's theme file the frame's theme name is (removed when the frame leaves it), null for a seeded name. */
+  file: string | null;
   /** The last fresh number given. */
   seq: number;
 }
@@ -84,7 +113,8 @@ async function stateOf(ctx: ResponderCtx): Promise<ThemeState> {
   if (s == null) {
     let booted = false;
     try { booted = ctx.fs()?.analyzePath(`${await colorsDir()}/${KEPT_THEME}.json`).exists === true; } catch { booted = false; }
-    s = STATES.get(ctx) ?? { pending: null, running: false, live: booted ? KEPT_THEME : null, seq: 0 };
+    // In a ds frame the kept colors are under the seeded sheet theme's name, never the island's file.
+    s = STATES.get(ctx) ?? { pending: null, running: false, host: booted, file: booted && ctx.frame !== DS_FRAME ? KEPT_THEME : null, seq: 0 };
     STATES.set(ctx, s);
   }
   return s;
@@ -136,23 +166,27 @@ async function applyOne(colors: ThemeJson | null, ctx: ResponderCtx, s: ThemeSta
   if (!(await queueIdle(ctx, themeMs(ctx)))) return fail('busy', op);
   if (ctx.engineBusy() || ctx.importing() || ctx.checking() || ctx.keysBlocked()) return fail('busy', op);
   // The palette while it shows: nothing to switch (a switch would only rebuild KiCad's hidden menus).
-  if (colors == null && s.live == null) {
+  if (colors == null && !s.host) {
     keepTheme(null);
     return ok(THEME_OK);
   }
-  const before = s.live;
+  const ds = ctx.frame === DS_FRAME;
+  // The file to write and the name to switch to: a fresh file for colors, and for the drawing sheet editor's palette.
+  let text: string | null = null;
+  if (colors != null) text = ds ? sheetThemeOf(themeFileText(colors)) : themeFileText(colors);
+  else if (ds) text = sheetThemeOf(paletteText);
   let name = PALETTE_THEME;
   let dir = '';
-  if (colors != null) {
-    s.seq += 1;
-    name = `${LIVE_STEM}${s.seq}`;
-    try {
-      dir = await colorsDir();
+  try {
+    dir = await colorsDir();
+    if (text != null) {
+      s.seq += 1;
+      name = `${LIVE_STEM}${s.seq}`;
       fs.mkdirTree(dir);
-      fs.writeFile(`${dir}/${name}.json`, themeFileText(colors));
-    } catch (err) {
-      return fail('island_error', err instanceof Error ? err.message : String(err));
+      fs.writeFile(`${dir}/${name}.json`, text);
     }
+  } catch (err) {
+    return fail('island_error', err instanceof Error ? err.message : String(err));
   }
   const t0 = Date.now();
   try {
@@ -161,15 +195,16 @@ async function applyOne(colors: ThemeJson | null, ctx: ResponderCtx, s: ThemeSta
     return fail('island_error', err instanceof Error ? err.message : String(err));
   }
   if (!(await ctx.applyIdle(themeMs(ctx)))) return fail('not_applied', op);
-  s.live = colors == null ? null : name;
-  // Kept for every frame's next boot (the editors the switch does not reach open in it); null forgets it.
+  const before = s.file;
+  s.file = text == null ? null : name;
+  s.host = colors != null;
+  // Kept for every frame's next boot; null forgets it.
   keepTheme(colors);
   await painted(ctx);
   // The theme before this one is in KiCad's memory by name; its file is no longer read.
-  if (before != null && before !== s.live) {
+  if (before != null && before !== s.file) {
     try {
-      const d = dir || (await colorsDir());
-      if (fs.analyzePath(`${d}/${before}.json`).exists) fs.unlink(`${d}/${before}.json`);
+      if (fs.analyzePath(`${dir}/${before}.json`).exists) fs.unlink(`${dir}/${before}.json`);
     } catch { /* a file left behind is only a file */ }
   }
   ctx.log('[theme]', colors == null ? 'palette' : name, `${Date.now() - t0} ms`);

@@ -30,6 +30,9 @@ const UNIT_HOTKEYS: string = Object.entries(import.meta.glob('./hotkeys/*.hotkey
  * selected in place of the palette, and the drawing sheet editor's theme is
  * laid over them in place of the palette.
  */
+/** The origin axes on, in a settings file's window section. */
+const AXES_ON = { window: { grid: { axes_enabled: true } } } as const;
+
 export function seedsFor(theme: Theme, kept: ThemeJson | null = null): Seeds {
   const keptText = kept == null ? null : themeFileText(kept);
   return {
@@ -44,6 +47,10 @@ export function seedsFor(theme: Theme, kept: ThemeJson | null = null): Seeds {
       ...(keptText == null ? [] : [{ name: `${KEPT_THEME}.json`, json: keptText }]),
     ],
     colorTheme: keptText == null ? 'circuitcenter' : KEPT_THEME,
+    // The footprint and symbol editors' origin axes stay on through any settings change: KiCad's desktop turns
+    // grid.axes_enabled on only when it saves (footprint_edit_frame.cpp, symbol_edit_frame.cpp SaveSettings), and
+    // CommonSettingsChanged reads it back, so a theme switch with it false hid the axes (engine build T18c report).
+    settings: { 'fpedit.json': AXES_ON, 'symbol_editor.json': AXES_ON },
     toolbars: [{ name: 'pcbnew-toolbars.json', json: pcb }, { name: 'eeschema-toolbars.json', json: sch }],
     // The symbol editor's own chords follow the pencil-tools ledger: Ctrl+Alt+Shift
     // and a digit, which neither the ledger's pool nor KiCad's defaults use.

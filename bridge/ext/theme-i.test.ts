@@ -11,7 +11,13 @@ import { startResponder } from '../responder';
 import type { ExtUnit, ResponderCtx } from './contract';
 import type { Frame } from '../../src/types';
 import { buildRegistry, REGISTRY } from './registry';
-import unit, { LIVE_STEM, MAX_THEME_BYTES, PALETTE_THEME, THEME_CAP, THEME_EXPORTS, parseThemeArgs, switchesIn, themeFileText, themeSet } from './theme-i';
+import unit, { ENGINE_PCBJAM, EVERY_FRAME_BUILDS, LIVE_STEM, MAX_THEME_BYTES, PALETTE_THEME, SCH_PCB_BUILDS, THEME_CAP, THEME_ENGINE, THEME_EXPORTS, parseThemeArgs, switchesIn, themeFileText, themeSet } from './theme-i';
+import { SHEET_THEME, sheetThemeOf } from '../../theme/sheet-theme';
+import paletteText from '../../theme/colors/circuitcenter.json?raw';
+import pin from '../../PIN.json';
+
+const T18B = '01c552e7a89beca3ebd9907707c0fb760b7c8ebe';
+const T18C = '3e9e31697fd53a54992158bce242b3f94bce4a8e';
 import { KEPT_KEY, KEPT_THEME } from '../../theme/kept';
 import { seedsFor } from '../../theme/seeds';
 import { KICAD_CONFIG_DIR } from '../../loader/src/wasm/constants';
@@ -36,7 +42,7 @@ beforeEach(() => {
     }
   });
 });
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => { vi.unstubAllGlobals(); THEME_ENGINE.build = ENGINE_PCBJAM; });
 
 function fakePage(search: string) {
   const listeners = new Map<string, Set<(e: unknown) => void>>();
@@ -144,14 +150,32 @@ describe('theme-i in the registry', () => {
     expect(seedsFor('night').colorTheme).toBe(PALETTE_THEME);
   });
 
-  it('lists theme in a sch and a pcb frame only, and only on an engine with both exports', () => {
+  it('lists theme in a sch and a pcb frame on engine build T18b, in every frame from T18c, and only on an engine with both exports', () => {
     const both = { kicadSetColorTheme: () => {}, kicadCollabBusy: () => false };
+    for (const frame of ['sch', 'pcb']) {
+      expect(switchesIn(both, frame, T18B)).toBe(true);
+      expect(switchesIn(both, frame, T18C)).toBe(true);
+    }
+    for (const frame of ['symedit', 'fpedit', 'ds']) {
+      expect(switchesIn(both, frame, T18B)).toBe(false);
+      expect(switchesIn(both, frame, T18C)).toBe(true);
+      // A build in neither list is taken as one that switches the schematic and board editors only.
+      expect(switchesIn(both, frame, 'f00d')).toBe(false);
+      expect(switchesIn(both, frame, '')).toBe(false);
+    }
+    expect(switchesIn({ kicadCollabBusy: () => false }, 'sch', T18C)).toBe(false);
+    THEME_ENGINE.build = T18B;
     expect(unit.caps!(both, 'sch')).toEqual(['theme']);
-    expect(unit.caps!(both, 'pcb')).toEqual(['theme']);
-    for (const frame of ['symedit', 'fpedit', 'ds'] as Frame[]) expect(unit.caps!(both, frame)).toEqual([]);
-    expect(unit.caps!({ kicadCollabBusy: () => false }, 'sch')).toEqual([]);
-    expect(switchesIn(both, 'pcb')).toBe(true);
-    expect(switchesIn(both, 'fpedit')).toBe(false);
+    expect(unit.caps!(both, 'fpedit' as Frame)).toEqual([]);
+    THEME_ENGINE.build = T18C;
+    for (const frame of ['sch', 'pcb', 'symedit', 'fpedit', 'ds'] as Frame[]) expect(unit.caps!(both, frame)).toEqual(['theme']);
+  });
+
+  it('reads the build compiled in from PIN.json, which is in one of the two lists', () => {
+    expect(ENGINE_PCBJAM).toBe((pin as { engine: { build?: { pcbjam?: string } } }).engine.build?.pcbjam ?? '');
+    expect([...EVERY_FRAME_BUILDS, ...SCH_PCB_BUILDS]).toContain(ENGINE_PCBJAM);
+    expect(EVERY_FRAME_BUILDS).toContain(T18C);
+    expect(SCH_PCB_BUILDS).toContain(T18B);
   });
 });
 
@@ -298,12 +322,51 @@ describe('theme.set, the kept colors', () => {
     expect([...g.files.keys()]).toEqual([`${COLORS}/${LIVE_STEM}1.json`]);
   });
 
-  it('answers theme_frame where the engine does not switch, keeping nothing', async () => {
+  it('answers theme_frame where the engine does not switch (build T18b), keeping nothing', async () => {
+    THEME_ENGINE.build = T18B;
     for (const frame of ['symedit', 'fpedit', 'ds']) {
       const f = fakeCtx({ frame });
       expect(await themeSet({ colors: THEME('rgb(1, 1, 1)') }, f.ctx)).toEqual({ ok: false, code: 'theme_frame', message: `the canvas colors of a ${frame} frame change at its next boot` });
       expect(f.calls).toEqual([]);
       expect(store.has(KEPT_KEY)).toBe(false);
+    }
+  });
+});
+
+describe('theme.set in a drawing sheet editor frame (build T18c)', () => {
+  it('lays the sheet color over the colors received, and null brings back the sheet theme over the palette under a fresh name', async () => {
+    THEME_ENGINE.build = T18C;
+    const f = fakeCtx({ frame: 'ds' });
+    const white = THEME('rgb(255, 255, 255)');
+    expect(await themeSet({ colors: white }, f.ctx)).toEqual({ ok: true, result: { ok: true } });
+    expect(f.calls).toEqual([`switch ${LIVE_STEM}1`, 'idle']);
+    expect(f.files.get(`${COLORS}/${LIVE_STEM}1.json`)).toBe(sheetThemeOf(themeFileText(white)));
+    expect(await themeSet({ colors: null }, f.ctx)).toEqual({ ok: true, result: { ok: true } });
+    expect(f.calls.slice(2)).toEqual([`switch ${LIVE_STEM}2`, 'idle']);
+    expect([...f.files.keys()]).toEqual([`${COLORS}/${LIVE_STEM}2.json`]);
+    expect(f.files.get(`${COLORS}/${LIVE_STEM}2.json`)).toBe(sheetThemeOf(paletteText));
+    // The sheet palette shows: null again changes nothing.
+    expect(await themeSet({ colors: null }, f.ctx)).toEqual({ ok: true, result: { ok: true } });
+    expect(f.calls).toHaveLength(4);
+  });
+
+  it('a ds frame that booted in the kept colors (under the seeded sheet theme name) switches to the sheet palette on null, never to that name', async () => {
+    THEME_ENGINE.build = T18C;
+    const f = fakeCtx({ frame: 'ds', booted: true });
+    expect(await themeSet({ colors: null }, f.ctx)).toEqual({ ok: true, result: { ok: true } });
+    expect(f.calls).toEqual([`switch ${LIVE_STEM}1`, 'idle']);
+    expect(f.calls).not.toContain(`switch ${SHEET_THEME}`);
+    // The kept file the boot seeded is not the frame's: it stays.
+    expect(f.files.has(`${COLORS}/${KEPT_THEME}.json`)).toBe(true);
+  });
+
+  it('the symbol and footprint editors take a set and null as the schematic does', async () => {
+    THEME_ENGINE.build = T18C;
+    for (const frame of ['symedit', 'fpedit']) {
+      const f = fakeCtx({ frame });
+      expect(await themeSet({ colors: THEME('rgb(255, 255, 255)') }, f.ctx)).toEqual({ ok: true, result: { ok: true } });
+      expect(await themeSet({ colors: null }, f.ctx)).toEqual({ ok: true, result: { ok: true } });
+      expect(f.calls).toEqual([`switch ${LIVE_STEM}1`, 'idle', `switch ${PALETTE_THEME}`, 'idle']);
     }
   });
 });
@@ -332,7 +395,8 @@ describe('theme.set through the responder', () => {
     } finally { t.r.close(); }
   });
 
-  it('before ev.ready it answers not_ready, and in a symedit frame theme_frame', async () => {
+  it('before ev.ready it answers not_ready, and in a symedit frame theme_frame on build T18b', async () => {
+    THEME_ENGINE.build = T18B;
     const early = await boot('sch', ENGINE, false);
     try {
       expect(await early.ask(1, 'theme.set', { colors: null })).toEqual({ id: 1, ok: false, error: { code: 'not_ready', message: 'theme.set' } });
