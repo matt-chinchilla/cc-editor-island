@@ -231,3 +231,33 @@ describe('verifyStore', () => {
     expect(() => bm.verifyStore(dir, () => {})).toThrow(/gz does not hold/);
   });
 });
+
+describe('shippedSums', () => {
+  it('lists every file the edge serves and no raw STEP file', async () => {
+    const root = tmp();
+    const out = join(root, 'out');
+    await bm.run({ tag: TAG, dryRun: false, only: null, out }, deps(gitlab(), root, () => {}));
+    const dir = join(out, TAG);
+    const all = readFileSync(join(dir, 'SHA256SUMS'), 'utf8').trim().split('\n');
+    const kept = bm.shippedSums(dir);
+    const paths = kept.map((l: string) => l.slice(66));
+    expect(paths.some((p: string) => /\.(step|stp)$/i.test(p))).toBe(false);
+    expect(paths).toEqual(expect.arrayContaining([
+      'Resistor_SMD.3dshapes/R_0603_1608Metric.step.gz',
+      'Resistor_SMD.3dshapes/index.json.gz',
+      'LICENSE.md', 'LICENSE.md.gz', 'store.json',
+    ]));
+    expect(kept.length).toBe(all.length - 3);
+    for (const line of kept) expect(all).toContain(line);
+  });
+
+  it('refuses a list where a STEP file has no gzip twin', async () => {
+    const root = tmp();
+    const out = join(root, 'out');
+    await bm.run({ tag: TAG, dryRun: false, only: null, out }, deps(gitlab(), root, () => {}));
+    const dir = join(out, TAG);
+    const sums = readFileSync(join(dir, 'SHA256SUMS'), 'utf8').split('\n').filter((l) => !l.endsWith('R_0805_2012Metric.step.gz'));
+    writeFileSync(join(dir, 'SHA256SUMS'), sums.join('\n'));
+    expect(() => bm.shippedSums(dir)).toThrow(/R_0805_2012Metric\.step has no gzip twin/);
+  });
+});

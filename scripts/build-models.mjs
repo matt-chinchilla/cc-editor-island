@@ -12,6 +12,7 @@
 //
 //   node scripts/build-models.mjs <tag> [--dry-run] [--only <p,...>] [--out <dir>]
 //   node scripts/build-models.mjs --verify <dir>/<tag>
+//   node scripts/build-models.mjs --ship-sums <dir>/<tag>   (what ships, on stdout)
 //
 // --only takes store paths (Resistor_SMD.3dshapes/R_0603_1608Metric.step),
 // model lines as a board writes them (${KICAD10_3DMODEL_DIR}/...), or a
@@ -43,6 +44,7 @@ const CONCURRENCY = 8;
 export const USAGE = [
   "usage: node scripts/build-models.mjs <tag> [--dry-run] [--only <p,...>] [--out <dir>]",
   "       node scripts/build-models.mjs --verify <dir>/<tag>",
+  "       node scripts/build-models.mjs --ship-sums <dir>/<tag>",
 ].join("\n");
 
 export class Refusal extends Error {}
@@ -419,7 +421,43 @@ export function verifyStore(tagDir, log = (m) => console.log(m)) {
   return store;
 }
 
+/**
+ * The checksum list of what ships: the store's SHA256SUMS lines less every raw
+ * STEP file. The edge serves /models/ with gzip_static always (and gunzip for a
+ * client that takes no gzip), so a .step address is answered from its .gz twin
+ * and the raw file is never read there. Every dropped STEP file must have its
+ * twin listed. Read from a store verifyStore has passed; answers the lines in
+ * the store's order.
+ */
+export function shippedSums(tagDir) {
+  const lines = readFileSync(join(tagDir, "SHA256SUMS"), "utf8").split("\n").filter(Boolean);
+  const paths = new Set(lines.map((l) => l.slice(66)));
+  const kept = [];
+  for (const line of lines) {
+    const p = line.slice(66);
+    if (STEP_RE.test(p)) {
+      if (!paths.has(`${p}.gz`)) throw new Refusal(`${tagDir}: ${p} has no gzip twin in SHA256SUMS`);
+      continue;
+    }
+    kept.push(line);
+  }
+  for (const need of ["store.json", "LICENSE.md.gz"]) if (!paths.has(need)) throw new Refusal(`${tagDir}: SHA256SUMS does not list ${need}`);
+  return kept;
+}
+
 async function main() {
+  // --ship-sums <dir>/<tag>: the shipped checksum list on stdout (scripts/ship-models.sh).
+  const argv = process.argv.slice(2);
+  if (argv[0] === "--ship-sums") {
+    if (argv.length !== 2) { console.error(`--ship-sums takes a store directory and nothing else\n${USAGE}`); process.exit(2); }
+    try {
+      process.stdout.write(shippedSums(argv[1]).join("\n") + "\n");
+    } catch (e) {
+      console.error(e instanceof Refusal ? `refused: ${e.message}` : e instanceof Error ? e.message : String(e));
+      process.exit(1);
+    }
+    return;
+  }
   let a;
   try {
     a = parseArgs(process.argv.slice(2));

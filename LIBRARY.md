@@ -303,7 +303,10 @@ the repository's `LICENSE.md` ships beside them.
 
 Unlike the mirror, models are one file each: the engine asks for one model at a time, only the ones
 a board names, and the set is far too large to bundle. A folder's `index.json` is served from its
-`.gz` alone (`gzip_static always`); every other file has both forms (`gzip_static on`).
+`.gz` alone; a build keeps a STEP file and the license in both forms, and the box holds a STEP
+file's `.gz` alone (Ship, below). The location is `gzip_static always` with `gunzip`: a `.gz` twin
+answers its address whatever the client asks, unpacked for a client that takes no gzip, and a file
+with no twin (`store.json`) is sent as it is.
 `store.json` is `{ schema: 1, tag, commit, full, files, bytes, gzBytes }` (`commit` the
 kicad-packages3D commit of the tag, `full` false for an `--only` build). Served immutable, logs off.
 
@@ -320,7 +323,14 @@ kicad-packages3D commit of the tag, `full` false for an `--only` build). Served 
   1.5 GB gzipped is said: hosting it is the owner's call.
 - **Ship.** `npm run ship:models <tag> -- --dry-run`, then without it (`scripts/ship-models.sh`,
   the owner's): the whole set only (`full`), verified, to `/opt/circuits-com/editor/models/<tag>/`
-  through `.incoming-<tag>` and one rename. A tag is never rewritten.
+  through `.incoming-<tag>` and one rename. A tag is never rewritten. Only what the edge serves
+  ships: `/models/` is `gzip_static always` with `gunzip`, so a `.step` address is answered from its
+  `.gz` twin and the raw file is never read there. The box gets the `.gz` twins, the folder
+  indexes, `LICENSE.md` and its twin, `store.json`, and a `SHA256SUMS` listing exactly those files
+  (`build-models.mjs --ship-sums <dir>/<tag>`, the build's own list less every raw STEP line);
+  the box checks the upload against it and refuses a stray file or a raw STEP file, and the ship
+  refuses before uploading when it would leave the box's disk under 2 GB free. The local build keeps
+  both forms.
 - **The client** (`loader/src/wasm/libs/model-store.ts`). The engine asks through
   `kicadLibs.request("ensure", "", <ref>, "model3d")` (PCBJam's `PCBJAM_3D::EnsureModelFile`, in
   the engine since run 13, after KiCad's own resolver found nothing); the provider

@@ -14,6 +14,14 @@
 # (store.json full), and a set over the 1.5 GB hosting bound ships only with
 # --over-bound, the owner's word on hosting it.
 #
+# Only what the edge serves ships. /models/ is served with gzip_static always
+# (and gunzip for a client that takes no gzip), so a .step address is answered
+# from its .gz twin and a raw STEP file is never read on the box: the ship
+# sends the .gz twins, the folder indexes, LICENSE.md and its twin, store.json,
+# and a SHA256SUMS that lists exactly those files (build-models.mjs
+# --ship-sums), and the box refuses anything else. It also refuses when the
+# upload would leave the box's disk under 2 GB free.
+#
 #   bash scripts/ship-models.sh <tag> --dry-run   run every local check, print the ship as "DRY: ..."
 #   bash scripts/ship-models.sh <tag>             check, then ship
 set -euo pipefail
@@ -27,6 +35,7 @@ DEST=/opt/circuits-com/editor/models
 INSTANCE_ID=i-0d456bd12719e2176
 OS_USER=ec2-user
 BOUND=1500000000
+FLOOR=2000000000
 
 USAGE="usage: bash scripts/ship-models.sh <tag> [--dry-run] [--over-bound]"
 DRY=0
@@ -78,6 +87,18 @@ if [ "$GZ" -gt "$BOUND" ] && [ "$OVER" != 1 ]; then
   refuse "the set is $GZ bytes gzipped, over the $BOUND bound; hosting it is the owner's call (--over-bound)"
 fi
 
+# What ships: the store's SHA256SUMS less every raw STEP file, the files it
+# lists, and their bytes. Written to a local scratch folder, gone on exit.
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+node scripts/build-models.mjs --ship-sums "$SRC" >"$WORK/SHA256SUMS" || refuse "$SRC has no shippable checksum list"
+cut -c67- "$WORK/SHA256SUMS" >"$WORK/files"
+if grep -qiE '\.(step|stp)$' "$WORK/files"; then refuse "the shipped list holds a raw STEP file"; fi
+SHIP_FILES=$(wc -l <"$WORK/files")
+SHIP_BYTES=$( (cd "$SRC" && tr '\n' '\0' <"$WORK/files" | xargs -0 stat -c %s) | awk '{s+=$1} END {print s+0}')
+SHIP_BYTES=$((SHIP_BYTES + $(stat -c %s "$WORK/SHA256SUMS")))
+echo "ships $SHIP_FILES files and SHA256SUMS, $SHIP_BYTES bytes (no raw STEP file: the edge serves the .gz twins)"
+
 # ---------------------------------------------------------------- the ship
 # The instance connect key lives 60 seconds, so it is pushed before each connection.
 push_key() {
@@ -92,37 +113,54 @@ push_key() {
 
 on_box() {
   local script=$1
+  shift
   if [ "$DRY" = 1 ]; then
-    run ssh "$HOST" bash -s -- "$DEST" "$TAG"
+    run ssh "$HOST" bash -s -- "$DEST" "$TAG" "$@"
     echo "  (its stdin, the script run on the box:)"
     sed 's/^/  | /' <<<"$script"
   else
-    ssh "$HOST" bash -s -- "$DEST" "$TAG" <<<"$script"
+    ssh "$HOST" bash -s -- "$DEST" "$TAG" "$@" <<<"$script"
   fi
 }
 
-# 1. Refuse a tag the box already holds, then make the staging directory.
+# 1. Refuse a tag the box already holds, refuse an upload that would leave the
+#    disk under the floor, then make the staging directory.
 PREPARE=$(cat <<'BOX'
 set -euo pipefail
 dest=$1
 tag=$2
+need=$3
+floor=$4
 if [ -e "$dest/$tag" ]; then
   echo "refused: $dest/$tag already exists on the box; a model store is never rewritten" >&2
   exit 1
 fi
+staged=0
 if [ -e "$dest/.incoming-$tag" ]; then
   echo "$dest/.incoming-$tag is left from an earlier ship; uploading into it again"
+  staged=$(du -sb "$dest/.incoming-$tag" | cut -f1)
 fi
+at=$dest
+while [ ! -d "$at" ]; do at=$(dirname "$at"); done
+avail=$(df -B1 --output=avail "$at" | tail -n 1 | tr -d ' ')
+left=$((avail - need + staged))
+if [ "$left" -lt "$floor" ]; then
+  echo "refused: $at has $avail bytes free; the upload ($need bytes, $staged already staged) would leave $left, under the $floor floor" >&2
+  exit 1
+fi
+echo "$at has $avail bytes free; $left left after the upload"
 mkdir -p "$dest/.incoming-$tag"
 BOX
 )
 push_key
-on_box "$PREPARE"
+on_box "$PREPARE" "$SHIP_BYTES" "$FLOOR"
 
-# 2. The files, into the staging directory. No --delete: nothing on the box is
-#    removed; a stray file there makes step 3 refuse.
+# 2. The shipped files, into the staging directory, then their SHA256SUMS. No
+#    --delete: nothing on the box is removed; a stray file there makes step 3 refuse.
 push_key
-run rsync -a --chmod=D755,F644 "$SRC/" "$HOST:$DEST/.incoming-$TAG/"
+run rsync -a --chmod=D755,F644 --files-from="$WORK/files" "$SRC/" "$HOST:$DEST/.incoming-$TAG/"
+push_key
+run rsync -a --chmod=F644 "$WORK/SHA256SUMS" "$HOST:$DEST/.incoming-$TAG/SHA256SUMS"
 
 # 3. Check the staged copy against its own SHA256SUMS, then rename it into
 #    place. mv -T --no-clobber never replaces a directory that appeared since step 1.
@@ -140,6 +178,8 @@ sha256sum -c --quiet --strict SHA256SUMS || refuse "the upload does not match it
 listed=$(cut -c67- SHA256SUMS | LC_ALL=C sort)
 present=$(find . -mindepth 1 -type f -printf '%P\n' | grep -vx 'SHA256SUMS' | LC_ALL=C sort)
 [ "$listed" = "$present" ] || refuse "the upload holds files SHA256SUMS does not list, or misses one it does"
+! printf '%s\n' "$listed" | grep -qiE '\.(step|stp)$' || refuse "the upload holds a raw STEP file; only the .gz twins ship"
+[ -f store.json ] && [ -f LICENSE.md.gz ] || refuse "store.json or LICENSE.md.gz is missing from the upload"
 [ -z "$(find . -mindepth 1 ! -type f ! -type d -print -quit)" ] || refuse "the upload holds something that is not a regular file or a folder"
 cd "$dest"
 mv -T --no-clobber "$stage" "$final" || true
@@ -152,4 +192,5 @@ on_box "$FINISH"
 
 # 4. What the world now sees.
 run curl -sI "https://editor.circuitcenter.ai/models/$TAG/Resistor_SMD.3dshapes/index.json"
+run curl -sI -H "Accept-Encoding: gzip" "https://editor.circuitcenter.ai/models/$TAG/Resistor_SMD.3dshapes/R_0603_1608Metric.step"
 if [ "$DRY" = 1 ]; then echo "dry run done"; fi
