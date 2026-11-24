@@ -19,8 +19,8 @@
     "toolTag": "v0.2.3",
     "build": {
       "recipe": "cc/main",
-      "pcbjam": "4c18077d2432d4f4e9f3c50bda4c960e39adc915",
-      "kicad": "9cfdc023ba750623979cae1ac9bfad43c2df8c6a",
+      "pcbjam": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe",
+      "kicad": "81df2ba207b7281ef8e2a462b823026d4321768a",
       "wxwidgets": "76a61cc0d65944ec6e4eb6c40b78bd4d5388ced1",
       "shared": "7791275bdfbf54e1500e303121dacaa2c3fd7d00",
       "patches": [
@@ -79,55 +79,55 @@
     },
     "files": {
       "kicad_editor.js": {
-        "sha256": "b1ddd84998f23bac4f07aad34c2dca2d0ae5a2883ad54a85f32cc101acb62c92",
+        "sha256": "690cb807ea45bf9321f13f3b153fc26c7e95ac37f2b887a9bde88074be86a47a",
         "bytes": 494010,
-        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
+        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
       },
       "kicad_editor.wasm": {
-        "sha256": "1ea8f5341427799f7980d593caa3e237f2e1bb5ccf782faffc8f9df20fbc4002",
-        "bytes": 65885530,
-        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
+        "sha256": "1fc408da2f762a9506bd2fed61a0fb75c8ad86e0339d23c3e2e3df951bf8eeaf",
+        "bytes": 65892859,
+        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
       },
       "wx.js": {
         "sha256": "42d6b547f9a024f187f1b7812b64a3f76ca322d35393531340cb316ff88da351",
         "bytes": 79808,
-        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
+        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
       },
       "wx-dom.js": {
         "sha256": "7edabd5571c9f2fd0ea1acf7005fb3628f2e3cf6b8f430f8e473c328fb042a10",
         "bytes": 68699,
-        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
+        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
       },
       "images.tar.gz": {
-        "sha256": "f82550dca11f6f7139afe3165e59a03486585114a086b984bafb2161e9becba7",
-        "bytes": 5369945,
-        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
+        "sha256": "a0edaf8d100439a14a48628c828d52750ace1cc0919c1dc3aa6bb8f2c1f77eb6",
+        "bytes": 5369240,
+        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
       },
       "ngspice_service.js": {
         "sha256": "bbc8828928d97cfe14a6a3f98020fecf02d874b326efcd1cd8c5a47bcfdbd739",
         "bytes": 117051,
-        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
+        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
       },
       "ngspice_service.wasm": {
         "sha256": "11f878dcb08b399b592b21decd6903c479a8627d58140b969cb328781e9fc6e1",
         "bytes": 5666867,
-        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
+        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
       },
       "occ_service.js": {
-        "sha256": "05f61e02ee71eb35c21d383cf18816e9c978b96f9c4eb91b8c5cc307d84b39c4",
+        "sha256": "6846de11cd947cd22fe020bc257f5a8211e1c2cb62087dab10b63557a262e73d",
         "bytes": 267309,
-        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
+        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
       },
       "occ_service.wasm": {
-        "sha256": "97450d4b8c6b6ff5c54079445c9231fc6a52c2386e242959f9815ab6c46d3063",
-        "bytes": 60933609,
-        "source": "4c18077d2432d4f4e9f3c50bda4c960e39adc915"
+        "sha256": "1f734d0eeb267605bf66b52527897432cab6322911c11c91f736f6147d68120e",
+        "bytes": 60934783,
+        "source": "01c552e7a89beca3ebd9907707c0fb760b7c8ebe"
       }
     }
   },
   "icons": {
-    "stockArchiveSha256": "f82550dca11f6f7139afe3165e59a03486585114a086b984bafb2161e9becba7",
-    "repackedSha256": "e75bce99bbbf127d877b5db2346bb20eb9578dcf2968bca5ed9384eb254287f0",
+    "stockArchiveSha256": "a0edaf8d100439a14a48628c828d52750ace1cc0919c1dc3aa6bb8f2c1f77eb6",
+    "repackedSha256": "7c39fb2a3a02c94e862375b1c5ed0846466ce7016a27967126f23cdb692b7ce4",
     "inputs": {
       "theme/icons/src/add_component.svg": "d8d2dfa56f179658a3b2bd458090683161f188ad13d84d89fdb82f1a0f2a12e6",
       "theme/icons/src/add_line.svg": "64db6c023211cd897ea1f3613fcc4d338bf86fbca3086cf832bf3bf25dd516f0",
