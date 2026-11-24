@@ -302,6 +302,9 @@ test.describe('engine run 15: the placement asks and the selection filter, no wi
     expect(await request(page, 'prompt.pick', { token: p.token, kind: 'item' })).toEqual({});
     await page.waitForTimeout(400);
     const c = await canvasCenter(page);
+    // KiCad's picker reads the item under the pointer from its last motion: move onto U1 first, as a reader does.
+    await page.mouse.move(c.x - 20, c.y - 20);
+    await page.mouse.move(c.x, c.y, { steps: 5 });
     await page.mouse.click(c.x, c.y);
     const rec = await updateOf(page, p, updates0, 'the picked item');
     const anchor = rec.anchor as Rec;

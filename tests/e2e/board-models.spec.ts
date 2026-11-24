@@ -45,6 +45,8 @@ const timed = async (page: Page, op: string, args?: unknown): Promise<{ ms: numb
   return { ms: Date.now() - t0, result };
 };
 const footprints = async (page: Page): Promise<Footprint[]> => (await request(page, 'board.models', {})).footprints as Footprint[];
+/** A board's footprints by uuid: KiCad's undo may put a modified footprint back at another place in the board's list. */
+const byUuid = (fps: Footprint[]): Footprint[] => [...fps].sort((a, b) => (a.uuid < b.uuid ? -1 : a.uuid > b.uuid ? 1 : 0));
 const withoutFound = (l: Line): Omit<Line, 'found'> => ({ path: l.path, offset: l.offset, rotate: l.rotate, scale: l.scale, opacity: l.opacity, show: l.show });
 
 /** Boots a pcb frame on `fixture` and answers ev.ready's caps and the island frame (null where Playwright cannot reach it). */
@@ -75,8 +77,12 @@ async function savedBoard(page: Page): Promise<string> {
   const n = (await of(page, 'ev.saved')).length;
   await request(page, 'project.save');
   await expect.poll(async () => (await of(page, 'ev.saved')).slice(n).some((e) => e.path?.endsWith('.kicad_pcb')), { timeout: 10_000 }).toBe(true);
-  const ev = (await of(page, 'ev.saved')).slice(n).find((e) => e.path?.endsWith('.kicad_pcb'));
-  return page.evaluate((b) => new TextDecoder().decode(new Uint8Array(Object.values(b as Record<string, number>))), ev?.bytes as unknown);
+  // The harness keeps each path's latest saved bytes whole in __saved (its __events carry their length and text only).
+  const path = (await of(page, 'ev.saved')).slice(n).find((e) => e.path?.endsWith('.kicad_pcb'))?.path ?? '';
+  return page.evaluate((p) => {
+    const bytes = (window as unknown as { __saved: Record<string, Uint8Array | undefined> }).__saved[p];
+    return bytes == null ? '' : new TextDecoder().decode(bytes);
+  }, path);
 }
 
 test('run 14 or 15: boardModels follows the three exports; without them each op answers unsupported naming kicadBoardModels and KiCad keeps its two actions', async ({ page, browserName }) => {
@@ -129,7 +135,7 @@ test('run 15: Glasgow reads 272 footprints; a set over 40 is one undo step one u
 
   expect(await request(page, 'key.press', UNDO)).toEqual({});
   await expect.poll(() => undoDepth(frame!), { timeout: 5_000 }).toBe(depth0);
-  expect(await footprints(page)).toEqual(before);
+  expect(byUuid(await footprints(page))).toEqual(byUuid(before));
 });
 
 test('run 15: models3d-small keeps its three lines inside the board; the saved text holds them; a line already inside is refused by name', async ({ page, browserName }) => {

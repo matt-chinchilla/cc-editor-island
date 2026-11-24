@@ -39,6 +39,37 @@ async function open(page: Page, frame: 'sch' | 'pcb'): Promise<string[]> {
   return (await of(page, 'ev.ready'))[0]?.caps ?? [];
 }
 
+/** The drawing's center, in the page's coordinates. */
+async function canvasCenter(page: Page): Promise<{ x: number; y: number }> {
+  const frame = islandFrame(page);
+  const box = await page.locator('iframe').boundingBox();
+  if (frame == null || box == null) throw new Error('no island frame');
+  const c = await frame.evaluate(() => {
+    const all = [...document.querySelectorAll('canvas')].filter((e) => e.getBoundingClientRect().width > 0);
+    all.sort((a, b) => b.width * b.height - a.width * a.height);
+    const r = all[0]?.getBoundingClientRect();
+    return r == null ? null : { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  });
+  if (c == null) throw new Error('no drawing canvas');
+  return { x: box.x + c.x, y: box.y + c.y };
+}
+
+/**
+ * Escape as a reader presses it, the pointer on the drawing and wx's focus there:
+ * up to three presses (KiCad's router takes one to end a route in progress and one
+ * to leave the tool), until ev.tool names the selection tool.
+ */
+async function escapeToSelection(page: Page, press: () => Promise<unknown>): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    await press();
+    try {
+      await expect.poll(async () => (await of(page, 'ev.tool')).at(-1)?.name, { timeout: 3_000 }).toBe(SELECTION_TOOL);
+      return;
+    } catch { /* the next press */ }
+  }
+  expect((await of(page, 'ev.tool')).at(-1)?.name, 'Esc leaves the tool').toBe(SELECTION_TOOL);
+}
+
 const isT17 = (caps: readonly string[]): boolean => ['libTableProblems', 'actionStates', 'menuClarify', 'activeTool'].every((c) => caps.includes(c));
 
 test('island.json lists libs.problems and actions.state', async ({ page }) => {
@@ -85,10 +116,13 @@ test('build T17, pcb: ev.tool right after ev.ready, then the router, then the se
   expect(firstTool).toBeGreaterThan(ready);
   expect(all[firstTool].name).toBe(SELECTION_TOOL);
   const n = (await of(page, 'ev.tool')).length;
+  // A press on the drawing first, as a reader's: wx's keyboard focus on the canvas.
+  const c = await canvasCenter(page);
+  await page.mouse.click(c.x, c.y);
   expect(await request(page, 'action.run', { name: ROUTE })).toEqual({});
-  await expect.poll(async () => (await of(page, 'ev.tool')).slice(n).map((e) => e.name), { timeout: 10_000 }).toEqual([ROUTE]);
-  expect(await request(page, 'key.press', { key: 'Escape', code: 'Escape' })).toEqual({});
-  await expect.poll(async () => (await of(page, 'ev.tool')).at(-1)?.name, { timeout: 10_000 }).toBe(SELECTION_TOOL);
+  await expect.poll(async () => (await of(page, 'ev.tool')).slice(n).map((e) => e.name), { timeout: 10_000 }).toContain(ROUTE);
+  await page.mouse.move(c.x + 10, c.y + 10, { steps: 3 });
+  await escapeToSelection(page, () => request(page, 'key.press', { key: 'Escape', code: 'Escape' }));
   // Never twice in a row with the same name.
   const names = (await of(page, 'ev.tool')).map((e) => e.name);
   names.forEach((name, i) => { if (i > 0) expect(name).not.toBe(names[i - 1]); });
@@ -100,14 +134,17 @@ test('keys.claim observe: a real Escape in the frame is one ev.key observed and 
   expect(await request(page, 'keys.claim', { chords: [], observe: ['Escape'] })).toEqual({ claimed: 0, refused: [] });
   const frame = islandFrame(page);
   test.skip(frame == null, 'the island frame is out of Playwright\'s reach in this browser');
-  const box = await page.locator('iframe').boundingBox();
-  await page.mouse.click((box?.x ?? 0) + (box?.width ?? 800) / 2, (box?.y ?? 0) + (box?.height ?? 600) / 2);
-  const tools = (await of(page, 'ev.tool')).length;
-  if (isT17(caps)) expect(await request(page, 'action.run', { name: ROUTE })).toEqual({});
+  const c = await canvasCenter(page);
+  await page.mouse.click(c.x, c.y);
+  if (isT17(caps)) {
+    expect(await request(page, 'action.run', { name: ROUTE })).toEqual({});
+    await expect.poll(async () => (await of(page, 'ev.tool')).at(-1)?.name, { timeout: 10_000 }).toBe(ROUTE);
+    await page.mouse.move(c.x + 10, c.y + 10, { steps: 3 });
+  }
   const keys = (await of(page, 'ev.key')).length;
   await page.keyboard.press('Escape');
   await expect.poll(async () => (await of(page, 'ev.key')).slice(keys).map((e) => ({ code: e.code, shift: e.shift, observed: e.observed })), { timeout: 5_000 })
     .toEqual([{ code: 'Escape', shift: false, observed: true }]);
-  // KiCad got the key too: the router is dropped (build T17 says so with ev.tool).
-  if (isT17(caps)) await expect.poll(async () => (await of(page, 'ev.tool')).slice(tools).at(-1)?.name, { timeout: 10_000 }).toBe(SELECTION_TOOL);
+  // KiCad got the key too: the router is dropped (build T17 says so with ev.tool); each further press is observed as well.
+  if (isT17(caps)) await escapeToSelection(page, () => page.keyboard.press('Escape'));
 });

@@ -84,6 +84,18 @@ async function askFor(page: Page, act: () => Promise<unknown>, what: string): Pr
   expect((await of(page, 'ev.menu')).length, `${what} opens no window`).toBe(menus);
   return strip((await of(page, 'ev.fpedit')).at(-1) as Ev);
 }
+/** Does `act` and sees no ev.fpedit within a second, the undo depth unchanged (a tool start that primes nothing, build T17). */
+async function noAskFor(page: Page, act: () => Promise<unknown>, what: string): Promise<void> {
+  const n = (await of(page, 'ev.fpedit')).length;
+  const d = await depth(page);
+  await act();
+  await page.waitForTimeout(1_000);
+  expect((await of(page, 'ev.fpedit')).length, `${what} asks nothing`).toBe(n);
+  expect(await depth(page), `${what} places nothing`).toBe(d);
+}
+/** Engine build T17 (item 6) primes no text or barcode at the pointer when the tool starts: fpeditNotice is the build's marker in this frame. */
+const primesNothing = async (page: Page): Promise<boolean> => ((await of(page, 'ev.ready'))[0]?.caps ?? []).includes('fpeditNotice');
+
 /**
  * The footprint editor's selection as the engine holds it (kicadFpEditSelection,
  * the read behind ev.selected). Read straight from the engine: in an fpedit
@@ -151,16 +163,20 @@ test('run 15: E on a pad, a field, a shape and a text asks its kind with its uui
   // A new text from KiCad's text tool asks with its new uuid, placed reading "Text"; E on it then asks text.
   // KiCad's own tool start (immediate actions, as RULINGS 29d) places one text at the cursor and asks for
   // it; each press then places and asks for one more: two texts, two asks, two uuids.
+  // Engine build T17 (item 6): the start primes nothing; the first press places the one text and asks.
   const [x, y] = await emptyPoint(page, frame);
-  const started = await askFor(page, () => run(frame, 'pcbnew.InteractiveDrawing.text'), 'the text tool\'s start');
-  expect(started).toMatchObject({ type: 'ev.fpedit', ask: 'text', isNew: true });
+  const t17 = await primesNothing(page);
+  let started: Omit<Ev, 'at'> | null = null;
+  if (t17) await noAskFor(page, () => run(frame, 'pcbnew.InteractiveDrawing.text'), 'the text tool\'s start');
+  else started = await askFor(page, () => run(frame, 'pcbnew.InteractiveDrawing.text'), 'the text tool\'s start');
+  if (started != null) expect(started).toMatchObject({ type: 'ev.fpedit', ask: 'text', isNew: true });
   const made = await askFor(page, () => page.mouse.click(x, y), 'a press of the text tool');
   expect(made).toMatchObject({ type: 'ev.fpedit', ask: 'text', isNew: true });
   expect(made.uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-  expect(made.uuid).not.toBe(started.uuid);
+  if (started != null) expect(made.uuid).not.toBe(started.uuid);
   await request(page, 'key.press', ESC);
   expect((await items(page, { uuids: [made.uuid as string] }))[0]).toMatchObject({ kind: 'text', text: 'Text' });
-  expect(await depth(page)).toBe(d0 + 2);
+  expect(await depth(page)).toBe(d0 + (t17 ? 1 : 2));
   await selectOnly(page, made.uuid as string);
   expect(await askFor(page, () => request(page, 'key.press', E), 'E on the new text')).toEqual({ type: 'ev.fpedit', ask: 'text', uuid: made.uuid, isNew: false });
 });
@@ -209,13 +225,17 @@ test('run 15: the footprint, pad defaults, pad table, numbering, push pad, wizar
   expect(table).toMatchObject({ ask: 'table', isNew: true });
   await request(page, 'key.press', ESC);
   // The barcode tool's start places one barcode at the cursor and asks (KiCad's immediate actions), then the press one more.
-  const barcodeStart = await askFor(page, () => run(frame, 'pcbnew.InteractiveDrawing.barcode'), 'the barcode tool\'s start');
-  expect(barcodeStart).toMatchObject({ ask: 'barcode', isNew: true });
+  // Engine build T17 (item 6): the start primes nothing; the press places one and asks.
+  const t17 = await primesNothing(page);
+  let barcodeStart: Omit<Ev, 'at'> | null = null;
+  if (t17) await noAskFor(page, () => run(frame, 'pcbnew.InteractiveDrawing.barcode'), 'the barcode tool\'s start');
+  else barcodeStart = await askFor(page, () => run(frame, 'pcbnew.InteractiveDrawing.barcode'), 'the barcode tool\'s start');
+  if (barcodeStart != null) expect(barcodeStart).toMatchObject({ ask: 'barcode', isNew: true });
   const barcode = await askFor(page, () => page.mouse.click(x - 120, y), 'a press of the barcode tool');
   expect(barcode).toMatchObject({ ask: 'barcode', isNew: true });
-  expect(barcode.uuid).not.toBe(barcodeStart.uuid);
+  if (barcodeStart != null) expect(barcode.uuid).not.toBe(barcodeStart.uuid);
   await request(page, 'key.press', ESC);
-  expect(await depth(page)).toBe(d0 + 3);
+  expect(await depth(page)).toBe(d0 + (t17 ? 2 : 3));
 });
 
 test('run 15: the master pad read and set with no undo step; fpedit.enumerate then a drag over three pads numbers them in one undo step', async ({ page }) => {
@@ -262,9 +282,9 @@ test('engine build T17: the numbering\'s end is one ev.fpeditNotice, kept on a d
   const pads = (await items(page, { kinds: ['pad'] })).slice(0, 3);
   expect(await request(page, 'view.fit', {})).toEqual({});
   await page.waitForTimeout(500);
+  // The pads' places on screen when the engine names its viewport; else the loop ends with no pad pressed.
   const at = await screenOf(page, frame);
-  test.skip(at == null, 'this engine names no viewport for the footprint editor');
-  const points = pads.map((p) => (at as (x: number, y: number) => [number, number])(p.x as number, p.y as number));
+  const points = at == null ? [] : pads.map((p) => at(p.x as number, p.y as number));
   const popup = () => frame.evaluate(() => [...document.querySelectorAll('div.window.popup')].some((e) => (e as HTMLElement).offsetParent != null));
   const notices = async () => (await of(page, 'ev.fpeditNotice')).map((e) => ({ notice: e.notice, kept: e.kept }));
   // Esc takes the numbers back: kept false.
@@ -272,17 +292,17 @@ test('engine build T17: the numbering\'s end is one ev.fpeditNotice, kept on a d
   await page.waitForTimeout(300);
   for (const p of points) await page.mouse.click(...p);
   expect(await popup(), 'no status popup while numbering').toBe(false);
-  await page.keyboard.press('Escape');
+  expect(await request(page, 'key.press', ESC)).toEqual({});
   await expect.poll(notices, { timeout: 5_000 }).toEqual([{ notice: 'enumerateEnd', kept: false }]);
   expect((await items(page, { uuids: pads.map((p) => p.uuid) })).map((p) => p.number), 'the old numbers back').toEqual(pads.map((p) => p.number));
-  // A double click keeps them: kept true, one undo step.
+  // A double click keeps them: kept true, one undo step when pads were numbered.
   const d0 = await depth(page);
   expect(await request(page, 'fpedit.enumerate', { start: 10, step: 2, prefix: '' })).toEqual({});
   await page.waitForTimeout(300);
   for (const p of points) await page.mouse.click(...p);
   await page.mouse.dblclick(...(await emptyPoint(page, frame)));
   await expect.poll(notices, { timeout: 5_000 }).toEqual([{ notice: 'enumerateEnd', kept: false }, { notice: 'enumerateEnd', kept: true }]);
-  expect(await depth(page), 'one undo step for the run').toBe(d0 + 1);
+  if (points.length > 0) expect(await depth(page), 'one undo step for the run').toBe(d0 + 1);
 });
 
 test('run 15: a group asks with its uuid from E and from Edit Group Properties run by name (engine fix e3-1), opening no window', async ({ page }) => {

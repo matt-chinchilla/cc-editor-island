@@ -178,7 +178,11 @@ test.describe('engine run 15: our context menu', () => {
     await page.waitForFunction(() => (window as unknown as Harness).__events.some((e) => e.type === 'ev.ready'), null, { timeout: 170_000 });
     const caps = (await of(page, 'ev.ready'))[0]?.caps ?? [];
     test.skip(!caps.includes('contextMenu'), RUN15);
-    const opened = await request(page, 'symedit.new', { name: 'M1_PROBE', lib: 'm1', discard: true });
+    // symedit.new takes the New Symbol dialog's eighteen keys, exactly (PROTOCOL.md symedit.new).
+    const opened = await request(page, 'symedit.new', {
+      name: 'M1_PROBE', lib: 'm1', parentText: '', parent: '', refPrefix: 'U', unitCount: 1, unitsInterchangeable: false, bodyStyles: 'one', power: 'none',
+      pinNameOffset: 0.508, showPinNames: true, showPinNumbers: true, pinNamesInside: true, inBom: true, onBoard: true, inSim: true, keepParentFields: false, discard: true,
+    });
     expect(opened.error).toBeUndefined();
     const at = await canvasCenter(page);
     await page.mouse.click(at.x, at.y, { button: 'right' });
