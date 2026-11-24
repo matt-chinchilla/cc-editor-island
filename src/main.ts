@@ -36,6 +36,7 @@ import { quietWarmUp } from './picker';
 import { createProjectLibs, withProjectLibs } from './project-libs';
 import { installSimService } from './sim-service';
 import { bootsCanvasOnly, hideChromeThenReveal, setBootInput, watchStageGl, watchStagePaint } from './reveal';
+import { hostToolSlot, type HostToolWindow } from '../bridge/hostTool';
 
 declare const __ISLAND_TAG__: string;      // define'd by vite.config.ts from PIN.json
 declare const __KICAD_VERSION__: string;   // define'd by vite.config.ts
@@ -168,6 +169,10 @@ async function main(): Promise<void> {
   // scripts load: while the responder says the host is about to reload the frame
   // (just after its own save, or after a forget), the engine's leave prompt is stopped.
   installUnloadQuiet(window);
+  // The tool KiCad holds (build T17, bridge/hostTool.ts): the slot is taken before
+  // the engine boots, so a change told while it starts is kept; bridge/ext/t17-i.ts
+  // listens from engineReady on. An older engine never calls it.
+  hostToolSlot(window as unknown as HostToolWindow);
 
   // The library mirror's manifest is read beside the browser probe; boot waits
   // for it (or for the example library it falls back to) before the engine's
