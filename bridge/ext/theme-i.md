@@ -1,15 +1,15 @@
 <!-- Copyright (C) 2026 Circuit Center Inc -->
 <!-- SPDX-License-Identifier: MIT -->
 <!-- part: requests -->
-| `theme.set` | `{ colors: KiCadColorTheme \| null }` | `{}` |
+| `theme.set` | `{ colors: KiCadColorTheme \| null }` | `{ ok: true }` |
 <!-- part: codes -->
 | `theme_frame` | `theme.set` in a frame whose editor the engine's color switch does not reach (on engine build T18b every frame but `sch` and `pcb`): nothing changes and nothing is kept; that frame boots in the kept colors the next time it opens. |
 <!-- part: section -->
 ### theme.set
 
-The running frame repaints in the canvas colors the host sends, live: no reload of the document, the view kept, KiCad's chrome still hidden (island after `v0.2.3-cc26`, on any engine with `kicadSetColorTheme`; a host gates it on `ev.ready` `caps` listing `theme`, which a `sch` and a `pcb` frame list on such an engine). `colors` is a whole KiCad color theme, the shape of the island's `theme/colors/circuitcenter.json` (`meta`, `schematic`, `board`, `3d_viewer`, `gerbview`): a key it leaves out takes KiCad's default for that key. `null` brings back the island's own palette (`circuitcenter`); `null` while the palette shows changes nothing.
+The running frame repaints in the canvas colors the host sends, live: no reload of the document, the view kept, KiCad's chrome still hidden (island after `v0.2.3-cc26`, on any engine with `kicadSetColorTheme`; a host gates it on `ev.ready` `caps` listing `theme`, which a `sch` and a `pcb` frame list on such an engine). `colors` is a whole KiCad color theme, the shape of the island's `theme/colors/circuitcenter.json` (`meta`, `schematic`, `board`, `3d_viewer`, `gerbview`): a key it leaves out takes KiCad's default for that key. `null` brings back the island's own palette (`circuitcenter`); `null` while the palette shows changes nothing and answers `{ ok: true }`.
 
-The island writes the theme as a file of its own in the engine's colors folder, under a fresh name for every set, and switches to it through `kicadSetColorTheme`, the path of KiCad's own Preferences dialog (the frame's color theme setting, then its settings changed, which reloads the colors into the painter and recaches the view). The answer comes once the engine's apply queue is empty and a frame has painted.
+The island writes the theme as a file of its own in the engine's colors folder, under a fresh name for every set, and switches to it through `kicadSetColorTheme`, the path of KiCad's own Preferences dialog (the frame's color theme setting, then its settings changed, which reloads the colors into the painter and recaches the view). The answer, `{ ok: true }`, comes once the engine's apply queue is empty and a frame has painted.
 
 Every set that applied is kept on the island's own origin (localStorage, key `cc.island.theme`, partitioned by the page's site, so every island frame of one page reads it), and `null` forgets it, also when nothing was applied. Every frame of every kind boots in the kept colors in place of the palette (the drawing sheet editor with its sheet color laid over them, as over the palette), with no flash; a kept value that does not read as a theme is removed and the palette drawn. A host that sends its current theme at every `ev.ready`, `null` included, so corrects stale kept colors.
 

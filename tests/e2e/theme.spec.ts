@@ -117,7 +117,7 @@ test('theme.set in a sch frame: a white background and red wires live, the view 
 
     const white = await paletteWith(island, { schematic: { background: 'rgb(255, 255, 255)', wire: 'rgb(255, 0, 0)' } });
     let t0 = Date.now();
-    expect(await request(page, 'theme.set', { colors: white })).toEqual({});
+    expect(await request(page, 'theme.set', { colors: white })).toEqual({ ok: true });
     measure('theme.set', `${Date.now() - t0} ms to the answer`);
     // The answer comes once the canvas has the colors: the first read after it already shows them.
     const atAnswer = await readCanvas(island);
@@ -135,7 +135,7 @@ test('theme.set in a sch frame: a white background and red wires live, the view 
     const before = switches.length;
     const answers = await page.evaluate((list) => Promise.all(list.map((colors) => (window as unknown as Harness).__bridge.request('theme.set', { colors }))), bodies);
     measure('burst of 5', `${Date.now() - t0} ms to the last answer`);
-    expect(answers).toEqual(Array(5).fill({}));
+    expect(answers).toEqual(Array(5).fill({ ok: true }));
     // The first set switched alone; the four behind it were coalesced into one switch, the newest.
     await expect.poll(() => switches.length - before).toBe(2);
     measure('burst switches', switches.slice(before).join(' | '));
@@ -143,7 +143,7 @@ test('theme.set in a sch frame: a white background and red wires live, the view 
     expect(await viewport(island)).toEqual(view);
 
     t0 = Date.now();
-    expect(await request(page, 'theme.set', { colors: null })).toEqual({});
+    expect(await request(page, 'theme.set', { colors: null })).toEqual({ ok: true });
     measure('theme.set null', `${Date.now() - t0} ms to the answer`);
     const back = await showing(island, PALETTE_SCH_BG);
     expect(back.red).toBe(0);
@@ -187,13 +187,13 @@ test('theme.set in a pcb frame: a white board background around the board, then 
     measure('palette', `most common ${first.top.join(', ')} on ${(first.topShare * 100).toFixed(1)} %, ${first.white} white pixels`);
     const view = await viewport(island);
     const t0 = Date.now();
-    expect(await request(page, 'theme.set', { colors: await paletteWith(island, { board: { background: 'rgb(255, 255, 255)' } }) })).toEqual({});
+    expect(await request(page, 'theme.set', { colors: await paletteWith(island, { board: { background: 'rgb(255, 255, 255)' } }) })).toEqual({ ok: true });
     measure('theme.set', `${Date.now() - t0} ms to the answer`);
     const after = await settledOn(island, (r) => r.white > first.white + 0.05 * r.total);
     measure('host theme', `${after.white} white pixels (${((after.white / after.total) * 100).toFixed(1)} %)`);
     expect(await viewport(island)).toEqual(view);
     expect(await chromeShown(island)).toBe(false);
-    expect(await request(page, 'theme.set', { colors: null })).toEqual({});
+    expect(await request(page, 'theme.set', { colors: null })).toEqual({ ok: true });
     const back = await settledOn(island, (r) => Math.abs(r.white - first.white) <= 0.001 * r.total);
     expect(back.top).toEqual(first.top);
     expect(await viewport(island)).toEqual(view);
@@ -218,7 +218,7 @@ test('the kept colors: the symbol, footprint and drawing sheet editors boot in t
     const { island } = await boot(page, 'sch');
     await showing(island, PALETTE_SCH_BG);
     const white = await paletteWith(island, { schematic: { background: 'rgb(255, 255, 255)' }, board: { background: 'rgb(255, 255, 255)' } });
-    expect(await request(page, 'theme.set', { colors: white })).toEqual({});
+    expect(await request(page, 'theme.set', { colors: white })).toEqual({ ok: true });
     await showing(island, WHITE);
     // A light theme by day with KiCad's chrome hidden: what the reader sees.
     await page.screenshot({ path: test.info().outputPath('sch-white-day.png') });
@@ -237,7 +237,7 @@ test('the kept colors: the symbol, footprint and drawing sheet editors boot in t
     // A reload of the schematic frame comes up in the kept colors with no theme.set sent.
     const reloaded = await showing(again.island, WHITE);
     measure('sch reloaded kept', `background ${reloaded.top.join(', ')} on ${(reloaded.topShare * 100).toFixed(1)} %, no theme.set sent`);
-    expect(await request(page, 'theme.set', { colors: null })).toEqual({});
+    expect(await request(page, 'theme.set', { colors: null })).toEqual({ ok: true });
     await showing(again.island, PALETTE_SCH_BG);
     for (const frame of ['symedit', 'ds']) {
       const r = await showing(await bootBare(page, frame), PALETTE_SCH_BG);

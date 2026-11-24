@@ -185,24 +185,24 @@ describe('theme.set, the args', () => {
 describe('theme.set, the op', () => {
   it('writes the theme under a fresh name, switches to it, waits for the apply queue, and answers {}', async () => {
     const f = fakeCtx();
-    expect(await themeSet({ colors: THEME('rgb(255, 255, 255)') }, f.ctx)).toEqual({ ok: true, result: {} });
+    expect(await themeSet({ colors: THEME('rgb(255, 255, 255)') }, f.ctx)).toEqual({ ok: true, result: { ok: true } });
     expect(f.calls).toEqual([`switch ${LIVE_STEM}1`, 'idle']);
     expect(JSON.parse(f.files.get(`${COLORS}/${LIVE_STEM}1.json`)!).schematic.background).toBe('rgb(255, 255, 255)');
     // A second set takes a second name (the engine skips a switch to the name it holds), and the first file goes.
-    expect(await themeSet({ colors: THEME('rgb(0, 0, 0)') }, f.ctx)).toEqual({ ok: true, result: {} });
+    expect(await themeSet({ colors: THEME('rgb(0, 0, 0)') }, f.ctx)).toEqual({ ok: true, result: { ok: true } });
     expect(f.calls.slice(2)).toEqual([`switch ${LIVE_STEM}2`, 'idle']);
     expect([...f.files.keys()]).toEqual([`${COLORS}/${LIVE_STEM}2.json`]);
   });
 
   it('null brings the palette back and removes the host\'s file; null while the palette shows changes nothing', async () => {
     const f = fakeCtx();
-    expect(await themeSet({ colors: null }, f.ctx)).toEqual({ ok: true, result: {} });
+    expect(await themeSet({ colors: null }, f.ctx)).toEqual({ ok: true, result: { ok: true } });
     expect(f.calls).toEqual([]);
     await themeSet({ colors: THEME('rgb(255, 255, 255)') }, f.ctx);
-    expect(await themeSet({ colors: null }, f.ctx)).toEqual({ ok: true, result: {} });
+    expect(await themeSet({ colors: null }, f.ctx)).toEqual({ ok: true, result: { ok: true } });
     expect(f.calls).toEqual([`switch ${LIVE_STEM}1`, 'idle', `switch ${PALETTE_THEME}`, 'idle']);
     expect(f.files.size).toBe(0);
-    expect(await themeSet({ colors: null }, f.ctx)).toEqual({ ok: true, result: {} });
+    expect(await themeSet({ colors: null }, f.ctx)).toEqual({ ok: true, result: { ok: true } });
     expect(f.calls).toHaveLength(4);
   });
 
@@ -217,7 +217,7 @@ describe('theme.set, the op', () => {
     await settle();
     expect(f.calls).toHaveLength(2);
     release(true);
-    expect(await Promise.all([a, ...rest])).toEqual(Array(4).fill({ ok: true, result: {} }));
+    expect(await Promise.all([a, ...rest])).toEqual(Array(4).fill({ ok: true, result: { ok: true } }));
     expect(f.calls).toEqual([`switch ${LIVE_STEM}1`, 'idle', `switch ${LIVE_STEM}2`, 'idle']);
     expect(JSON.parse(f.files.get(`${COLORS}/${LIVE_STEM}2.json`)!).schematic.background).toBe('rgb(4, 4, 4)');
   });
@@ -229,7 +229,7 @@ describe('theme.set, the op', () => {
     await settle(30);
     expect(f.calls).toEqual([]);
     n = 0;
-    expect(await p).toEqual({ ok: true, result: {} });
+    expect(await p).toEqual({ ok: true, result: { ok: true } });
     const stuck = fakeCtx({ inFlight: () => 1 });
     expect(await themeSet({ colors: THEME('rgb(9, 9, 9)') }, stuck.ctx)).toEqual({ ok: false, code: 'busy', message: 'theme.set' });
     expect(stuck.calls).toEqual([]);
@@ -249,7 +249,7 @@ describe('theme.set, the op', () => {
     expect(await themeSet({ colors: THEME('rgb(9, 9, 9)') }, f.ctx)).toEqual({ ok: false, code: 'not_applied', message: 'theme.set' });
     const t = fakeCtx({ switchThrows: true });
     expect(await themeSet({ colors: THEME('rgb(9, 9, 9)') }, t.ctx)).toEqual({ ok: false, code: 'island_error', message: 'trap' });
-    expect(await themeSet({ colors: null }, t.ctx)).toEqual({ ok: true, result: {} });
+    expect(await themeSet({ colors: null }, t.ctx)).toEqual({ ok: true, result: { ok: true } });
   });
 
   it('reads the args and the engine before anything else', async () => {
@@ -283,14 +283,14 @@ describe('theme.set, the kept colors', () => {
   it('null with nothing applied changes nothing in the engine and still forgets stale kept colors', async () => {
     store.set(KEPT_KEY, JSON.stringify(THEME('rgb(7, 7, 7)')));
     const f = fakeCtx();
-    expect(await themeSet({ colors: null }, f.ctx)).toEqual({ ok: true, result: {} });
+    expect(await themeSet({ colors: null }, f.ctx)).toEqual({ ok: true, result: { ok: true } });
     expect(f.calls).toEqual([]);
     expect(store.has(KEPT_KEY)).toBe(false);
   });
 
   it('a frame that booted in the kept theme switches back to the palette on null, and its kept file goes with the next set', async () => {
     const f = fakeCtx({ booted: true });
-    expect(await themeSet({ colors: null }, f.ctx)).toEqual({ ok: true, result: {} });
+    expect(await themeSet({ colors: null }, f.ctx)).toEqual({ ok: true, result: { ok: true } });
     expect(f.calls).toEqual([`switch ${PALETTE_THEME}`, 'idle']);
     expect(f.files.has(`${COLORS}/${KEPT_THEME}.json`)).toBe(false);
     const g = fakeCtx({ booted: true });
@@ -317,7 +317,7 @@ describe('theme.set through the responder', () => {
       const t = await boot(frame, { ...ENGINE, kicadSetColorTheme: sw });
       try {
         expect(t.ready?.caps).toContain('theme');
-        expect(await t.ask(1, 'theme.set', { colors: THEME('rgb(255, 255, 255)') })).toEqual({ id: 1, ok: true, result: {} });
+        expect(await t.ask(1, 'theme.set', { colors: THEME('rgb(255, 255, 255)') })).toEqual({ id: 1, ok: true, result: { ok: true } });
         expect(sw).toHaveBeenCalledWith(`${LIVE_STEM}1`);
         expect(await t.ask(2, 'theme.set', { colors: 1 })).toEqual({ id: 2, ok: false, error: { code: 'bad_args', message: 'theme.set' } });
       } finally { t.r.close(); }

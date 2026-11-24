@@ -43,6 +43,8 @@ export const PALETTE_THEME = 'circuitcenter';
 export const LIVE_STEM = 'cc-host-theme-';
 /** The engine's apply queue is waited for at most this long when the bridge names no themeMs. */
 export const THEME_MS = 15_000;
+/** The answer of a set that applied (the contract's shape). */
+const THEME_OK = { ok: true };
 /** After the switch the answer waits this long at most for the engine's frame to paint. */
 const PAINT_MS = 250;
 
@@ -136,7 +138,7 @@ async function applyOne(colors: ThemeJson | null, ctx: ResponderCtx, s: ThemeSta
   // The palette while it shows: nothing to switch (a switch would only rebuild KiCad's hidden menus).
   if (colors == null && s.live == null) {
     keepTheme(null);
-    return ok();
+    return ok(THEME_OK);
   }
   const before = s.live;
   let name = PALETTE_THEME;
@@ -171,7 +173,7 @@ async function applyOne(colors: ThemeJson | null, ctx: ResponderCtx, s: ThemeSta
     } catch { /* a file left behind is only a file */ }
   }
   ctx.log('[theme]', colors == null ? 'palette' : name, `${Date.now() - t0} ms`);
-  return ok();
+  return ok(THEME_OK);
 }
 
 /** Runs the newest waiting set until none waits; one runner at a time. */
