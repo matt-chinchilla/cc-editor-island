@@ -11,7 +11,8 @@ import { startResponder } from '../responder';
 import type { ExtUnit, ResponderCtx } from './contract';
 import type { Frame } from '../../src/types';
 import { buildRegistry, REGISTRY } from './registry';
-import unit, { LIVE_STEM, MAX_THEME_BYTES, PALETTE_THEME, THEME_CAP, THEME_EXPORTS, parseThemeArgs, themeFileText, themeSet } from './theme-i';
+import unit, { LIVE_STEM, MAX_THEME_BYTES, PALETTE_THEME, THEME_CAP, THEME_EXPORTS, parseThemeArgs, switchesIn, themeFileText, themeSet } from './theme-i';
+import { KEPT_KEY, KEPT_THEME } from '../../theme/kept';
 import { seedsFor } from '../../theme/seeds';
 import { KICAD_CONFIG_DIR } from '../../loader/src/wasm/constants';
 import palette from '../../theme/colors/circuitcenter.json';
@@ -22,7 +23,11 @@ const settle = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 const mods = (...units: ExtUnit[]): Record<string, unknown> => Object.fromEntries(units.map((u) => [`./${u.unit}.ts`, { default: u }]));
 const THEME = (bg: string) => ({ ...(palette as Record<string, Record<string, unknown>>), schematic: { ...(palette as { schematic: Record<string, unknown> }).schematic, background: bg } });
 
+/** The island origin's localStorage, stubbed fresh for each test. */
+let store: Map<string, string>;
 beforeEach(() => {
+  store = new Map();
+  vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); } });
   vi.stubGlobal('KeyboardEvent', class extends Event {
     constructor(type: string, init: Record<string, unknown> = {}) {
       const { bubbles, cancelable, composed, ...rest } = init as EventInit & Record<string, unknown>;
@@ -95,16 +100,17 @@ async function boot(frame: string, exports: Record<string, unknown>, ready = tru
 }
 
 /** A ResponderCtx over a fake engine; `idle` answers applyIdle (a promise holds it). */
-function fakeCtx(opts: { idle?: () => boolean | Promise<boolean>; busy?: string; missing?: string; inFlight?: () => number; ready?: boolean; switchThrows?: boolean } = {}) {
+function fakeCtx(opts: { idle?: () => boolean | Promise<boolean>; busy?: string; missing?: string; inFlight?: () => number; ready?: boolean; switchThrows?: boolean; frame?: string; booted?: boolean } = {}) {
   const calls: string[] = [];
   const f = fakeFs();
+  if (opts.booted) f.files.set(`${COLORS}/${KEPT_THEME}.json`, '{}');
   const mod: Record<string, unknown> = {
     kicadCollabBusy: () => false,
     kicadSetColorTheme: (name: string) => { calls.push(`switch ${name}`); if (opts.switchThrows) throw new Error('trap'); },
   };
   if (opts.missing != null) delete mod[opts.missing];
   const ctx = {
-    frame: 'sch',
+    frame: opts.frame ?? 'sch',
     timing: { themeMs: 200, applyPollMs: 5 },
     ready: () => opts.ready ?? true,
     closed: () => false,
@@ -144,6 +150,8 @@ describe('theme-i in the registry', () => {
     expect(unit.caps!(both, 'pcb')).toEqual(['theme']);
     for (const frame of ['symedit', 'fpedit', 'ds'] as Frame[]) expect(unit.caps!(both, frame)).toEqual([]);
     expect(unit.caps!({ kicadCollabBusy: () => false }, 'sch')).toEqual([]);
+    expect(switchesIn(both, 'pcb')).toBe(true);
+    expect(switchesIn(both, 'fpedit')).toBe(false);
   });
 });
 
@@ -253,6 +261,53 @@ describe('theme.set, the op', () => {
   });
 });
 
+describe('theme.set, the kept colors', () => {
+  it('keeps the colors of a set that applied, and null forgets them', async () => {
+    const f = fakeCtx();
+    const white = THEME('rgb(255, 255, 255)');
+    await themeSet({ colors: white }, f.ctx);
+    expect(JSON.parse(store.get(KEPT_KEY)!)).toEqual(white);
+    await themeSet({ colors: null }, f.ctx);
+    expect(store.has(KEPT_KEY)).toBe(false);
+  });
+
+  it('keeps nothing for a set that did not apply', async () => {
+    const f = fakeCtx({ idle: () => false });
+    await themeSet({ colors: THEME('rgb(1, 1, 1)') }, f.ctx);
+    expect(store.has(KEPT_KEY)).toBe(false);
+    const b = fakeCtx({ busy: 'keys' });
+    await themeSet({ colors: THEME('rgb(1, 1, 1)') }, b.ctx);
+    expect(store.has(KEPT_KEY)).toBe(false);
+  });
+
+  it('null with nothing applied changes nothing in the engine and still forgets stale kept colors', async () => {
+    store.set(KEPT_KEY, JSON.stringify(THEME('rgb(7, 7, 7)')));
+    const f = fakeCtx();
+    expect(await themeSet({ colors: null }, f.ctx)).toEqual({ ok: true, result: {} });
+    expect(f.calls).toEqual([]);
+    expect(store.has(KEPT_KEY)).toBe(false);
+  });
+
+  it('a frame that booted in the kept theme switches back to the palette on null, and its kept file goes with the next set', async () => {
+    const f = fakeCtx({ booted: true });
+    expect(await themeSet({ colors: null }, f.ctx)).toEqual({ ok: true, result: {} });
+    expect(f.calls).toEqual([`switch ${PALETTE_THEME}`, 'idle']);
+    expect(f.files.has(`${COLORS}/${KEPT_THEME}.json`)).toBe(false);
+    const g = fakeCtx({ booted: true });
+    await themeSet({ colors: THEME('rgb(2, 2, 2)') }, g.ctx);
+    expect([...g.files.keys()]).toEqual([`${COLORS}/${LIVE_STEM}1.json`]);
+  });
+
+  it('answers theme_frame where the engine does not switch, keeping nothing', async () => {
+    for (const frame of ['symedit', 'fpedit', 'ds']) {
+      const f = fakeCtx({ frame });
+      expect(await themeSet({ colors: THEME('rgb(1, 1, 1)') }, f.ctx)).toEqual({ ok: false, code: 'theme_frame', message: `the canvas colors of a ${frame} frame change at its next boot` });
+      expect(f.calls).toEqual([]);
+      expect(store.has(KEPT_KEY)).toBe(false);
+    }
+  });
+});
+
 describe('theme.set through the responder', () => {
   const ENGINE = { kicadCollabBusy: () => false, kicadSetColorTheme: () => {} };
 
@@ -277,7 +332,7 @@ describe('theme.set through the responder', () => {
     } finally { t.r.close(); }
   });
 
-  it('before ev.ready it answers not_ready, and in a symedit frame the frame refusal', async () => {
+  it('before ev.ready it answers not_ready, and in a symedit frame theme_frame', async () => {
     const early = await boot('sch', ENGINE, false);
     try {
       expect(await early.ask(1, 'theme.set', { colors: null })).toEqual({ id: 1, ok: false, error: { code: 'not_ready', message: 'theme.set' } });
@@ -285,7 +340,7 @@ describe('theme.set through the responder', () => {
     const sym = await boot('symedit', ENGINE);
     try {
       expect(sym.ready?.caps ?? []).not.toContain('theme');
-      expect(await sym.ask(1, 'theme.set', { colors: null })).toEqual({ id: 1, ok: false, error: { code: 'unsupported', message: 'the canvas colors change in a sch or a pcb frame' } });
+      expect(await sym.ask(1, 'theme.set', { colors: null })).toEqual({ id: 1, ok: false, error: { code: 'theme_frame', message: 'the canvas colors of a symedit frame change at its next boot' } });
     } finally { sym.r.close(); }
   });
 });

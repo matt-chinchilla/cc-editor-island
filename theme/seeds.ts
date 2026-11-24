@@ -12,6 +12,7 @@ import symeditHotkeys from './symedit.hotkeys?raw';
 import type { Seeds } from '../loader/src/wasm/boot';
 import { SHEET_THEME, sheetThemeOf } from './sheet-theme';
 import type { Theme } from '../src/types';
+import { KEPT_THEME, themeFileText, type ThemeJson } from './kept';
 
 /**
  * The wave units' own chords (theme/hotkeys/<unit>.hotkeys, KiCad's hotkeys
@@ -23,7 +24,14 @@ const UNIT_HOTKEYS: string = Object.entries(import.meta.glob('./hotkeys/*.hotkey
   .map(([, text]) => (text.endsWith('\n') || text === '' ? text : `${text}\n`))
   .join('');
 
-export function seedsFor(theme: Theme): Seeds {
+/**
+ * The seeds for a boot by day or night. With `kept` (the host's canvas colors
+ * the island kept, theme/kept.ts) they are seeded as one more theme and
+ * selected in place of the palette, and the drawing sheet editor's theme is
+ * laid over them in place of the palette.
+ */
+export function seedsFor(theme: Theme, kept: ThemeJson | null = null): Seeds {
+  const keptText = kept == null ? null : themeFileText(kept);
   return {
     // The one palette the viewer draws with, by day and by night (spec D16); the
     // two Lab Sheet themes stay seeded for a later theme switch.
@@ -32,9 +40,10 @@ export function seedsFor(theme: Theme): Seeds {
       { name: 'circuitcenter-light.json', json: light },
       { name: 'circuitcenter-dark.json', json: dark },
       // The drawing sheet editor's own: the palette with the drawing sheet in a color that shows (sheet-theme.ts).
-      { name: `${SHEET_THEME}.json`, json: sheetThemeOf(palette) },
+      { name: `${SHEET_THEME}.json`, json: sheetThemeOf(keptText ?? palette) },
+      ...(keptText == null ? [] : [{ name: `${KEPT_THEME}.json`, json: keptText }]),
     ],
-    colorTheme: 'circuitcenter',
+    colorTheme: keptText == null ? 'circuitcenter' : KEPT_THEME,
     toolbars: [{ name: 'pcbnew-toolbars.json', json: pcb }, { name: 'eeschema-toolbars.json', json: sch }],
     // The symbol editor's own chords follow the pencil-tools ledger: Ctrl+Alt+Shift
     // and a digit, which neither the ledger's pool nor KiCad's defaults use.

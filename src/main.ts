@@ -18,6 +18,7 @@ import { looksLikeOom } from '../loader/src/recovery/oom-watch';
 import { bootKicadTool } from '../loader/src/wasm/boot';
 import { PROJECT_FOLDER, startResponder } from '../bridge/responder';
 import { seedsFor } from '../theme/seeds';
+import { readKept } from '../theme/kept';
 import { engineBase } from './assets';
 import { parentOriginFor, parseBoot } from './cc-config';
 import { createFatalGate } from './fatal';
@@ -224,7 +225,8 @@ async function main(): Promise<void> {
       container,
       frame: frameToken(frame),
       dark: theme === 'night',
-      seeds: seedsFor(theme),
+      // The host's canvas colors, when the island keeps them (theme.set), in place of the palette.
+      seeds: seedsFor(theme, readKept()),
       libsSource,
       // Lazy (LIBRARY.md "The client"): a chooser's first enumerate of a kind
       // starts that kind's warm-up; no bundle is fetched before KiCad asks.

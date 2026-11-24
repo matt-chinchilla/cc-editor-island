@@ -201,3 +201,48 @@ test('theme.set in a pcb frame: a white board background around the board, then 
     await page.close();
   }
 });
+
+/** A frame booted with no document (the editors that open their own item later); its island frame. */
+async function bootBare(page: Page, frame: string): Promise<Frame> {
+  await page.goto(`/parent.html?frame=${frame}`);
+  await page.waitForFunction(() => (window as unknown as Harness).__events.some((e) => e.type === 'ev.ready' || (e.type === 'ev.state' && (e.phase === 'blocked' || e.phase === 'fatal'))), null, { timeout: 170_000 });
+  expect((await events(page)).filter((e) => e.type === 'ev.state' && (e.phase === 'blocked' || e.phase === 'fatal'))).toEqual([]);
+  const island = page.frames().find((f) => f.url().startsWith(`${ISLAND}/`));
+  if (island == null) throw new Error('no island frame');
+  return island;
+}
+
+test('the kept colors: the symbol, footprint and drawing sheet editors boot in the colors a schematic frame took, and in the palette after null', async ({ page }) => {
+  test.setTimeout(600_000);
+  try {
+    const { island } = await boot(page, 'sch');
+    await showing(island, PALETTE_SCH_BG);
+    const white = await paletteWith(island, { schematic: { background: 'rgb(255, 255, 255)' }, board: { background: 'rgb(255, 255, 255)' } });
+    expect(await request(page, 'theme.set', { colors: white })).toEqual({});
+    await showing(island, WHITE);
+    // A light theme by day with KiCad's chrome hidden: what the reader sees.
+    await page.screenshot({ path: test.info().outputPath('sch-white-day.png') });
+
+    for (const frame of ['symedit', 'fpedit', 'ds']) {
+      const f = await bootBare(page, frame);
+      const caps = (await events(page)).find((e) => e.type === 'ev.ready')?.caps ?? [];
+      expect(caps).not.toContain('theme');
+      expect(await refusal(page, 'theme.set', { colors: null })).toBe(`theme_frame: the canvas colors of a ${frame} frame change at its next boot`);
+      const r = await showing(f, WHITE);
+      measure(`${frame} booted kept`, `background ${r.top.join(', ')} on ${(r.topShare * 100).toFixed(1)} %`);
+    }
+
+    // null in a schematic frame forgets the kept colors: the next editor boots in the palette.
+    const again = await boot(page, 'sch');
+    // This schematic frame booted in the kept colors too.
+    await showing(again.island, WHITE);
+    expect(await request(page, 'theme.set', { colors: null })).toEqual({});
+    await showing(again.island, PALETTE_SCH_BG);
+    for (const frame of ['symedit', 'ds']) {
+      const r = await showing(await bootBare(page, frame), PALETTE_SCH_BG);
+      measure(`${frame} after null`, `background ${r.top.join(', ')}`);
+    }
+  } finally {
+    await page.close();
+  }
+});
