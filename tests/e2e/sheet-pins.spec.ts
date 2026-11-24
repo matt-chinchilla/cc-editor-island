@@ -30,8 +30,9 @@ const RUN15 = 'waits for engine run 15 (pcbjam cc_e8_sch.inc, unit m9-e: kicadSh
 const U = (n: number): string => `5e7a1b00-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
 const ROOT = U(0x100);
 const SHEET = U(0x150);
-const ROOT_PATH = `/${ROOT}/`;
-const SUB_PATH = `/${ROOT}/${SHEET}/`;
+// A sheet path as every op of the island reads and answers it: the root is "/", the root sheet's own uuid left out.
+const ROOT_PATH = '/';
+const SUB_PATH = `/${SHEET}/`;
 const PIN = { A: U(0x151), C: U(0x152), D: U(0x153), E1: U(0x154) };
 const LABEL = { A: U(0x201), B: U(0x202), C: U(0x203), E: U(0x204) };
 const UNDO = { key: 'z', code: 'KeyZ', ctrl: true };

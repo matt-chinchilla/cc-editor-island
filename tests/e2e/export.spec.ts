@@ -118,7 +118,7 @@ const BOARD_ROWS: Row[] = [
   { id: 'O13 board as PostScript', args: { job: 'pcb_export_ps', settings: { layers: ['F.Cu'], gen_mode: 'multi' } }, exact: ['glasgow-F_Cu.ps'] },
   { id: 'O17 VRML', args: { job: 'pcb_export_3d', settings: { format: 'vrml' } }, exact: ['glasgow.wrl'] },
   { id: 'O18 IDF', args: { job: 'cc_idf', settings: { units: 'mm', include_unspecified: false, include_dnp: false } }, exact: ['glasgow.emn', 'glasgow.emp'] },
-  { id: 'O19 Specctra DSN', args: { job: 'cc_specctra_dsn', settings: {} }, failed: /^IO_ERROR: Multiple footprints have the reference designator 'REF\*\*'\./ },
+  { id: 'O19 Specctra DSN', args: { job: 'cc_specctra_dsn', settings: {} }, failed: /^(IO_ERROR: )?Multiple footprints have the reference designator 'REF\*\*'\./ },
   { id: 'O20 Hyperlynx', args: { job: 'cc_hyperlynx', settings: {} }, exact: ['glasgow.hyp'] },
   { id: 'O21 footprint associations', args: { job: 'cc_footprint_associations', settings: {} }, exact: ['glasgow.cmp'] },
   { id: 'O22 board statistics, text', args: { job: 'pcb_export_stats', settings: { output_format: 0, units: 'mm', exclude_footprints_without_pads: true, subtract_holes_from_board: true, subtract_holes_from_copper: true } }, exact: ['glasgow_statistics.rpt'] },
@@ -181,20 +181,13 @@ function checkRows(results: Array<{ row: Row; answer: Answer }>, known: Readonly
 }
 
 /**
- * Rows the engine run 14 does not make, each with the line it answers: VRML's
- * exporter writes only the VRML header in this engine (BUILD-NOTES-run14.md,
- * pcbjam 44e3e9f), so the engine answers it failed rather than offer an empty
- * scene; Specctra DSN on Glasgow is refused by KiCad's own exporter (two
- * footprints named REF**), as kicad-cli 10.0.4's Python export is.
+ * Rows the served engine does not make, each with the line it answers. Engine
+ * run 14 failed two (VRML wrote a header alone, and the drill job resolved its
+ * report's path twice and ended with code 4); engine run 15 makes both
+ * (measured on build T18b: glasgow.wrl 21 MB, glasgow-drill.rpt beside the
+ * drill files), so no row is listed.
  */
-const KNOWN_FAILED: Readonly<Record<string, RegExp>> = {
-  'O17 VRML': /^The VRML exporter wrote no board \(an empty scene\)\.$/,
-  // KiCad's drill job names the report <board>-drill.rpt inside the run's folder and then
-  // resolves that path against the folder a second time, so GenDrillReportFile fails and the
-  // job ends with code 4 (ERR_INVALID_OUTPUT_CONFLICT) and no error line; engine run 14
-  // forces report_filename to its empty default, so no setting can avoid it here.
-  'O2 drill report': /^the export ended with code 4$/,
-};
+const KNOWN_FAILED: Readonly<Record<string, RegExp>> = {};
 
 test('project.export, every board output on Glasgow: each answered by its names, nothing in the board changed, and the run folders gone', async ({ page }) => {
   test.setTimeout(900_000);
@@ -259,7 +252,7 @@ test('project.export, every schematic output on Glasgow: each answered by its na
   expect(await outLeft(frame)).toEqual([]);
 });
 
-test('project.export reads KiCad\'s own settings: unknown keys dropped and named, a known key of another type refused, a 3D format other than VRML failed', async ({ page }) => {
+test('project.export reads KiCad\'s own settings: unknown keys dropped and named, a known key of another type refused, a STEP made by the 3D service', async ({ page }) => {
   await boot(page, 'pcb');
   // A desktop jobset written by another KiCad carries keys this one lacks: left out and named.
   const dropped = await make(page, { job: 'pcb_export_ipcd356', settings: { hpgl_page_size: 'A4', output_filename: 'elsewhere.d356' } });
@@ -271,8 +264,13 @@ test('project.export reads KiCad\'s own settings: unknown keys dropped and named
   }
   expect(await refusal(page, 'project.export', { job: 'pcb_export_pos', settings: { single_file: 'yes' } })).toBe('bad_args: the engine refused the settings');
   expect(await refusal(page, 'project.export', { job: 'cc_footprint_report', settings: { units: 'mm', extra: true } })).toBe('bad_args: the engine refused the settings');
+  // Engine run 15 carries OpenCASCADE as the 3D service (cap occ): a STEP is made. Before it only VRML was.
+  const caps = (await of(page, 'ev.ready'))[0]?.caps ?? [];
   const step = await make(page, { job: 'pcb_export_3d', settings: { format: 'step' } });
-  expect(step).toMatchObject({ ok: false, code: 'export_failed', message: 'Only VRML is made here.' });
+  if (caps.includes('occ')) {
+    expect(step.ok, step.ok ? '' : `${step.code}: ${step.message}`).toBe(true);
+    if (step.ok) expect(step.files.map((f) => f.path)).toEqual(['glasgow.step']);
+  } else expect(step).toMatchObject({ ok: false, code: 'export_failed', message: 'Only VRML is made here.' });
 });
 
 // A project footprint the island places with no library mirror (project-libs.spec.ts writes the same one).

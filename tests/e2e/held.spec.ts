@@ -54,7 +54,7 @@ async function selectOnly(page: Page, uuid: string): Promise<void> {
   await expect.poll(async () => (await of(page, 'ev.selected')).at(-1)?.uuids, { timeout: 5_000 }).toEqual([uuid]);
 }
 
-test('a board frame: F8, the board check\'s key, Alt+3 and the panes\' keys are held as ev.held; E on each board kind is ev.boardProperties; E on a pad keeps KiCad\'s dialog', async ({ page }) => {
+test('a board frame: F8, the board check\'s key, Alt+3 and the panes\' keys are held as ev.held; E on each board kind is ev.boardProperties; E on a pad is ev.boardItem', async ({ page }) => {
   const frame = await ready(page, '/parent.html?fixture=drc-small&frame=pcb', 'drc-small.kicad_pcb');
   expect((await of(page, 'ev.ready'))[0]?.caps).toEqual(expect.arrayContaining(['heldKeys', 'boardProperties']));
   const held: Array<[Key, string]> = [
@@ -75,9 +75,14 @@ test('a board frame: F8, the board check\'s key, Alt+3 and the panes\' keys are 
   expect(await request(page, 'board.check', { fill: false, parity: true, allTrackErrors: false })).toMatchObject({ parityRun: 'yes' });
   expect(await pressFor(page, { key: 'F8', code: 'F8' }, 'ev.held')).toEqual({ type: 'ev.held', action: 'common.Control.updatePcbFromSchematic' });
 
-  // A pad: KiCad's pad dialog, as before, and no event.
+  // A pad: held for the host since island v0.2.3-cc25 (cap boardItemKinds): ev.boardItem of kind pad and no window. Before it, KiCad's pad dialog and no event.
   await selectOnly(page, R1_PAD1);
   const before = (await of(page, 'ev.boardProperties')).length;
+  if (((await of(page, 'ev.ready'))[0]?.caps ?? []).includes('boardItemKinds')) {
+    expect(await pressFor(page, { key: 'e', code: 'KeyE' }, 'ev.boardItem')).toEqual({ type: 'ev.boardItem', uuid: R1_PAD1, kind: 'pad', isNew: false });
+    expect((await of(page, 'ev.boardProperties')).length).toBe(before);
+    return;
+  }
   expect(await request(page, 'key.press', { key: 'e', code: 'KeyE' })).toEqual({});
   await expect.poll(async () => (await of(page, 'ev.menu')).at(-1)?.open, { timeout: 10_000 }).toBe(true);
   expect((await of(page, 'ev.boardProperties')).length).toBe(before);
@@ -90,7 +95,7 @@ test('a board frame: F8, the board check\'s key, Alt+3 and the panes\' keys are 
   await expect.poll(async () => (await of(page, 'ev.menu')).at(-1)?.open, { timeout: 10_000 }).toBe(false);
 });
 
-test('a schematic frame: F8, the checker\'s and numbering\'s keys, Ctrl+H, D and the properties pane\'s key are held; U, V and F send ev.properties with their field; Ctrl+F keeps KiCad\'s Find', async ({ page }) => {
+test('a schematic frame: F8, the checker\'s and numbering\'s keys, Ctrl+H, D and the properties pane\'s key are held; U, V and F send ev.properties with their field; Ctrl+F is held too', async ({ page }) => {
   await ready(page, '/parent.html?fixture=drc-small&frame=sch', 'drc-small.kicad_sch');
   expect((await of(page, 'ev.ready'))[0]?.caps).toEqual(expect.arrayContaining(['heldKeys', 'properties']));
   await selectOnly(page, SYM_R1);
@@ -107,7 +112,11 @@ test('a schematic frame: F8, the checker\'s and numbering\'s keys, Ctrl+H, D and
     await selectOnly(page, SYM_R1);
     expect(await pressFor(page, { key, code: `Key${key.toUpperCase()}` }, 'ev.properties')).toEqual({ type: 'ev.properties', uuids: [SYM_R1], sheetPath: '/', field });
   }
-  // A key whose window the host does not replace yet: KiCad's Find opens, and nothing is sent.
+  // Ctrl+F: held for the host since island v0.2.3-cc25 (cap find), ev.held and no window. Before it KiCad's Find opened and nothing was sent.
+  if (((await of(page, 'ev.ready'))[0]?.caps ?? []).includes('find')) {
+    expect(await pressFor(page, { key: 'f', code: 'KeyF', ctrl: true }, 'ev.held')).toEqual({ type: 'ev.held', action: 'common.Interactive.find' });
+    return;
+  }
   const heldCount = (await of(page, 'ev.held')).length;
   expect(await request(page, 'key.press', { key: 'f', code: 'KeyF', ctrl: true })).toEqual({});
   await expect.poll(async () => (await of(page, 'ev.menu')).at(-1)?.open, { timeout: 10_000 }).toBe(true);

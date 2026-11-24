@@ -85,8 +85,16 @@ test('the 3D outputs of Glasgow: every format and the render answer a file, ev.e
   test.setTimeout(1_800_000);
   const caps = await boot(page, 'glasgow');
   test.skip(!caps.includes('occ') || !caps.includes('render'), `engine run 15 (caps occ and render) is not served here: caps ${caps.join(' ')}`);
+  // The pace is each run's own (a run's first event may follow the run before it at once), so each run's events are checked apart.
+  const runs: Ev[][] = [];
+  const paced = async (args: unknown): ReturnType<typeof make> => {
+    const n = (await of(page, 'ev.export')).length;
+    const answer = await make(page, args);
+    runs.push((await of(page, 'ev.export')).slice(n));
+    return answer;
+  };
   for (const format of ['step', 'stpz', 'brep', 'xao', 'glb', 'ply', 'stl', 'u3d', 'pdf', 'vrml']) {
-    const answer = await make(page, { job: 'pcb_export_3d', settings: { format } });
+    const answer = await paced({ job: 'pcb_export_3d', settings: { format } });
     expect(answer.ok, `${format}: ${answer.ok ? '' : `${answer.code}: ${answer.message}`}`).toBe(true);
     if (!answer.ok) continue;
     expect(answer.files.length, format).toBeGreaterThan(0);
@@ -94,17 +102,17 @@ test('the 3D outputs of Glasgow: every format and the render answer a file, ev.e
   }
   // The picture has KiCad's own size, never the asked one (RULINGS 19): the engine names it in its
   // line "The picture is 784 by 592 pixels.", equal to the file's own header.
-  const render = await make(page, { job: 'pcb_render', settings: { format: 'png', width: 800, height: 600, quality: 'basic' } });
+  const render = await paced({ job: 'pcb_render', settings: { format: 'png', width: 800, height: 600, quality: 'basic' } });
   expect(render.ok, render.ok ? '' : `${render.code}: ${render.message}`).toBe(true);
   if (render.ok) {
     const png = render.files.find((f) => f.head.startsWith('\x89PNG'));
     expect(png, 'a PNG').toBeDefined();
     expect(pngSize(png!.head)).toEqual([784, 592]);
   }
-  const jpeg = await make(page, { job: 'pcb_render', settings: { format: 'jpeg', width: 800, height: 600, quality: 'basic' } });
+  const jpeg = await paced({ job: 'pcb_render', settings: { format: 'jpeg', width: 800, height: 600, quality: 'basic' } });
   expect(jpeg.ok, jpeg.ok ? '' : `${jpeg.code}: ${jpeg.message}`).toBe(true);
   if (jpeg.ok) expect(jpeg.files.some((f) => f.head.startsWith('\xff\xd8\xff'))).toBe(true);
-  checkProgress(await of(page, 'ev.export'));
+  for (const r of runs) checkProgress(r);
 });
 
 test('the model fixture: its ${KIPRJMOD} body goes into the STEP', async ({ page }) => {

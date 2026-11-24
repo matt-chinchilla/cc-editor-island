@@ -181,8 +181,12 @@ test.describe('engine run 15: block.save', () => {
     await page.mouse.move(box!.x + box!.width / 2 - 10, box!.y + box!.height / 2 - 10);
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
     await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    const editsBefore = (await of(page, 'ev.edited')).length;
     await expect.poll(() => undoDepth(frame), { timeout: 10_000 }).toBe(depthBefore + 1);
     await page.keyboard.press('Escape');
+    // ev.edited is a poll (every 500 ms, never while a request is in flight): the placement's own
+    // comes before the save is asked, or savedOnce would count it as the save's.
+    await expect.poll(async () => (await of(page, 'ev.edited')).length, { timeout: 10_000 }).toBe(editsBefore + 1);
 
     // The placed group, read from the board as KiCad writes it.
     const board = await savedOnce(page, island, 'pcb', { scope: 'board', name: 'with LDO' });

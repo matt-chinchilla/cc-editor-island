@@ -121,7 +121,7 @@ test('project.libs in a schematic: the project library written into the running 
   expect(await refusal(page, 'project.libs', { libs: ['glasgow_parts'] })).toBe('not_found: glasgow_parts');
   expect(await request(page, 'project.write', { files: LIBRARY })).toEqual({ written: LIBRARY.map((f) => f.path) });
   const t0 = Date.now();
-  expect(await request(page, 'project.libs', { libs: ['glasgow_parts'] })).toEqual({ symbol: ['glasgow_parts'], footprint: ['glasgow_parts'] });
+  expect(await request(page, 'project.libs', { libs: ['glasgow_parts'] })).toEqual({ symbol: ['glasgow_parts'], footprint: ['glasgow_parts'], block: [] });
   measure('project.libs, schematic', `${Date.now() - t0} ms from the request to the answer`);
   // A nickname the island already serves another way (the mirror's Device, else the example library) is refused whole.
   const served = (await of(page, 'ev.ready'))[0]?.caps?.includes('picker') === true ? 'Device' : 'pcbjam-examples';
@@ -147,7 +147,7 @@ test('project.libs on a board: KiCad loads the project footprint by its nickname
   // KiCad's own load of a footprint by name (Update PCB from Schematic's): nothing before the call.
   if (frame != null) expect(await loadFootprint(frame, 'glasgow_parts', 'UFDFPN8')).toBe('');
   const t0 = Date.now();
-  expect(await request(page, 'project.libs', { libs: ['glasgow_parts'] })).toEqual({ symbol: ['glasgow_parts'], footprint: ['glasgow_parts'] });
+  expect(await request(page, 'project.libs', { libs: ['glasgow_parts'] })).toEqual({ symbol: ['glasgow_parts'], footprint: ['glasgow_parts'], block: [] });
   measure('project.libs, board', `${Date.now() - t0} ms from the request to the answer`);
   if (frame != null) expect(await loadFootprint(frame, 'glasgow_parts', 'UFDFPN8')).toBe('1:500000x800000;2:500000x800000;');
   // A second footprint written into the folder: found once the library is registered again.
@@ -179,7 +179,7 @@ test('project.libs reads the tables beside the project file (${KIPRJMOD}) when t
   expect(await request(page, 'project.write', { files: LIBRARY })).toMatchObject({ written: expect.any(Array) });
   expect(await refusal(page, 'project.libs', { libs: ['glasgow_parts'] })).toBe('not_found: glasgow_parts');
   expect(await request(page, 'project.write', { files: LIBRARY.map((f) => ({ path: `${sub}/${f.path}`, text: f.text })) })).toMatchObject({ written: expect.any(Array) });
-  expect(await request(page, 'project.libs', { libs: ['glasgow_parts'] })).toEqual({ symbol: ['glasgow_parts'], footprint: ['glasgow_parts'] });
+  expect(await request(page, 'project.libs', { libs: ['glasgow_parts'] })).toEqual({ symbol: ['glasgow_parts'], footprint: ['glasgow_parts'], block: [] });
   expect(await request(page, 'lib.item', { kind: 'footprint', lib: 'glasgow_parts', name: 'UFDFPN8' })).toEqual({ body: FOOTPRINT });
   if (frame == null) { unreached(); return; }
   expect(await loadFootprint(frame, 'glasgow_parts', 'UFDFPN8')).toBe('1:500000x800000;2:500000x800000;');

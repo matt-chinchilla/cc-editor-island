@@ -86,7 +86,7 @@ test('run 15, bus-conflict: no window at open; two buses listed; one apply names
   measure('buses.migration.get, bus-conflict', `${got.ms} ms`);
   const buses = (got.result as { buses: Bus[] }).buses;
   expect(buses).toHaveLength(2);
-  expect(buses.map(textsOf).sort()).toEqual([['A[0..1]', 'ADDR[0..1]'], ['D[0..3]', 'DATA[0..3]']]);
+  expect(buses.map(textsOf).sort()).toEqual([['ADDR[0..1]', 'A[0..1]'], ['DATA[0..3]', 'D[0..3]']]);   // code unit order: 'D' sorts before '['
   for (const b of buses) {
     expect(b.sheetPath).toBe('/');
     expect(b.proposals.length).toBeGreaterThan(0);
@@ -115,7 +115,7 @@ test('run 15, bus-conflict: no window at open; two buses listed; one apply names
   // One undo brings both buses and their names back.
   expect(await request(page, 'key.press', UNDO)).toEqual({});
   await expect.poll(() => undoDepth(island!), { timeout: 5_000 }).toBe(depth0);
-  expect((await busesOf(page)).map(textsOf).sort()).toEqual([['A[0..1]', 'ADDR[0..1]'], ['D[0..3]', 'DATA[0..3]']]);
+  expect((await busesOf(page)).map(textsOf).sort()).toEqual([['ADDR[0..1]', 'A[0..1]'], ['DATA[0..3]', 'D[0..3]']]);   // code unit order: 'D' sorts before '['
 });
 
 test('run 15, Glasgow: no bus needs a name, answered in under 50 ms', async ({ page }) => {

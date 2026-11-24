@@ -186,7 +186,9 @@ test('run 15, pcb: a 1 MB PDF added as a datasheet and removed; a 26 MB file and
   expect(big.result.files.find((f) => f.name === 'big-datasheet.pdf')).toMatchObject({ type: 'datasheet', heldBy: 0 });
   const x = await extract(page, 'big-datasheet.pdf');
   expect(x.head.startsWith('%PDF-1.4')).toBe(true);
-  expect(x.bytes).toBeGreaterThanOrEqual(MB);
+  // The PDF the page makes pads its stream to the size asked less a rounded 600 bytes of frame, so it is a little under 1 MiB.
+  expect(x.bytes).toBeGreaterThan(MB - 600);
+  expect(x.bytes).toBeLessThanOrEqual(MB);
   const gone = (await request(page, 'embedded.set', { op: 'remove', name: 'big-datasheet.pdf', alsoHeld: false })) as unknown as EmbeddedRead;
   expect(gone.files.map((f) => f.name)).toEqual(before.files.map((f) => f.name));
   expect(await addRefusal(page, 'big.pdf', 'datasheet', { zeros: 26 * MB })).toBe('bad_args: embedded.set');

@@ -149,8 +149,8 @@ test('the island answers with the snippet headers, and the worker script carries
   const island = (await islandRes!.json()) as { id: string; kicadCommit: string; ops: string[] };
   expect(island.id).toMatch(/^[a-z0-9][a-z0-9.-]{0,63}$/);
   // PROTOCOL.md's island.json fields: the commit is kicadCommit, never ev.ready's engine.kicad version name.
-  // `exportKinds` (island v0.2.3-cc23): the jobs project.export runs.
-  expect(Object.keys(island).sort()).toEqual(['exportKinds', 'id', 'kicadCommit', 'ops', 'source', 'tag']);
+  // `exportKinds` (island v0.2.3-cc23): the jobs project.export runs. `timing` (island v0.2.3-cc25): how long a host waits for an export.
+  expect(Object.keys(island).sort()).toEqual(['exportKinds', 'id', 'kicadCommit', 'ops', 'source', 'tag', 'timing']);
   expect(island.kicadCommit).toMatch(/^[0-9a-f]{40}$/);
   // `ops` (island v0.2.3-cc13): the request ops the release answers, sorted, project.plot among them.
   expect(island.ops).toEqual([...island.ops].sort());

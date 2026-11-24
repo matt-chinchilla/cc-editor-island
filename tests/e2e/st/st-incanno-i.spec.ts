@@ -104,7 +104,8 @@ test('run 15: R10 and above move up by 100 on every sheet in one undo step, and 
   measure('sheet.increment R10 by 100 all sheets, Glasgow', `${run.ms} ms, ${moving.length} instances moved`);
   expect(run.result).toEqual({ shifted: true, depth: depth0 + 1 });
   const after = await refs(page);
-  expect([...after.keys()]).toEqual([...before.keys()]);
+  // The same instances, in whatever order the engine lists them (an edited symbol may move in KiCad's list).
+  expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
   for (const [k, ref] of before) expect(after.get(k), `${k} ${ref}`).toBe(shifted(ref));
   expect(await undoDepth(frame!)).toBe(depth0 + 1);
   await expect.poll(async () => (await of(page, 'ev.edited')).length, { timeout: 5_000 }).toBe(edits0 + 1);
