@@ -164,5 +164,6 @@
   "sheet.reload",
   "sim.command",
   "sim.userSignals",
-  "table.csv"
+  "table.csv",
+  "theme.set"
 ]
