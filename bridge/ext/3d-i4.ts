@@ -195,7 +195,7 @@ async function readBodies(lines: readonly EmbedLine[], ctx: ResponderCtx, deps: 
 
 /**
  * board.embedModels: the checks (bad_args, the board gate, each line on the
- * board, not inside it already, not missing, its body read and within the
+ * board, not inside it already, its body read (the model store or the project folder; `found` missing alone refuses nothing) and within the
  * bounds), then the bodies written into one fresh /tmp/cc-embed/<n>/ and the
  * engine's one commit queued; the answer `{ embedded, names, bytes }` once the
  * apply queue is empty. The folder is removed after every answer.

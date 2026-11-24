@@ -156,3 +156,35 @@ test('run 15: models3d-small keeps its three lines inside the board; the saved t
   expect(again).toBe(`bad_args: ${first.ref} ${first.models[items[0].index].path}`);
   expect(await leftOver(frame!)).toEqual([]);
 });
+
+test('run 15: Glasgow keeps library lines the engine reads missing, their bodies from the model store; a library body the store lacks is refused by name', async ({ page, browserName }) => {
+  const { caps, frame } = await boot(page, 'glasgow');
+  test.skip(!caps.includes('boardModels'), RUN15);
+  test.skip(frame == null, `${browserName}: the island frame is out of Playwright's reach, so the undo depth cannot be read`);
+  const LIB_RE = /^\$\{KICAD\d*_3DMODEL_DIR\}\//;
+  const before = await footprints(page);
+  // A fresh Edit session has staged no library body: the engine reads those lines missing.
+  const lib = before.flatMap((f) => f.models.map((l, index) => ({ f, l, index }))).filter((x) => LIB_RE.test(x.l.path) && x.l.found === 'missing');
+  test.skip(lib.length < 2, 'no library line reads missing on this engine');
+  const picked = [lib[0], lib.find((x) => x.l.path !== lib[0].l.path) ?? lib[1]];
+  const depth0 = await undoDepth(frame!);
+  const embed = await timed(page, 'board.embedModels', { items: picked.map((x) => ({ uuid: x.f.uuid, index: x.index })) });
+  measure('board.embedModels, Glasgow library lines', `${embed.ms} ms, ${JSON.stringify(embed.result)}`);
+  expect(embed.result).toMatchObject({ embedded: new Set(picked.map((x) => x.l.path)).size });
+  expect(await leftOver(frame!)).toEqual([]);
+  const now = new Map((await footprints(page)).map((f) => [f.uuid, f]));
+  for (const x of picked) expect(now.get(x.f.uuid)?.models[x.index].found, `${x.f.ref} ${x.l.path}`).toBe('embedded');
+  expect(await undoDepth(frame!)).toBe(depth0 + 1);
+  expect(await request(page, 'key.press', UNDO)).toEqual({});
+  await expect.poll(() => undoDepth(frame!), { timeout: 5_000 }).toBe(depth0);
+
+  // A library path the store does not hold: refused by name, nothing kept.
+  const target = lib[0];
+  const nope = '${KICAD10_3DMODEL_DIR}/No_Such.3dshapes/no_such_body.step';
+  const models = target.f.models.map((l, j) => ({ ...withoutFound(l), path: j === target.index ? nope : l.path }));
+  expect(await request(page, 'board.setModels', { label: 'Update model names', items: [{ uuid: target.f.uuid, models }] })).toEqual({ changed: 1 });
+  const depth1 = await undoDepth(frame!);
+  expect(await refusal(page, 'board.embedModels', { items: [{ uuid: target.f.uuid, index: target.index }] })).toBe(`bad_args: ${target.f.ref} ${nope}`);
+  expect(await undoDepth(frame!)).toBe(depth1);
+  expect(await leftOver(frame!)).toEqual([]);
+});

@@ -122,6 +122,11 @@ describe('planEmbed', () => {
     expect(planEmbed(board(), [{ uuid: U(999), index: 0 }], none)).toEqual({ refused: `${U(999)} line 0` });
     expect(planEmbed(board(), [{ uuid: U(100), index: 0 }, { uuid: U(200), index: 2 }], none)).toEqual({ refused: 'U1 kicad-embed://x.step' });
   });
+  it('plans a library line the engine reads missing (its body comes from the model store, which refuses what it lacks); a missing project line is left to the body read', () => {
+    const b = board();
+    b.footprints[0].models[0].found = 'missing';
+    expect(planEmbed(b, [{ uuid: U(100), index: 0 }], none)).toEqual({ lines: [{ uuid: U(100), index: 0, ref: 'R1', path: LIB, source: { kind: 'library', ref: LIB } }] });
+  });
   it('refuses a line whose path resolves to nothing even when the engine found it', () => {
     const b = board();
     b.footprints[1].models[3].found = 'project';

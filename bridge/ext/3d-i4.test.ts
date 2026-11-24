@@ -309,6 +309,22 @@ describe('board.embedModels', () => {
     expect([...f.files.keys()].filter((k) => k.startsWith(EMBED_ROOT))).toEqual([]);
   });
 
+  it('a library line the engine reads missing (nothing staged yet, a fresh Edit session) is read through the model store and kept', async () => {
+    const f = fakeCtx();
+    for (const fp of f.state.board.footprints) for (const m of fp.models) if (/^\$\{KICAD\d*_3DMODEL_DIR\}/.test(m.path)) m.found = 'missing';
+    const got = await run(withStore(), 'board.embedModels', { items: [{ uuid: U(100), index: 0 }, { uuid: U(102), index: 0 }] }, f.ctx);
+    expect(got).toMatchObject({ ok: true, result: { embedded: 2, names: ['R_0603_1608Metric.step', 'SOIC-8.step'] } });
+    expect(f.embeds[0].args).toEqual({ items: [
+      { uuid: U(100), index: 0, file: `${EMBED_ROOT}/1/R_0603_1608Metric.step` },
+      { uuid: U(102), index: 0, file: `${EMBED_ROOT}/1/SOIC-8.step` },
+    ] });
+    // A body the store truly does not hold is still refused, by name, and nothing is written.
+    const g = fakeCtx();
+    g.state.board.footprints[0].models[0].found = 'missing';
+    expect(await run(withStore({}), 'board.embedModels', { items: [{ uuid: U(100), index: 0 }] }, g.ctx)).toEqual({ ok: false, code: 'bad_args', message: `R1 ${LIB}` });
+    expect(g.embeds).toEqual([]);
+  });
+
   it('a VRML line whose own file is in the project keeps its STEP sibling as alt', async () => {
     const f = fakeCtx();
     f.files.set('/project/block.wrl', enc('#VRML V2.0 utf8'));

@@ -197,11 +197,18 @@ const stemOf = (p: string): string => p.replace(/\.[^./]*$/, '');
 
 /**
  * The plan of the lines to embed, read against the board: each item must name
- * a line the board has, not inside the board already and not missing; its
- * body comes from the model store (a library line) or the project folder (a
- * project line; for a VRML line its STEP sibling, `.step` or `.stp`, as
- * `alt` when the project holds one, `exists` saying so). Answers the first
- * line refused by its name, or the plan.
+ * a line the board has, not inside the board already; its body comes from the
+ * model store (a library line) or the project folder (a project line; for a
+ * VRML line its STEP sibling, `.step` or `.stp`, as `alt` when the project
+ * holds one, `exists` saying so). Answers the first line refused by its name,
+ * or the plan.
+ *
+ * `found: 'missing'` refuses nothing here: the engine reads a library line
+ * missing until it has fetched the body under /pcbjam/3dmodels/, which a
+ * fresh Edit session never has, and the island reads that body through the
+ * model store itself; a project line's body is read from the folder (a VRML
+ * line's sibling standing in). Whatever neither holds is refused by name when
+ * the bodies are read (bridge/ext/3d-i4.ts readBodies), before anything is written.
  */
 export function planEmbed(read: BoardModelsRead, items: EmbedModelsArgs['items'], exists: (rel: string) => boolean): { refused: string } | { lines: EmbedLine[] } {
   const fps = footprintsByUuid(read);
@@ -209,7 +216,7 @@ export function planEmbed(read: BoardModelsRead, items: EmbedModelsArgs['items']
   for (const { uuid, index } of items) {
     const fp = fps.get(uuid);
     const line = fp?.models[index];
-    if (fp == null || line == null || line.found === 'embedded' || line.found === 'missing') return { refused: lineName(uuid, index, fp) };
+    if (fp == null || line == null || line.found === 'embedded') return { refused: lineName(uuid, index, fp) };
     const s = modelSource(line.path);
     if (s.kind === 'library') {
       lines.push({ uuid, index, ref: fp.ref, path: line.path, source: { kind: 'library', ref: line.path } });
